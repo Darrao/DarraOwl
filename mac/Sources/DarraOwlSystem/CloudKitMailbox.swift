@@ -64,6 +64,16 @@ public final class CloudKitMailbox: CloudMailbox {
     }
 
     public func fetchInbox() async throws -> CloudInbox {
+        do {
+            return try await fetchInboxOnce()
+        } catch let error as CKError where error.code == .changeTokenExpired {
+            // A token from another environment or an old zone: start over.
+            UserDefaults.standard.removeObject(forKey: Self.tokenKey)
+            return try await fetchInboxOnce()
+        }
+    }
+
+    private func fetchInboxOnce() async throws -> CloudInbox {
         try await ensureZone()
         var inbox = CloudInbox()
         var token = savedToken()
