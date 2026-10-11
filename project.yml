@@ -19,6 +19,8 @@ packages:
     path: mac
   DarraOwlShared:
     path: shared
+  DarraOwlPhone:
+    path: ios
 targets:
   DarraOwlHelper:
     type: tool
@@ -62,4 +64,24 @@ targets:
         INFOPLIST_FILE: mac/Resources/App/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_ENTITLEMENTS: mac/Resources/App/DarraOwl.entitlements
+    scheme: {}
+
+  DarraOwliOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: ios/App
+    dependencies:
+      - package: DarraOwlPhone
+        product: DarraOwlPhoneKit
+      - package: DarraOwlShared
+    settings:
+      base:
+        PRODUCT_NAME: DarraOwl
+        PRODUCT_BUNDLE_IDENTIFIER: com.darrao.darraowl
+        INFOPLIST_FILE: ios/Resources/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: ios/Resources/DarraOwl.entitlements
+        TARGETED_DEVICE_FAMILY: "1"
+        ENABLE_HARDENED_RUNTIME: NO
     scheme: {}

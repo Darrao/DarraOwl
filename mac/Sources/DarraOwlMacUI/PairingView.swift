@@ -38,7 +38,13 @@ struct PairingView: View {
                     Text("Valable encore \(DurationText.countdown(invite.expiresAt.timeIntervalSince(context.date))). Il ne sert qu'une fois.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Button("Annuler") { remote.cancelInvite() }
+                HStack {
+                    Button("Copier le lien") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                    }
+                    Button("Annuler") { remote.cancelInvite() }
+                }
             }
         } else {
             VStack(alignment: .leading, spacing: 8) {

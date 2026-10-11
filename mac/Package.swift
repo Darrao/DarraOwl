@@ -9,6 +9,8 @@ let package = Package(
     products: [
         .library(name: "DarraOwlMacUI", targets: ["DarraOwlMacUI"]),
         .library(name: "DarraOwlHelperKit", targets: ["DarraOwlHelperKit"]),
+        // Core and live adapters, for tools/link-e2e.
+        .library(name: "DarraOwlMacKit", targets: ["DarraOwlCore", "DarraOwlSystem"]),
         .executable(name: "DarraOwlHelper", targets: ["DarraOwlHelper"]),
         .executable(name: "DarraOwl", targets: ["DarraOwlMac"]),
     ],
