@@ -4,12 +4,28 @@ Garde ton MacBook éveillé, capot fermé compris, pendant une durée limitée.
 Chaque session a une heure de fin. À cette heure-là, la veille revient, même si
 l'app a planté ou a été quittée.
 
-État : phase 1 (le cœur côté Mac). L'app iPhone, la liaison et le mode capot
-fermé arrivent dans les phases suivantes.
+Il y a deux apps :
+
+- **Mac** : une app de la barre des menus. Elle garde le Mac éveillé et éteint
+  l'écran, coupe le son, met en pause les apps bruyantes quand le capot est
+  fermé.
+- **iPhone** : elle affiche l'état du Mac et le pilote d'où tu veux. Elle
+  propose aussi des notifications, une Live Activity dans la Dynamic Island,
+  des widgets et Siri.
+
+Sans serveur : l'iPhone joint le Mac en direct (réseau local, Tailscale) ou par
+ta base iCloud privée.
 
 > Pose le Mac sur une surface stable et ventilée, jamais dans un sac fermé.
 
 ## Installation
+
+**Pour l'utiliser :** télécharge l'app Mac dans les
+[Releases](https://github.com/Darrao/DarraOwl/releases), glisse-la dans
+Applications et ouvre-la. Installe ensuite l'app iPhone depuis l'App Store ou
+TestFlight.
+
+**Depuis le code source :**
 
 Il faut macOS 26 ou plus récent sur un Mac Apple Silicon, ainsi que Xcode et
 XcodeGen.
@@ -113,28 +129,49 @@ d'alimentation que macOS retire dès que l'app se ferme, même en cas de
 plantage. Il ne garde pas le Mac éveillé capot fermé : pour ça, lance une
 session, qui a toujours une heure de fin.
 
-## iPhone (en cours : phase 3)
+## iPhone
 
-Le Mac est prêt à être piloté depuis l'iPhone. L'app iPhone arrive en
-phase 3b.
+- **Appairage** : DarraOwl > **iPhone…** > **Afficher le code d'appairage**,
+  puis scanne le code avec l'app iPhone. Le code est valable 5 minutes et ne
+  sert qu'une fois. Les clés restent dans le trousseau de chaque appareil.
+- **Ce que l'iPhone affiche** : en ligne, en veille ou « vu pour la dernière
+  fois à… », la session et le temps restant, la batterie et l'autonomie, la
+  température, le capot, le réseau et la data de la session, les agents de
+  code en cours, les conteneurs Docker.
+- **Ce que l'iPhone peut faire** : démarrer, prolonger ou arrêter une session,
+  mettre le Mac en veille, gérer Docker, changer les réglages capot fermé, les
+  alertes et les seuils de batterie. Mettre en veille et arrêter un conteneur
+  demandent Face ID.
+- **Notifications**, avec les boutons +1 h et Arrêter : session bientôt finie,
+  batterie qui ne tiendra pas, Mac qui chauffe, capot ouvert ou chargeur
+  débranché, réseau revenu après une coupure, data au-delà du seuil, récap de
+  fin de session.
+- **Live Activity** sur l'écran verrouillé et dans la Dynamic Island : temps
+  restant, batterie, agents, avec les boutons +1 h et Arrêter. Faute de serveur
+  de push, elle démarre quand tu ouvres l'app pendant une session, ou quand tu
+  lances la session depuis l'iPhone.
+- **Widgets** pour l'écran d'accueil et l'écran verrouillé.
+- **Siri** : « Prolonge le Mac d'une heure avec DarraOwl », « Arrête la session
+  du Mac avec DarraOwl », « État du Mac avec DarraOwl ».
+- **Connexion** : chiffrée en TLS, avec une clé par iPhone appairé. Sur le même
+  Wi-Fi, sur le partage de connexion de l'iPhone ou via Tailscale, elle est
+  directe. Sinon, elle passe par ta base iCloud privée. Chaque commande est
+  signée, expire au bout de 60 s et ne s'exécute qu'une fois.
+- **Désappairer**, depuis le Mac, coupe l'accès de l'iPhone immédiatement.
 
-- **Appairage** : DarraOwl > **iPhone…** > **Afficher le code d'appairage**.
-  Le code QR est valable 5 minutes et ne sert qu'une fois. Les clés
-  d'appairage restent dans le trousseau de ce Mac.
-- **Connexion directe** : sur le même Wi-Fi ou sur le partage de connexion de
-  l'iPhone, la connexion est chiffrée en TLS, avec une clé par iPhone
-  appairé. Le Mac est trouvé par Bonjour (`_darraowl._tcp`, port 52525).
-- **iCloud** : sinon, tout passe par ta base iCloud privée (conteneur
-  `iCloud.com.darrao.darraowl`). Le Mac y publie son état à chaque
-  changement, et au moins une fois par minute. Il y lit les commandes et y
-  écrit leurs résultats. Le contenu est chiffré par iCloud (`encryptedValues`).
-  Aucun serveur tiers n'intervient.
-- **Commandes** : la liste est fermée : démarrer, prolonger, arrêter, mettre
-  en veille, Docker, réglages. Chaque commande est signée par l'iPhone,
-  expire au bout de 60 s et ne s'exécute qu'une fois. Mettre en veille ou
-  arrêter un conteneur demande Face ID.
-- **Désappairer**, dans la même fenêtre, coupe l'accès de l'iPhone
-  immédiatement.
+## Claude Code
+
+DarraOwl > Réglages > Claude Code > **Copier la configuration**, puis colle-la
+dans `~/.claude/settings.json`, en la fusionnant avec ta clé `hooks` si tu en
+as déjà une. Tu reçois alors « Claude a fini » ou « Claude attend ta
+validation », avec le nom du projet, quand personne n'est devant le Mac
+(capot fermé ou une minute sans activité).
+
+Le Mac n'écoute que sur `127.0.0.1:52526` et exige un jeton, rangé dans le
+trousseau. Seuls l'événement et le nom du dossier sont lus, jamais le contenu.
+
+Les agents en cours (claude, codex, gemini) sont détectés automatiquement,
+avec leur projet. Les noms de projets peuvent être masqués dans les réglages.
 
 ## Ce que DarraOwl modifie
 

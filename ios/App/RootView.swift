@@ -4,13 +4,13 @@ import SwiftUI
 import VisionKit
 
 struct RootView: View {
-    let model: PhoneModel
+    let runtime: PhoneRuntime
 
     var body: some View {
-        if model.mac == nil {
-            OnboardingView(model: model)
+        if runtime.model.mac == nil {
+            OnboardingView(model: runtime.model) { runtime.enterDemo() }
         } else {
-            MacView(model: model)
+            MacView(model: runtime.model, demo: runtime.isDemo) { runtime.leaveDemo() }
         }
     }
 }
@@ -19,63 +19,89 @@ struct RootView: View {
 
 struct OnboardingView: View {
     let model: PhoneModel
+    let showDemo: () -> Void
     @State private var scanning = false
 
+    private var canScan: Bool { DataScannerViewController.isSupported || DemoMode.isOn }
+
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        OwlShape(awake: true).stroke(lineWidth: 2.5).frame(width: 44, height: 44)
-                        Text("DarraOwl").font(.largeTitle.bold())
-                        Text("Garde ton Mac éveillé, capot fermé, et suis-le d'ici.")
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 8)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 32) {
+                VStack(alignment: .leading, spacing: 12) {
+                    OwlShape(awake: true).stroke(lineWidth: 2.4).frame(width: 52, height: 52)
+                    Text("DarraOwl").font(.largeTitle.bold())
+                    Text("Garde ton Mac éveillé capot fermé, le temps qu'il faut, et suis-le d'ici.")
+                        .font(.title3).foregroundStyle(.secondary)
                 }
-                Section("Avant de commencer") {
+                .padding(.top, 40)
+
+                VStack(alignment: .leading, spacing: 18) {
+                    SectionTitle("Avant de commencer")
                     step(1, "Même compte iCloud que le Mac",
-                         model.cloudProblem ?? "iCloud est disponible sur cet iPhone.",
-                         ok: model.cloudProblem == nil)
-                    step(2, "Sur le Mac", "Clique sur la chouette, puis iPhone…, puis Afficher le code d'appairage.", ok: nil)
-                    step(3, "Notifications", "Après l'appairage, autorise-les : fin de session, batterie, chaleur, Claude.", ok: nil)
+                         model.cloudProblem ?? "iCloud est disponible sur cet iPhone.", ok: model.cloudProblem == nil)
+                    step(2, "DarraOwl sur le Mac",
+                         "Clique sur la chouette dans la barre des menus, puis iPhone…, puis Afficher le code d'appairage.", ok: nil)
+                    step(3, "Notifications",
+                         "Après l'appairage, autorise-les : fin de session, batterie, chaleur, Claude.", ok: nil)
                 }
-                Section {
-                    if DataScannerViewController.isSupported {
-                        Button("Scanner le code") { scanning = true }
+
+                VStack(spacing: 12) {
+                    if canScan {
+                        Button { scanning = true } label: {
+                            Label("Scanner le code d'appairage", systemImage: "qrcode.viewfinder").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.glassProminent)
+                        .controlSize(.large)
                     }
-                    Button("Coller le lien du code") {
+                    Button {
                         if let s = UIPasteboard.general.string, let url = URL(string: s.trimmingCharacters(in: .whitespacesAndNewlines)) {
                             Task { await model.pair(url: url) }
                         }
+                    } label: {
+                        Text("Coller le lien du code").frame(maxWidth: .infinity)
                     }
+                    .buttonStyle(.glass)
+                    .controlSize(.large)
                     if model.isPairing {
-                        HStack { ProgressView(); Text("Appairage en cours…") }
+                        HStack { ProgressView(); Text("Appairage en cours…") }.foregroundStyle(.secondary)
                     }
                     if let error = model.pairingError {
-                        Text(error).foregroundStyle(.red)
+                        Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
                     }
-                } footer: {
-                    Text("Le code ne sert qu'une fois et expire au bout de 5 minutes. Les clés restent dans le trousseau de cet iPhone.")
                 }
+
+                Text("Le code ne sert qu'une fois et expire au bout de 5 minutes. Les clés restent dans le trousseau de cet iPhone, rien ne passe par un serveur tiers.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Button("Pas encore de Mac prêt ? Voir une démonstration", action: showDemo)
+                    .font(.footnote)
             }
-            .listStyle(.plain)
-            .sheet(isPresented: $scanning) {
-                QRScanner { url in
-                    scanning = false
-                    Task { await model.pair(url: url) }
-                }
-                .ignoresSafeArea()
+            .padding(.horizontal, 24)
+            .padding(.bottom, 40)
+        }
+        .sheet(isPresented: $scanning) {
+            QRScanner { url in
+                scanning = false
+                Task { await model.pair(url: url) }
             }
+            .ignoresSafeArea()
         }
     }
 
     private func step(_ n: Int, _ title: String, _ detail: String, ok: Bool?) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text("\(n)").font(.headline.monospacedDigit()).frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                Text(detail).font(.footnote).foregroundStyle(ok == false ? .red : .secondary)
+        HStack(alignment: .top, spacing: 14) {
+            ZStack {
+                Circle().strokeBorder(Color.secondary.opacity(0.5), lineWidth: 1)
+                if ok == true {
+                    Image(systemName: "checkmark").font(.caption.bold())
+                } else {
+                    Text("\(n)").font(.footnote.weight(.semibold))
+                }
+            }
+            .frame(width: 26, height: 26)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.body.weight(.medium))
+                Text(detail).font(.subheadline).foregroundStyle(ok == false ? .red : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -115,6 +141,8 @@ struct QRScanner: UIViewControllerRepresentable {
 
 struct MacView: View {
     let model: PhoneModel
+    var demo = false
+    var leaveDemo: () -> Void = {}
     @State private var showSettings = false
     @State private var confirmStop = false
     @State private var confirmUnpair = false
@@ -124,6 +152,15 @@ struct MacView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 32) {
+                    if demo, !DemoMode.isOn {
+                        HStack {
+                            Label("Démonstration : aucun Mac n'est piloté.", systemImage: "eye")
+                                .font(.footnote).foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Quitter", action: leaveDemo).font(.footnote.weight(.semibold))
+                        }
+                        .padding(.top, 8)
+                    }
                     header
                     sessionBlock
                     if let state = model.state {

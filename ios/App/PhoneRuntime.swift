@@ -2,32 +2,55 @@ import ActivityKit
 import DarraOwlPhoneKit
 import DarraOwlShared
 import Foundation
+import Observation
 import UIKit
 
 /// The one PhoneModel of the app, shared by the UI, notifications, Siri and
 /// the Live Activity buttons, plus what mirrors its state outside the app.
 @MainActor
+@Observable
 final class PhoneRuntime {
     static let shared = PhoneRuntime()
 
-    let model: PhoneModel
-    private let liveActivity = LiveActivityController()
-    private var started = false
+    private(set) var model: PhoneModel
+    /// Showing the demonstration Mac (App Review, curious users).
+    private(set) var isDemo = DemoMode.isOn
+    @ObservationIgnored private let liveActivity = LiveActivityController()
+    @ObservationIgnored private var started = false
 
     private init() {
-        model = PhoneModel(.init(
+        model = PhoneModel(DemoMode.isOn ? DemoMode.dependencies() : Self.liveDependencies())
+        model.onStateChange = { [weak self] state in self?.mirror(state) }
+    }
+
+    private static func liveDependencies() -> PhoneModel.Dependencies {
+        .init(
             store: KeychainPhoneStore(deviceName: UIDevice.current.name),
             direct: NWDirectLink(),
             cloud: CloudKitPhoneLink(),
             pairing: NWPairingDirect()
-        ))
-        model.onStateChange = { [weak self] state in self?.mirror(state) }
+        )
     }
 
     func start() async {
         guard !started else { return }
         started = true
         await model.start()
+    }
+
+    /// Demonstration: a believable Mac, nothing sent anywhere. Widgets and
+    /// the Live Activity stay untouched.
+    func enterDemo() {
+        isDemo = true
+        model = PhoneModel(DemoMode.dependencies(forcePaired: true))
+        Task { await model.start() }
+    }
+
+    func leaveDemo() {
+        isDemo = false
+        model = PhoneModel(Self.liveDependencies())
+        model.onStateChange = { [weak self] state in self?.mirror(state) }
+        Task { await model.start() }
     }
 
     /// Siri and Live Activity buttons: sign and send, do not wait.
@@ -58,6 +81,7 @@ final class PhoneRuntime {
     /// Live Activity and widgets follow every state the app receives,
     /// including in the background after an event push.
     private func mirror(_ state: MacState) {
+        guard !isDemo else { return }
         let snapshot = WidgetSnapshot(
             macName: state.macName,
             presence: presenceText,
