@@ -49,7 +49,7 @@ struct SettingsView: View {
                 }
             }
             Section("Claude Code") {
-                Text("Pour être prévenu sur l'iPhone quand Claude a fini ou attend ta validation. DarraOwl ajoute deux réglages (« hooks ») dans ~/.claude/settings.json : Claude Code lui envoie alors le nom de l'événement et du dossier, jamais le contenu.")
+                Text("Pour être prévenu sur l'iPhone quand Claude a fini ou attend ta validation. DarraOwl ajoute deux réglages (« hooks ») au fichier de configuration de Claude Code, sur ce Mac : ~/.claude/settings.json, dans un dossier caché de ton dossier personnel. Claude Code envoie alors à DarraOwl le nom de l'événement et du dossier, jamais le contenu.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack {
@@ -65,6 +65,12 @@ struct SettingsView: View {
                     case .installed:
                         Button("Désactiver") { setup { try ClaudeCodeSetup.remove() } }
                     }
+                }
+                if FileManager.default.fileExists(atPath: ClaudeCodeSetup.file.path) {
+                    Button("Afficher le fichier dans le Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([ClaudeCodeSetup.file])
+                    }
+                    .buttonStyle(.link)
                 }
                 Text("Ton fichier est d'abord copié dans settings.json.darraowl-backup. Les sessions de Claude déjà ouvertes en tiennent compte à leur prochain lancement. Les notifications partent quand personne n'est devant le Mac : capot fermé ou une minute sans activité.")
                     .font(.caption).foregroundStyle(.secondary)
