@@ -217,20 +217,21 @@ struct MenuView: View {
     }
 
     private var footer: some View {
-        HStack {
-            Button("iPhone…") {
+        VStack(spacing: 0) {
+            MenuRow("iPhone…") {
                 NSApp.activate()
                 openWindow(id: "pairing")
             }
-            Button("Réglages…") {
+            MenuRow("Réglages…", shortcut: "⌘,") {
                 // A menu bar app is never active by itself: bring the window forward.
                 NSApp.activate()
                 openSettings()
             }
-            Spacer()
-            Button(model.session == nil ? "Quitter" : "Arrêter et quitter") { model.quit() }
+            .keyboardShortcut(",", modifiers: .command)
+            MenuRow(model.session == nil ? "Quitter DarraOwl" : "Arrêter et quitter", shortcut: "⌘Q") { model.quit() }
+                .keyboardShortcut("q", modifiers: .command)
         }
-        .buttonStyle(.borderless)
+        .padding(.horizontal, -6)
     }
 
     // MARK: Helpers
@@ -323,5 +324,39 @@ struct HoldToStopButton: View {
         .accessibilityLabel("Arrêter la session")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { action() }
+    }
+}
+
+/// A full-width row like a native menu item: highlighted under the pointer.
+struct MenuRow: View {
+    let title: String
+    let shortcut: String?
+    let action: () -> Void
+    @State private var hovering = false
+
+    init(_ title: String, shortcut: String? = nil, action: @escaping () -> Void) {
+        self.title = title
+        self.shortcut = shortcut
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Text(title)
+                Spacer()
+                if let shortcut {
+                    Text(shortcut).foregroundStyle(hovering ? Color.white.opacity(0.8) : .secondary)
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(hovering ? Color.white : Color.primary)
+            .background(RoundedRectangle(cornerRadius: 5).fill(hovering ? Color.accentColor : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
