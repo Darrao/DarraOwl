@@ -57,6 +57,7 @@ public final class AppModel {
         lid = LidCoordinator(.init(
             display: displayRefusal == nil ? display : nil,
             keyboard: keyboardRefusal == nil ? keyboard : nil,
+            displaySleep: PublicDisplaySleep(),
             audio: CoreAudioControl(),
             processes: WorkspaceProcesses(),
             docker: DockerDesktopProbe(),
@@ -186,6 +187,9 @@ public final class AppModel {
 
     private func handleLid(closed: Bool) async {
         lidClosed = closed
+        // Presence holds a display assertion, which would keep the panel lit
+        // under the lid: release it while closed, take it back at open.
+        presence.setSuspended(closed)
         guard reachable, let status else { return }
         if closed {
             if status.session != nil {

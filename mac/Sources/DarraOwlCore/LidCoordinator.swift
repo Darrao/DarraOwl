@@ -16,6 +16,14 @@ public protocol DisplayDimming: AnyObject {
     func isAsleep() -> Bool
 }
 
+/// Public display sleep request (`IORequestIdle`, what `pmset
+/// displaysleepnow` does). Works on every macOS; powerd defers it about 30 s
+/// after a wake, and the lid closing is such a wake.
+@MainActor
+public protocol DisplaySleepRequesting: AnyObject {
+    func requestSleep()
+}
+
 /// Built-in keyboard backlight. Live: private CoreBrightness, behind a
 /// method signature guard.
 @MainActor
@@ -99,6 +107,8 @@ public final class LidCoordinator {
     public struct Dependencies {
         public var display: (any DisplayDimming)?
         public var keyboard: (any KeyboardBacklighting)?
+        /// Always present, even where the private brightness calls are refused.
+        public var displaySleep: (any DisplaySleepRequesting)?
         public var audio: any AudioControlling
         public var processes: any ProcessSnapshotting
         public var docker: any DockerProbing
@@ -109,6 +119,7 @@ public final class LidCoordinator {
         public init(
             display: (any DisplayDimming)?,
             keyboard: (any KeyboardBacklighting)?,
+            displaySleep: (any DisplaySleepRequesting)? = nil,
             audio: any AudioControlling,
             processes: any ProcessSnapshotting,
             docker: any DockerProbing,
@@ -118,6 +129,7 @@ public final class LidCoordinator {
         ) {
             self.display = display
             self.keyboard = keyboard
+            self.displaySleep = displaySleep
             self.audio = audio
             self.processes = processes
             self.docker = docker
@@ -200,10 +212,15 @@ public final class LidCoordinator {
             }
         }
 
-        // 3. The close itself wakes the panel; ask it to sleep once it settled.
-        if plan.displayBrightness != nil {
+        // 3. The close itself wakes the panel, and powerd defers a display
+        // sleep request for about 30 s after a wake: ask at 3 s and again
+        // at 35 s. This is the public path; it turns the panel and the
+        // keyboard backlight off even where brightness cannot be written.
+        if settings.darkenDisplay, let sleeper = deps.displaySleep {
             await deps.sleep(.seconds(3))
-            if generation == mine { deps.display?.requestSleep() }
+            if generation == mine { sleeper.requestSleep() }
+            await deps.sleep(.seconds(32))
+            if generation == mine { sleeper.requestSleep() }
         }
         problems.forEach { deps.log.error("lid close: \($0)") }
         return problems

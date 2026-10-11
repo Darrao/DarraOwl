@@ -17,6 +17,13 @@ final class FakeDisplay: DisplayDimming {
 }
 
 @MainActor
+final class FakeDisplaySleep: DisplaySleepRequesting {
+    let log: EventLog
+    init(log: EventLog) { self.log = log }
+    func requestSleep() { log.add("display sleep") }
+}
+
+@MainActor
 final class FakeKeyboard: KeyboardBacklighting {
     let log: EventLog
     var brightness: Float? = 0.5
@@ -94,7 +101,8 @@ struct LidRig {
         keyboard = FakeKeyboard(log: h.events)
         audio = FakeAudio(log: h.events)
         coordinator = LidCoordinator(.init(
-            display: display, keyboard: keyboard, audio: audio, processes: snapshot, docker: docker,
+            display: display, keyboard: keyboard, displaySleep: FakeDisplaySleep(log: h.events),
+            audio: audio, processes: snapshot, docker: docker,
             helper: EngineGateway(engine: h.engine, log: h.events), log: SilentLog(), sleep: { _ in }
         ))
     }
@@ -135,7 +143,7 @@ struct LidRig {
         #expect(events.contains("keyboard 0.0"))
         #expect(events.contains("mute spk"))
         #expect(events.contains("SIGSTOP 101"))
-        #expect(events.last == "display sleep")
+        #expect(events.suffix(2) == ["display sleep", "display sleep"], "asked twice: at 3 s and after powerd's 30 s deferral")
 
         let status = await rig.h.engine.status()
         #expect(status.userChanges.displayBrightness == 0.7, "the open-lid sample, not the dimmed read")
@@ -232,6 +240,19 @@ struct LidRig {
 
         await rig.coordinator.forgetAudio(deviceUID: "airpods")
         #expect(await rig.h.engine.status().userChanges.audio.isEmpty)
+    }
+
+    @Test func refusedPrivateCallsStillAskTheDisplayToSleep() async throws {
+        let rig = LidRig()
+        try await rig.startSession()
+        let fallback = LidCoordinator(.init(
+            display: nil, keyboard: nil, displaySleep: FakeDisplaySleep(log: rig.h.events),
+            audio: rig.audio, processes: rig.snapshot, docker: rig.docker,
+            helper: EngineGateway(engine: rig.h.engine, log: rig.h.events), log: SilentLog(), sleep: { _ in }
+        ))
+        await fallback.lidClosed(settings: LidSettings(mute: false, pausedApps: [], pauseDocker: false))
+        #expect(rig.h.events.all.filter { $0 == "display sleep" }.count == 2)
+        #expect(await rig.h.engine.status().userChanges.displayBrightness == nil, "nothing to restore: brightness untouched")
     }
 
     @Test func alreadyMutedOrDarkIsNotJournaled() async throws {

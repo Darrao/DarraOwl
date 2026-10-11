@@ -216,3 +216,17 @@ public final class CoreBrightnessKeyboard: KeyboardBacklighting {
         return .success(unsafeBitCast(type.init(), to: (any KeyboardBrightnessClientBridge).self))
     }
 }
+
+/// Public `IORequestIdle` on IODisplayWrangler, what `pmset displaysleepnow`
+/// does. Needs no private framework and runs on every macOS.
+@MainActor
+public final class PublicDisplaySleep: DisplaySleepRequesting {
+    public init() {}
+
+    public func requestSleep() {
+        let wrangler = IORegistryEntryFromPath(kIOMainPortDefault, "IOService:/IOResources/IODisplayWrangler")
+        guard wrangler != 0 else { return }
+        defer { IOObjectRelease(wrangler) }
+        _ = IORegistryEntrySetCFProperty(wrangler, "IORequestIdle" as CFString, kCFBooleanTrue)
+    }
+}

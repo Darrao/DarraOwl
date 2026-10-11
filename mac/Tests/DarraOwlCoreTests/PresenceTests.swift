@@ -86,6 +86,18 @@ final class FakeAsserter: PresenceAsserting {
         #expect(!p.isActive)
     }
 
+    @Test func lidClosedReleasesTheAssertion() throws {
+        let a = FakeAsserter()
+        let p = PresenceController(asserter: a)
+        try p.start(until: nil, now: t0)
+        p.setSuspended(true)
+        #expect(!a.held && p.isActive)
+        p.tick(now: t0.addingTimeInterval(120), power: battery, settings: .default)
+        #expect(a.activity == 1, "no activity declared while the lid is closed")
+        p.setSuspended(false)
+        #expect(a.held)
+    }
+
     @Test func changingTheEndKeepsOneAssertion() throws {
         let a = FakeAsserter()
         let p = PresenceController(asserter: a)

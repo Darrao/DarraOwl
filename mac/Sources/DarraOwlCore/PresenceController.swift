@@ -59,10 +59,25 @@ public final class PresenceController {
         lastActivity = now
     }
 
+    /// Lid closed: drop the display assertion without ending presence.
+    public func setSuspended(_ suspended: Bool) {
+        guard isActive, suspended != self.suspended else { return }
+        self.suspended = suspended
+        if suspended {
+            asserter.release()
+        } else {
+            try? asserter.hold()
+            asserter.declareActivity()
+        }
+    }
+
+    public private(set) var suspended = false
+
     public func stop(_ reason: PresenceStopReason) {
         guard isActive else { return }
         asserter.release()
         isActive = false
+        suspended = false
         until = nil
         lastActivity = nil
         lastStop = reason
@@ -83,6 +98,7 @@ public final class PresenceController {
             default: break
             }
         }
+        if suspended { return }
         if let last = lastActivity, now.timeIntervalSince(last) < Self.activityInterval { return }
         asserter.declareActivity()
         lastActivity = now
