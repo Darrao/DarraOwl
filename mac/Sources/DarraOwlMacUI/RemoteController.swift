@@ -174,10 +174,6 @@ public final class RemoteController: CommandTarget {
         return idle >= 60
     }
 
-    var hookSnippet: String {
-        ClaudeHook.settingsSnippet(port: HookServer.port, token: HookToken.current())
-    }
-
     // MARK: Events
 
     private func checkEvents() {
@@ -258,12 +254,17 @@ public final class RemoteController: CommandTarget {
 
     func makeState() -> MacState? {
         guard let status = model.status, let identity = try? store.identity() else { return nil }
+        let mask = status.settings.alerts.maskProjectNames
+        var session = status.session
+        if mask, let watching = session?.watching {
+            session?.watching = watching.map { var p = $0; p.project = nil; return p }
+        }
         return MacState(
             macID: identity.macID, macName: macName, updatedAt: Date(), power: macPower,
-            session: status.session, powerSnapshot: status.power, lowPowerActive: status.lowPowerHeld,
+            session: session, powerSnapshot: status.power, lowPowerActive: status.lowPowerHeld,
             pausedApps: Set(status.frozen.map(\.name)).sorted(),
             network: MacState.Network(kind: network.kind, sessionBytes: sessionBytes),
-            agents: signals.states(agents, now: Date(), mask: status.settings.alerts.maskProjectNames),
+            agents: signals.states(agents, now: Date(), mask: mask),
             containers: containers,
             dockerPaused: status.frozen.contains { $0.bundleID == PausePolicy.dockerBundleID },
             settings: status.settings
@@ -356,5 +357,14 @@ public final class RemoteController: CommandTarget {
 
     public func updateSettings(_ settings: PowerSettings) async throws {
         _ = try await model.sendHelper(.updateSettings(settings))
+    }
+
+    public var agentPIDs: [Int32] { agents.map(\.pid) }
+
+    public func watchAgent(pid: Int32) async throws {
+        guard let agent = agents.first(where: { $0.pid == pid }), let request = AppModel.watchRequest(agent) else {
+            throw RemoteError.unknownAgent
+        }
+        _ = try await model.sendHelper(request)
     }
 }

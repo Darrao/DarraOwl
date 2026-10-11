@@ -54,12 +54,16 @@ public struct MacState: Codable, Equatable, Sendable {
         public var project: String?
         public var since: Date
         public var waitingForApproval: Bool
+        /// For "stay awake while it runs" from the phone; checked against the
+        /// Mac's own list before use.
+        public var pid: Int32?
 
-        public init(tool: String, project: String?, since: Date, waitingForApproval: Bool) {
+        public init(tool: String, project: String?, since: Date, waitingForApproval: Bool, pid: Int32? = nil) {
             self.tool = tool
             self.project = project
             self.since = since
             self.waitingForApproval = waitingForApproval
+            self.pid = pid
         }
     }
 

@@ -33,6 +33,9 @@ public enum EngineError: Error, Equatable, Sendable, LocalizedError {
     case power(String)
     case invalidSettings(PowerSettings.ValidationError)
     case uninstalling
+    case processGone
+    case notYourProcess
+    case tooManyWatched
 
     public var errorDescription: String? {
         switch self {
@@ -46,6 +49,9 @@ public enum EngineError: Error, Equatable, Sendable, LocalizedError {
         case let .power(m): "Réglages d'alimentation : \(m)"
         case .invalidSettings: "Réglages invalides."
         case .uninstalling: "Désinstallation en cours."
+        case .processGone: "Ce process ne tourne plus."
+        case .notYourProcess: "Ce process appartient à un autre utilisateur."
+        case .tooManyWatched: "Trop de process suivis dans cette session."
         }
     }
 }
@@ -90,6 +96,7 @@ public actor SessionEngine {
     public static let idlePollInterval: TimeInterval = 30
     public static let activePollInterval: TimeInterval = 10
     static let maxNotices = 5
+    public static let maxWatched = 16
 
     private let deps: Dependencies
     private var journal = Journal()
@@ -150,7 +157,7 @@ public actor SessionEngine {
                 let decision = FloorRules.decide(power: snapshot, unreadableReads: unreadableReads, settings: settings)
                 if let reason = decision.endReason {
                     await end(reason: reason)
-                } else {
+                } else if await followWatched() {
                     await applyLowPower(wanted: decision.wantsLowPower)
                 }
             }
@@ -181,6 +188,10 @@ public actor SessionEngine {
     // MARK: Commands
 
     public func start(duration: TimeInterval, origin: SessionOrigin) async throws(EngineError) -> EngineStatus {
+        try await start(duration: duration, origin: origin, watching: [])
+    }
+
+    private func start(duration: TimeInterval, origin: SessionOrigin, watching: [WatchedProcess]) async throws(EngineError) -> EngineStatus {
         guard !uninstalling else { throw .uninstalling }
         guard journal.session == nil else { throw .alreadyActive }
         if !journal.isClean {
@@ -203,7 +214,7 @@ public actor SessionEngine {
         }
 
         let now = deps.clock.now()
-        let session = Session(startedAt: now, endsAt: now.addingTimeInterval(duration), origin: origin)
+        let session = Session(startedAt: now, endsAt: now.addingTimeInterval(duration), origin: origin, watching: watching)
         journal.session = session
         journal.sleep = SleepEntry(previouslyDisabled: state.sleepDisabled)
         do {
@@ -232,7 +243,7 @@ public actor SessionEngine {
             }
         }
         unreadableReads = 0
-        deps.log.info("session \(session.id) started by \(origin.rawValue), ends \(session.endsAt)")
+        deps.log.info("session \(session.id) started by \(origin.rawValue), ends \(session.endsAt)\(watching.isEmpty ? "" : ", following \(watching.map(\.pid))")")
         return await evaluate()
     }
 
@@ -245,12 +256,18 @@ public actor SessionEngine {
             throw .invalidDuration(min: Policy.minimumSessionDuration, max: settings.maxSessionDuration)
         }
         let previous = session.endsAt
+        let previousKeep = session.keepUntil
         session.endsAt = min(max(session.endsAt, now).addingTimeInterval(seconds), now.addingTimeInterval(settings.maxSessionDuration))
+        // A timed session an agent joined: its own planned end moves too.
+        if let keep = session.keepUntil {
+            session.keepUntil = min(max(keep, now).addingTimeInterval(seconds), session.endsAt)
+        }
         journal.session = session
         do {
             try deps.journalStore.save(journal)
         } catch {
             journal.session?.endsAt = previous
+            journal.session?.keepUntil = previousKeep
             throw .journal(error.localizedDescription)
         }
         deps.log.info("session \(session.id) now ends \(session.endsAt)")
@@ -292,7 +309,9 @@ public actor SessionEngine {
         // A lower cap applies to the running session too.
         let now = deps.clock.now()
         if let session = journal.session, session.endsAt > now.addingTimeInterval(new.maxSessionDuration) {
-            journal.session?.endsAt = now.addingTimeInterval(new.maxSessionDuration)
+            let end = now.addingTimeInterval(new.maxSessionDuration)
+            journal.session?.endsAt = end
+            if let keep = session.keepUntil, keep > end { journal.session?.keepUntil = end }
             persist()
         }
         return await evaluate()
@@ -316,6 +335,57 @@ public actor SessionEngine {
                 addNotice("Fichiers du composant système : \(error.localizedDescription)")
             }
         }
+        return status()
+    }
+
+    // MARK: Agent mode
+
+    /// Keeps the Mac awake while `process` runs, at most `seconds` (the cap
+    /// when nil). Starts a session, or makes the running one follow the
+    /// process too: it then lasts until its own end or the process exit,
+    /// whichever is later, never past the cap (safety rule 2).
+    public func watch(
+        _ process: WatchedProcess, seconds: TimeInterval?, origin: SessionOrigin, requesterUID: UInt32
+    ) async throws(EngineError) -> EngineStatus {
+        guard !uninstalling else { throw .uninstalling }
+        guard process.pid > 1, case let .present(state) = deps.processes.lookup(process.pid), Self.matches(process, state) else {
+            throw .processGone
+        }
+        guard state.uid == requesterUID else { throw .notYourProcess }
+        let cap = settings.maxSessionDuration
+        let duration = seconds ?? cap
+        guard duration >= Policy.minimumSessionDuration, duration <= cap else {
+            throw .invalidDuration(min: Policy.minimumSessionDuration, max: cap)
+        }
+        let now = deps.clock.now()
+        guard var session = journal.session, !session.isExpired(at: now) else {
+            return try await start(duration: duration, origin: origin, watching: [process])
+        }
+        let previous = session
+        session.watching.removeAll { $0.pid == process.pid }
+        guard session.watching.count < Self.maxWatched else { throw .tooManyWatched }
+        if session.watching.isEmpty, session.keepUntil == nil, !previous.isAgentMode {
+            session.keepUntil = session.endsAt
+        }
+        session.watching.append(process)
+        session.endsAt = min(max(session.endsAt, now.addingTimeInterval(duration)), now.addingTimeInterval(cap))
+        journal.session = session
+        do {
+            try deps.journalStore.save(journal)
+        } catch {
+            journal.session = previous
+            throw .journal(error.localizedDescription)
+        }
+        deps.log.info("session \(session.id) now follows pid \(process.pid) (\(process.name)), ends at the latest \(session.endsAt)")
+        return status()
+    }
+
+    /// The CLI's command finished: stop following its process now rather
+    /// than at the next check.
+    public func release(pid: Int32) async -> EngineStatus {
+        guard var session = journal.session, session.watching.contains(where: { $0.pid == pid }) else { return status() }
+        session.watching.removeAll { $0.pid == pid }
+        await settle(session)
         return status()
     }
 
@@ -426,6 +496,50 @@ public actor SessionEngine {
     }
 
     // MARK: Private
+
+    static func matches(_ p: WatchedProcess, _ state: ProcessState) -> Bool {
+        state.identity.startSeconds == p.startSeconds && state.identity.startMicros == p.startMicros
+    }
+
+    /// Drops the watched processes that exited. Returns false when that
+    /// ended the session.
+    private func followWatched() async -> Bool {
+        guard var session = journal.session, session.isAgentMode else { return true }
+        let running = session.watching.filter { p in
+            switch deps.processes.lookup(p.pid) {
+            case .absent: false
+            // Nothing can be concluded: keep following it.
+            case .unreadable: true
+            case let .present(state): Self.matches(p, state)
+            }
+        }
+        guard running.count != session.watching.count else { return true }
+        session.watching = running
+        await settle(session)
+        return journal.session != nil
+    }
+
+    /// After a watched process left: keep following the others, go back to
+    /// the planned end of a timed session, or end.
+    private func settle(_ updated: Session) async {
+        var session = updated
+        let now = deps.clock.now()
+        if !session.watching.isEmpty {
+            journal.session = session
+            persist()
+            return
+        }
+        if let keep = session.keepUntil, keep > now {
+            session.endsAt = min(session.endsAt, keep)
+            session.keepUntil = nil
+            journal.session = session
+            persist()
+            deps.log.info("session \(session.id): agents done, back to its planned end \(session.endsAt)")
+            return
+        }
+        journal.session = session
+        await end(reason: .agentFinished)
+    }
 
     /// SIGCONT to each journaled process that is still the one we stopped.
     /// A process that exited, or whose pid now belongs to another process or

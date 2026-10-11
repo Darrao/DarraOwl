@@ -39,6 +39,25 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         SKIP_INSTALL: YES
 
+  # `darraowl`, the command line client. Embedded in Contents/Helpers; the
+  # app links it into ~/.local/bin on request.
+  DarraOwlCLI:
+    type: tool
+    platform: macOS
+    sources:
+      - path: mac/Sources/DarraOwlCLI
+    dependencies:
+      - package: DarraOwlMacPackage
+        product: DarraOwlCLIKit
+    settings:
+      base:
+        PRODUCT_NAME: darraowl
+        PRODUCT_BUNDLE_IDENTIFIER: com.darrao.darraowl.mac.cli
+        INFOPLIST_FILE: mac/Resources/CLI/Info.plist
+        CREATE_INFOPLIST_SECTION_IN_BINARY: YES
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+
   DarraOwlMac:
     type: application
     platform: macOS
@@ -58,6 +77,12 @@ targets:
         codeSign: true
         copy:
           destination: executables
+      - target: DarraOwlCLI
+        embed: true
+        codeSign: true
+        copy:
+          destination: wrapper
+          subpath: Contents/Helpers
     settings:
       base:
         PRODUCT_NAME: DarraOwl

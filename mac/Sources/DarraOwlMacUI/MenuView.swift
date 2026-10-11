@@ -1,3 +1,4 @@
+import DarraOwlCore
 import DarraOwlShared
 import SwiftUI
 
@@ -33,6 +34,7 @@ struct MenuView: View {
             } else {
                 idle
             }
+            agentsSection
             lidSection
             Divider()
             presenceSection
@@ -56,6 +58,7 @@ struct MenuView: View {
 
     private var stateLine: String {
         if let session = model.session {
+            if let watching = session.watchingText { return "Éveillé tant que \(watching) tourne" }
             return "Éveillé jusqu'à \(DurationText.clock(session.endsAt))"
         }
         return "Veille normale"
@@ -91,6 +94,10 @@ struct MenuView: View {
             Text(DurationText.countdown(model.remaining ?? 0))
                 .font(.system(size: 32, weight: .light).monospacedDigit())
                 .contentTransition(.numericText())
+            if session.isAgentMode {
+                Text(agentEndText(session)).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             powerLine
             HStack {
                 ForEach(Policy.extensionSteps, id: \.self) { step in
@@ -124,6 +131,46 @@ struct MenuView: View {
             powerLine
         }
         .disabled(model.busy)
+    }
+
+    /// Coding agents found on the Mac. "Suivre": stay awake while it runs.
+    @ViewBuilder
+    private var agentsSection: some View {
+        if model.reachable, model.registration == .enabled, !model.remote.agents.isEmpty {
+            let watched = Set(model.session?.watching.map(\.pid) ?? [])
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Agents").font(.callout)
+                ForEach(model.remote.agents, id: \.pid) { agent in
+                    HStack {
+                        Text(agent.project.map { "\(agent.tool) · \($0)" } ?? agent.tool)
+                            .lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        if watched.contains(agent.pid) {
+                            Text("suivi").foregroundStyle(.secondary)
+                        } else {
+                            Button("Suivre") { model.follow(agent) }
+                                .controlSize(.small)
+                                .help("Garder le Mac éveillé tant que cet agent tourne")
+                        }
+                    }
+                    .font(.callout)
+                }
+                if watched.isEmpty {
+                    Text("Suivre : le Mac reste éveillé tant que l'agent tourne, au plus \(DurationText.short(maxDuration)).")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .disabled(model.busy)
+        }
+    }
+
+    private func agentEndText(_ session: Session) -> String {
+        var text = "S'arrête quand \(session.watching.count > 1 ? "ils se terminent" : "il se termine"), au plus tard à \(DurationText.clock(session.endsAt))."
+        if let keep = session.keepUntil, keep > model.now {
+            text += " Session prévue jusqu'à \(DurationText.clock(keep)) dans tous les cas."
+        }
+        return text
     }
 
     @ViewBuilder

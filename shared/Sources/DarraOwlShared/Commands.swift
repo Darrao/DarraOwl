@@ -16,6 +16,9 @@ public enum CommandKind: Codable, Equatable, Sendable {
     case updateLidSettings(LidSettings)
     case updateBatteryFloors(lowPower: Int, end: Int)
     case updateAlerts(AlertSettings)
+    /// Agent mode: stay awake while this agent runs (a pid from the list the
+    /// Mac published), at most the configured cap.
+    case watchAgent(pid: Int32)
 
     /// Needs a Face ID signature from the phone's Secure Enclave key.
     public var isSensitive: Bool {
@@ -37,6 +40,7 @@ public enum CommandKind: Codable, Equatable, Sendable {
         case .updateLidSettings: "Changer les réglages capot fermé"
         case .updateBatteryFloors: "Changer les seuils de batterie"
         case .updateAlerts: "Changer les alertes"
+        case .watchAgent: "Rester éveillé tant que l'agent tourne"
         }
     }
 
@@ -52,6 +56,7 @@ public enum CommandKind: Codable, Equatable, Sendable {
         case extensionStep
         case containerID
         case settings
+        case process
     }
 
     /// Checks the arguments against the policy. The Mac checks again against
@@ -70,6 +75,8 @@ public enum CommandKind: Codable, Equatable, Sendable {
             do { try PowerSettings(lowPowerFloor: lowPower, endFloor: end).validate() } catch { throw .settings }
         case let .updateAlerts(a):
             do { try PowerSettings(alerts: a).validate() } catch { throw .settings }
+        case let .watchAgent(pid):
+            guard pid > 1 else { throw .process }
         case .stopSession, .sleepNow, .pauseDocker, .resumeDocker:
             break
         }

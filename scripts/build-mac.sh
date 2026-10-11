@@ -27,5 +27,8 @@ xcodebuild \
 APP="build/DerivedData/Build/Products/$CONFIG/DarraOwl.app"
 codesign --verify --strict --deep "$APP"
 test -x "$APP/Contents/MacOS/DarraOwlHelper"
+test -x "$APP/Contents/Helpers/darraowl"
+CLI_SIGNATURE="$(codesign -dv "$APP/Contents/Helpers/darraowl" 2>&1)"
+grep -qx "Identifier=com.darrao.darraowl.mac.cli" <<<"$CLI_SIGNATURE"
 test -f "$APP/Contents/Library/LaunchDaemons/com.darrao.darraowl.mac.helper.plist"
 echo "$APP"

@@ -1,4 +1,5 @@
 import AppKit
+import DarraOwlCore
 import DarraOwlShared
 import DarraOwlSystem
 import SwiftUI
@@ -9,6 +10,9 @@ struct SettingsView: View {
     @State private var endFloor = Policy.defaultEndFloor
     @State private var capHours = Int(Policy.defaultMaxSessionDuration / 3600)
     @State private var lid = LidSettings()
+    @State private var claudeState = ClaudeHookConfig.State.absent
+    @State private var linkState = CommandLineLink.State.absent
+    @State private var setupProblem: String?
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -45,20 +49,54 @@ struct SettingsView: View {
                 }
             }
             Section("Claude Code") {
-                Text("Pour être prévenu sur l'iPhone quand Claude a fini ou attend ta validation, ajoute cette configuration dans ~/.claude/settings.json. Seuls l'événement et le nom du dossier sont lus, jamais le contenu.")
+                Text("Pour être prévenu sur l'iPhone quand Claude a fini ou attend ta validation. DarraOwl ajoute deux réglages (« hooks ») dans ~/.claude/settings.json : Claude Code lui envoie alors le nom de l'événement et du dossier, jamais le contenu.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack {
-                    Button("Copier la configuration") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(model.remote.hookSnippet, forType: .string)
-                    }
+                    Text(claudeStateText)
                     Spacer()
-                    Text(model.remote.hookServer?.isListening == true ? "Écoute sur 127.0.0.1:\(HookServer.port)" : "Arrêté")
+                    switch claudeState {
+                    case .absent:
+                        Button("Activer") { setup { try ClaudeCodeSetup.install() } }
+                            .disabled(!ClaudeCodeSetup.claudeInstalled)
+                    case .outdated:
+                        Button("Mettre à jour") { setup { try ClaudeCodeSetup.install() } }
+                        Button("Désactiver") { setup { try ClaudeCodeSetup.remove() } }
+                    case .installed:
+                        Button("Désactiver") { setup { try ClaudeCodeSetup.remove() } }
+                    }
+                }
+                Text("Ton fichier est d'abord copié dans settings.json.darraowl-backup. Les sessions de Claude déjà ouvertes en tiennent compte à leur prochain lancement. Les notifications partent quand personne n'est devant le Mac : capot fermé ou une minute sans activité.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if model.remote.hookServer?.isListening != true {
+                    Text("Le récepteur local (127.0.0.1:\(HookServer.port)) ne tourne pas.").font(.caption).foregroundStyle(.orange)
+                }
+            }
+            Section("Terminal") {
+                Text("La commande darraowl garde le Mac éveillé tant qu'une commande tourne, au plus la durée maximale : darraowl run 3h -- claude. Aussi : darraowl status, darraowl stop.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                HStack {
+                    Text(linkStateText)
+                    Spacer()
+                    switch linkState {
+                    case .absent, .elsewhere:
+                        Button("Installer la commande") { setup { try CommandLineLink.install() } }
+                    case .installed:
+                        Button("Retirer") { setup { try CommandLineLink.remove() } }
+                    case .foreign, .unavailable:
+                        EmptyView()
+                    }
+                }
+                if linkState == .installed {
+                    Text("Si le Terminal ne trouve pas darraowl, ajoute ~/.local/bin à ton PATH.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Text("Les notifications partent quand personne n'est devant le Mac : capot fermé ou une minute sans activité.")
-                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let setupProblem {
+                Text(setupProblem).font(.caption).foregroundStyle(.red)
             }
             Section("Système") {
                 Toggle("Ouvrir DarraOwl à la connexion", isOn: Binding(
@@ -78,7 +116,10 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 460)
-        .onAppear(perform: load)
+        .onAppear {
+            load()
+            refreshSetup()
+        }
         .onChange(of: model.status?.settings) { _, _ in load() }
     }
 
@@ -127,6 +168,42 @@ struct SettingsView: View {
             return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
         }
         return bundleID
+    }
+
+    // MARK: Claude Code and Terminal
+
+    private var claudeStateText: String {
+        if !ClaudeCodeSetup.claudeInstalled { return "Claude Code n'est pas installé" }
+        switch claudeState {
+        case .absent: return "Désactivé"
+        case .installed: return "Activé"
+        case .outdated: return "À mettre à jour"
+        }
+    }
+
+    private var linkStateText: String {
+        switch linkState {
+        case .installed: "Installée dans ~/.local/bin"
+        case .absent: "Non installée"
+        case .elsewhere: "Pointe vers une autre copie de DarraOwl"
+        case .foreign: "~/.local/bin/darraowl existe déjà et n'est pas à DarraOwl : rien n'est modifié."
+        case .unavailable: "Indisponible dans cette version de développement"
+        }
+    }
+
+    private func setup(_ change: () throws -> Void) {
+        do {
+            try change()
+            setupProblem = nil
+        } catch {
+            setupProblem = error.localizedDescription
+        }
+        refreshSetup()
+    }
+
+    private func refreshSetup() {
+        claudeState = ClaudeCodeSetup.state()
+        linkState = CommandLineLink.state()
     }
 
     // MARK: State

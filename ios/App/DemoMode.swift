@@ -20,18 +20,28 @@ enum DemoMode {
 
     static let macID = UUID()
 
-    static func state(sessionEnd: Date?) -> MacState {
+    static let demoAgents: [MacState.Agent] = {
         let now = Date()
+        return [
+            .init(tool: "claude", project: "site-vitrine", since: now.addingTimeInterval(-2300), waitingForApproval: true, pid: 4101),
+            .init(tool: "codex", project: "api", since: now.addingTimeInterval(-900), waitingForApproval: false, pid: 4102),
+        ]
+    }()
+
+    static func state(sessionEnd: Date?, watching: [Int32] = []) -> MacState {
+        let now = Date()
+        let followed = watching.compactMap { pid in
+            demoAgents.first { $0.pid == pid }.map {
+                WatchedProcess(pid: pid, name: $0.tool, project: $0.project, startSeconds: 0, startMicros: 0)
+            }
+        }
         return MacState(
             macID: macID, macName: "MacBook Pro", updatedAt: now, power: .awake,
-            session: sessionEnd.map { Session(startedAt: now.addingTimeInterval(-2400), endsAt: $0, origin: .phone) },
+            session: sessionEnd.map { Session(startedAt: now.addingTimeInterval(-2400), endsAt: $0, origin: .phone, watching: followed) },
             powerSnapshot: PowerSnapshot(battery: .percent(82), onExternalPower: false, thermal: .nominal, lidClosed: true, minutesToEmpty: 310),
             lowPowerActive: true, pausedApps: ["Slack", "WhatsApp"],
             network: .init(kind: .hotspot, name: "iPhone", sessionBytes: 184_000_000),
-            agents: [
-                .init(tool: "claude", project: "site-vitrine", since: now.addingTimeInterval(-2300), waitingForApproval: true),
-                .init(tool: "codex", project: "api", since: now.addingTimeInterval(-900), waitingForApproval: false),
-            ],
+            agents: demoAgents,
             containers: [.init(id: "3f9a2c1b7d4e", name: "postgres"), .init(id: "8b1e5d2a9c0f", name: "redis")],
             dockerPaused: false, settings: .default
         )
@@ -56,11 +66,12 @@ private final class DemoDirect: DirectLink {
     var onResult: ((CommandResult) -> Void)?
     var onPathChange: ((ConnectionPath?) -> Void)?
     private var end: Date? = Date().addingTimeInterval(6420)
+    private var watching: [Int32] = []
 
     func connect(to mac: PairedMac, identity: PhoneIdentity) {
         path = .local
         onPathChange?(.local)
-        onState?(DemoMode.state(sessionEnd: end))
+        onState?(DemoMode.state(sessionEnd: end, watching: watching))
     }
 
     func disconnect() {}
@@ -70,14 +81,19 @@ private final class DemoDirect: DirectLink {
         switch env.kind {
         case let .extendSession(m): end = (end ?? Date()).addingTimeInterval(TimeInterval(m * 60))
         case let .startSession(m): end = Date().addingTimeInterval(TimeInterval(m * 60))
-        case .stopSession, .sleepNow: end = nil
+        case let .watchAgent(pid):
+            if end == nil { end = Date().addingTimeInterval(PowerSettings.default.maxSessionDuration) }
+            if !watching.contains(pid) { watching.append(pid) }
+        case .stopSession, .sleepNow:
+            end = nil
+            watching = []
         default: break
         }
         onResult?(CommandResult(commandID: env.id, status: .executed, message: nil, at: Date()))
-        onState?(DemoMode.state(sessionEnd: end))
+        onState?(DemoMode.state(sessionEnd: end, watching: watching))
     }
 
-    func requestState() { onState?(DemoMode.state(sessionEnd: end)) }
+    func requestState() { onState?(DemoMode.state(sessionEnd: end, watching: watching)) }
 }
 
 @MainActor

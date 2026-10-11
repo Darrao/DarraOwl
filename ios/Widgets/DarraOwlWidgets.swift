@@ -36,6 +36,9 @@ struct DarraOwlLiveActivity: Widget {
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(spacing: 8) {
+                        if let following = context.state.following {
+                            Text("Tant que \(following) tourne").font(.caption).lineLimit(1)
+                        }
                         AgentsLine(running: context.state.agentsRunning, waiting: context.state.agentsWaiting)
                         HStack {
                             Button(intent: ExtendMacIntent()) { Label("+1 h", systemImage: "plus") }
@@ -66,7 +69,8 @@ struct LockScreenActivityView: View {
         HStack(alignment: .center, spacing: 14) {
             OwlShape(awake: true).stroke(lineWidth: 2).frame(width: 34, height: 34)
             VStack(alignment: .leading, spacing: 2) {
-                Text(context.attributes.macName).font(.subheadline).foregroundStyle(.secondary)
+                Text(context.state.following.map { "\(context.attributes.macName) · tant que \($0) tourne" } ?? context.attributes.macName)
+                    .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 Countdown(endsAt: context.state.endsAt)
                     .font(.system(size: 30, weight: .light).monospacedDigit())
                 HStack(spacing: 10) {

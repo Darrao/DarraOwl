@@ -146,6 +146,25 @@ public final class AppModel {
         perform(.stop(reason: .userStopped))
     }
 
+    /// Agent mode from the menu: stay awake while this agent runs, at most the cap.
+    public func follow(_ agent: AgentProcess) {
+        guard let request = Self.watchRequest(agent) else {
+            lastError = EngineError.processGone.localizedDescription
+            return
+        }
+        perform(request)
+    }
+
+    /// The helper checks the identity read here against the process table.
+    static func watchRequest(_ agent: AgentProcess) -> HelperRequest? {
+        guard case let .present(state) = SysctlProcessControl().lookup(agent.pid) else { return nil }
+        let process = WatchedProcess(
+            pid: agent.pid, name: agent.tool, project: agent.project,
+            startSeconds: state.identity.startSeconds, startMicros: state.identity.startMicros
+        )
+        return .watch(process, seconds: nil, origin: .agent)
+    }
+
     public func updateSettings(_ settings: PowerSettings) {
         perform(.updateSettings(settings))
     }

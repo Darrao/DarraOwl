@@ -62,6 +62,8 @@ final class FakeTarget: CommandTarget {
     func resumeDocker() async throws { try record("resumeDocker") }
     func stopContainer(id: String) async throws { try record("stopContainer \(id)") }
     func updateSettings(_ settings: PowerSettings) async throws { try record("settings \(settings.lowPowerFloor)/\(settings.endFloor)"); currentSettings = settings }
+    var agentPIDs: [Int32] = [4242]
+    func watchAgent(pid: Int32) async throws { try record("watch \(pid)") }
 }
 
 @MainActor
@@ -192,6 +194,17 @@ struct HubRig {
         let cmd = try rig.phone.sign(kind, mac: rig.macID, at: rig.clock.now(), faceID: true)
         #expect(await rig.hub.handle(cmd, via: .cloud).status == .rejected)
         #expect(rig.target.calls.isEmpty)
+    }
+
+    @Test func watchOnlyAPublishedAgent() async throws {
+        let rig = HubRig().paired()
+        let known = try rig.phone.sign(.watchAgent(pid: 4242), mac: rig.macID, at: rig.clock.now())
+        let unknown = try rig.phone.sign(.watchAgent(pid: 1), mac: rig.macID, at: rig.clock.now())
+        let gone = try rig.phone.sign(.watchAgent(pid: 777), mac: rig.macID, at: rig.clock.now())
+        #expect(await rig.hub.handle(known, via: .cloud).status == .executed)
+        #expect(await rig.hub.handle(unknown, via: .cloud).status == .rejected)
+        #expect(await rig.hub.handle(gone, via: .cloud).status == .failed)
+        #expect(rig.target.calls == ["watch 4242"])
     }
 
     @Test func unknownContainerFails() async throws {

@@ -31,6 +31,8 @@ import Foundation
     func resumeDocker() async throws {}
     func stopContainer(id: String) async throws {}
     func updateSettings(_ settings: PowerSettings) async throws { calls.append("settings") }
+    var agentPIDs: [Int32] = []
+    func watchAgent(pid: Int32) async throws { calls.append("watch \(pid)") }
 }
 
 final class MemoryLedger: ValueStoring, @unchecked Sendable {
@@ -99,7 +101,11 @@ var failures = 0
 
     // Phone side
     let phoneStore = MemoryPhoneStore()
-    let phone = PhoneModel(.init(store: phoneStore, direct: NWDirectLink(), cloud: NoCloud(), pairing: NWPairingDirect()))
+    // The phone waits between connection attempts: its clock is moved on
+    // instead of waiting for real.
+    var offset: TimeInterval = 0
+    let phone = PhoneModel(.init(store: phoneStore, direct: NWDirectLink(), cloud: NoCloud(), pairing: NWPairingDirect(),
+                                 now: { Date().addingTimeInterval(offset) }))
 
     await phone.pair(url: try! invite.url())
     check(phone.pairingError == nil && phone.mac != nil, "appairage direct (\(phone.pairingError ?? "accepté"))")
@@ -113,7 +119,10 @@ var failures = 0
     var mac = phoneStore.mac!
     mac.endpoints = Endpoints(port: server.port!, local: ["127.0.0.1"], tailscale: nil)
     try! phoneStore.save(mac)
+    offset = PhoneModel.reconnectInterval
     await phone.start()
+    // Back to the real time: commands are signed with it.
+    offset = 0
     for _ in 0..<60 where phone.directPath == nil || phone.state == nil { try? await Task.sleep(for: .milliseconds(100)) }
     check(phone.directPath == .local, "connexion directe chiffrée")
     check(phone.state?.macName == "Mac E2E", "état reçu du Mac")

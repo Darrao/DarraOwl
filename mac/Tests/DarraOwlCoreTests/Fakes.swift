@@ -157,8 +157,12 @@ final class FakeProcesses: ProcessControlling, Sendable {
     func set(_ pid: Int32, _ state: ProcessState?) { table.withLock { $0[pid] = state } }
     func state(_ pid: Int32) -> ProcessState? { table.withLock { $0[pid] } }
 
+    /// Pids the kernel does not answer for.
+    let unreadable = Mutex<Set<Int32>>([])
+
     func lookup(_ pid: Int32) -> ProcessLookup {
-        table.withLock { t in t[pid].map { .present($0) } ?? .absent }
+        if unreadable.withLock({ $0.contains(pid) }) { return .unreadable(EPERM) }
+        return table.withLock { t in t[pid].map { .present($0) } ?? .absent }
     }
 
     func signal(_ pid: Int32, _ signal: Int32) -> Int32 {

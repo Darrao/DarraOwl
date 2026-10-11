@@ -235,7 +235,12 @@ struct MacView: View {
                     Text(timerInterval: Date()...max(Date(), session.endsAt), countsDown: true)
                         .font(.system(size: 64, weight: .thin).monospacedDigit())
                         .lineLimit(1).minimumScaleFactor(0.6)
-                    Text("Fin à \(DurationText.clock(session.endsAt))").foregroundStyle(.secondary)
+                    if let watching = session.watchingText {
+                        Text("Tant que \(watching) tourne").font(.body.weight(.medium))
+                        Text("Au plus tard à \(DurationText.clock(session.endsAt))\(keepText(session))").foregroundStyle(.secondary)
+                    } else {
+                        Text("Fin à \(DurationText.clock(session.endsAt))").foregroundStyle(.secondary)
+                    }
                     TimelineView(.periodic(from: .now, by: 30)) { context in
                         ProgressView(value: progress(session, at: context.date))
                             .tint(.primary)
@@ -287,6 +292,11 @@ struct MacView: View {
         .disabled(model.isBusy || !online)
     }
 
+    private func keepText(_ s: Session) -> String {
+        guard let keep = s.keepUntil, keep > Date() else { return "" }
+        return ", et au moins jusqu'à \(DurationText.clock(keep))"
+    }
+
     private func progress(_ s: Session, at date: Date) -> Double {
         let total = s.endsAt.timeIntervalSince(s.startedAt)
         guard total > 0 else { return 1 }
@@ -296,20 +306,36 @@ struct MacView: View {
     // MARK: Agents
 
     private func agentsBlock(_ s: MacState) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let watched = Set(s.session?.watching.map(\.pid) ?? [])
+        return VStack(alignment: .leading, spacing: 12) {
             SectionTitle("Agents")
             ForEach(Array(s.agents.enumerated()), id: \.offset) { _, agent in
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .center) {
                     Image(systemName: "terminal").foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(agent.project.map { "\(agent.tool) · \($0)" } ?? agent.tool).font(.body.weight(.medium))
-                        Text("depuis \(agent.since.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(.secondary)
+                        if agent.waitingForApproval {
+                            Text("attend ta validation").font(.caption.weight(.medium)).foregroundStyle(.orange)
+                        } else {
+                            Text("depuis \(agent.since.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                     Spacer()
-                    if agent.waitingForApproval {
-                        Text("attend ta validation").font(.caption.weight(.medium)).foregroundStyle(.orange)
+                    if let pid = agent.pid {
+                        if watched.contains(pid) {
+                            Text("suivi").font(.subheadline).foregroundStyle(.secondary)
+                        } else {
+                            Button("Suivre") { Task { await model.send(.watchAgent(pid: pid)) } }
+                                .buttonStyle(.glass)
+                                .disabled(model.isBusy || !online)
+                                .accessibilityHint("Garde le Mac éveillé tant que cet agent tourne")
+                        }
                     }
                 }
+            }
+            if watched.isEmpty, s.agents.contains(where: { $0.pid != nil }) {
+                Text("Suivre : le Mac reste éveillé tant que l'agent tourne, au plus \(DurationText.short(s.settings.maxSessionDuration)).")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }

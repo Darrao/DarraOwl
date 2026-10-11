@@ -24,7 +24,8 @@ possible :
 - l'état du Mac : session en cours, batterie, température, type de réseau et
   data consommée, noms des agents de code en cours (claude, codex, gemini) et
   de leurs dossiers de projet (ces noms peuvent être masqués dans les
-  réglages), conteneurs Docker en cours ;
+  réglages), conteneurs Docker en cours, et en mode agent le nom de la
+  commande suivie (jamais ses arguments) ;
 - les adresses réseau du Mac (locale, Tailscale), pour la connexion directe ;
 - les commandes envoyées par l'iPhone, signées, et leurs résultats ;
 - le titre et le texte des notifications (par exemple « Claude a fini », avec
@@ -36,7 +37,8 @@ chiffré par iCloud. Le développeur n'y a pas accès.
 
 DarraOwl n'envoie **jamais** le contenu de tes fichiers, tes prompts ni ce que
 produisent tes agents de code. Pour les hooks de Claude Code, seuls le nom de
-l'événement et le nom du dossier sont lus.
+l'événement et le nom du dossier sont lus. Ces hooks ne sont ajoutés à
+`~/.claude/settings.json` que si tu cliques sur Activer.
 
 ## Réseau local, caméra, Face ID, notifications
 

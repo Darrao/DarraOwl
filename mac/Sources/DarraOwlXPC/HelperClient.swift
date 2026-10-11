@@ -1,4 +1,3 @@
-import DarraOwlXPC
 import Foundation
 import Synchronization
 
@@ -16,8 +15,8 @@ public enum HelperClientError: Error, LocalizedError, Sendable {
     }
 }
 
-/// XPC connection to the privileged helper. The helper must satisfy a code
-/// requirement pinned to this app's own Team ID.
+/// XPC connection to the privileged helper, for the app and the CLI. The
+/// helper must satisfy a code requirement pinned to the caller's own Team ID.
 @MainActor
 public final class HelperClient {
     private var connection: NSXPCConnection?

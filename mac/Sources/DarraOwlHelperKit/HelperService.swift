@@ -106,6 +106,11 @@ public final class HelperService: NSObject, HelperXPCProtocol, Sendable {
                 status = try await engine.sleepNow()
             case .lidChanged:
                 status = await engine.evaluate()
+            case let .watch(process, seconds, origin):
+                let allowed: Set<SessionOrigin> = [.agent, .cli]
+                status = try await engine.watch(process, seconds: seconds, origin: allowed.contains(origin) ? origin : .agent, requesterUID: clientUID)
+            case let .release(pid):
+                status = await engine.release(pid: pid)
             case .restartIfIdle:
                 status = await engine.status()
                 if status.session == nil, !status.sleepHeld, !status.lowPowerHeld, status.frozen.isEmpty {

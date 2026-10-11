@@ -99,7 +99,7 @@ public struct AgentSignals: Sendable {
     public func states(_ agents: [AgentProcess], now: Date, mask: Bool) -> [MacState.Agent] {
         agents.map {
             MacState.Agent(tool: $0.tool, project: mask ? nil : $0.project, since: $0.startedAt,
-                           waitingForApproval: isWaiting(cwd: $0.cwd, now: now))
+                           waitingForApproval: isWaiting(cwd: $0.cwd, now: now), pid: $0.pid)
         }
     }
 }
@@ -125,21 +125,6 @@ public enum ClaudeHook {
         case "Notification": return .waiting(cwd: p.cwd)
         default: return .ignored
         }
-    }
-
-    /// The block to add to ~/.claude/settings.json.
-    public static func settingsSnippet(port: UInt16, token: String) -> String {
-        let hook = """
-        {"type": "http", "url": "http://127.0.0.1:\(port)/hooks/claude", "timeout": 5, "headers": {"Authorization": "Bearer \(token)"}}
-        """
-        return """
-        {
-          "hooks": {
-            "Stop": [{"hooks": [\(hook)]}],
-            "Notification": [{"hooks": [\(hook)]}]
-          }
-        }
-        """
     }
 }
 

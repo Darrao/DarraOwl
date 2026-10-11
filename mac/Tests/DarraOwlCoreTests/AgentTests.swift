@@ -27,7 +27,7 @@ import Testing
         var s = AgentSignals()
         let a = AgentProcess(pid: 11, tool: "claude", cwd: "/Users/me/Dev/DarraOwl", startedAt: t)
         s.record(.waiting, cwd: "/Users/me/Dev/DarraOwl", at: t)
-        #expect(s.states([a], now: t.addingTimeInterval(60), mask: false) == [MacState.Agent(tool: "claude", project: "DarraOwl", since: t, waitingForApproval: true)])
+        #expect(s.states([a], now: t.addingTimeInterval(60), mask: false) == [MacState.Agent(tool: "claude", project: "DarraOwl", since: t, waitingForApproval: true, pid: 11)])
         #expect(s.states([a], now: t.addingTimeInterval(60), mask: true).first?.project == nil)
         s.record(.finished, cwd: "/Users/me/Dev/DarraOwl", at: t.addingTimeInterval(90))
         #expect(!s.isWaiting(cwd: a.cwd, now: t.addingTimeInterval(100)))
@@ -44,15 +44,6 @@ import Testing
         #expect(ClaudeHook.parse(note) == .waiting(cwd: "/p/x"))
         #expect(ClaudeHook.parse(Data(#"{"hook_event_name":"PreToolUse"}"#.utf8)) == .ignored)
         #expect(ClaudeHook.parse(Data("nope".utf8)) == nil)
-    }
-
-    @Test func snippetIsValidJSON() throws {
-        let s = ClaudeHook.settingsSnippet(port: 52526, token: "abc")
-        let json = try JSONSerialization.jsonObject(with: Data(s.utf8)) as? [String: Any]
-        let hooks = json?["hooks"] as? [String: Any]
-        #expect(hooks?.keys.sorted() == ["Notification", "Stop"])
-        #expect(s.contains("http://127.0.0.1:52526/hooks/claude"))
-        #expect(s.contains("Bearer abc"))
     }
 }
 

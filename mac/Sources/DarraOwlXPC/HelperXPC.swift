@@ -11,7 +11,7 @@ public enum HelperConstants {
     /// The CLI of phase 5 talks to the helper too.
     public static let cliIdentifier = "com.darrao.darraowl.mac.cli"
     /// Bumped when the request or response shape changes.
-    public static let protocolVersion = 2
+    public static let protocolVersion = 3
 }
 
 /// The XPC surface. Requests and responses travel as JSON so the Objective-C
@@ -42,6 +42,11 @@ public enum HelperRequest: Codable, Equatable, Sendable {
     case sleepNow
     /// Asks an idle helper to exit so launchd starts the updated binary.
     case restartIfIdle
+    /// Agent mode: stay awake while this process of the client's user runs,
+    /// at most `seconds` (the cap when nil).
+    case watch(WatchedProcess, seconds: TimeInterval?, origin: SessionOrigin)
+    /// The CLI's command finished.
+    case release(pid: Int32)
 }
 
 public struct HelperResponse: Codable, Equatable, Sendable {

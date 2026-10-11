@@ -69,7 +69,9 @@ final class PhoneRuntime {
         case let .lastSeen(date): text = "\(state.macName) n'a pas donné de nouvelles depuis \(DurationText.clock(date))."
         default: text = "\(state.macName) est en ligne."
         }
-        if let session = state.session {
+        if let session = state.session, let watching = session.watchingText {
+            text += " Il reste éveillé tant que \(watching) tourne, au plus jusqu'à \(DurationText.clock(session.endsAt))."
+        } else if let session = state.session {
             text += " Il reste éveillé jusqu'à \(DurationText.clock(session.endsAt))."
         } else {
             text += " Aucune session en cours."
@@ -129,7 +131,8 @@ final class LiveActivityController {
             lidClosed: state.powerSnapshot?.lidClosed ?? false,
             agentsRunning: state.agents.count,
             agentsWaiting: state.agents.filter(\.waitingForApproval).count,
-            online: online
+            online: online,
+            following: session.watchingText
         )
         let activityContent = ActivityContent(state: content, staleDate: session.endsAt)
         if let current, current.activityState == .active {

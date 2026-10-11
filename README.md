@@ -1,7 +1,7 @@
 # DarraOwl
 
-Garde ton MacBook éveillé, capot fermé compris, pendant une durée limitée.
-Chaque session a une heure de fin. À cette heure-là, la veille revient, même si
+Garde ton MacBook éveillé, capot fermé compris, pendant une durée limitée ou
+tant qu'un agent de code tourne. Chaque session a une heure de fin. À cette heure-là, la veille revient, même si
 l'app a planté ou a été quittée.
 
 Il y a deux apps :
@@ -159,19 +159,57 @@ session, qui a toujours une heure de fin.
   signée, expire au bout de 60 s et ne s'exécute qu'une fois.
 - **Désappairer**, depuis le Mac, coupe l'accès de l'iPhone immédiatement.
 
+## Mode agent
+
+Pour qu'une tâche longue finisse capot fermé, sans deviner sa durée : le Mac
+reste éveillé tant que l'agent tourne, puis retrouve sa veille normale. Il y a
+toujours une heure de fin : au plus la durée maximale des Réglages.
+
+- **Menu** : la section Agents liste claude, codex et gemini en cours, avec
+  leur projet. Clique sur **Suivre**.
+- **iPhone** : même liste, même bouton **Suivre**.
+- **Terminal** : voir ci-dessous.
+
+Si une session minutée était déjà en cours, elle dure jusqu'à son heure de
+fin prévue ou jusqu'à la fin de l'agent, selon ce qui arrive en dernier.
+Plusieurs agents peuvent être suivis : la session s'arrête avec le dernier.
+
+## Terminal
+
+DarraOwl > Réglages > Terminal > **Installer la commande** crée le lien
+`~/.local/bin/darraowl` (sans `sudo`).
+
+```bash
+darraowl run 3h -- claude     # éveillé tant que claude tourne, au plus 3 h
+darraowl run -- npm test      # au plus la durée maximale
+darraowl start 2h             # session minutée
+darraowl extend 1h
+darraowl status
+darraowl stop
+```
+
+`darraowl run` lance la commande dans ton terminal, comme si tu l'avais tapée,
+et rend son code de sortie. Si DarraOwl ne peut pas garder le Mac éveillé
+(batterie sous le seuil, composant système absent), la commande n'est pas
+lancée. Seul le nom de la commande est affiché sur l'iPhone, jamais ses
+arguments.
+
 ## Claude Code
 
-DarraOwl > Réglages > Claude Code > **Copier la configuration**, puis colle-la
-dans `~/.claude/settings.json`, en la fusionnant avec ta clé `hooks` si tu en
-as déjà une. Tu reçois alors « Claude a fini » ou « Claude attend ta
-validation », avec le nom du projet, quand personne n'est devant le Mac
-(capot fermé ou une minute sans activité).
+DarraOwl > Réglages > Claude Code > **Activer**. Tu reçois alors « Claude a
+fini » ou « Claude attend ta validation », avec le nom du projet, quand
+personne n'est devant le Mac (capot fermé ou une minute sans activité).
+
+Le bouton ajoute deux « hooks » (Stop et Notification) dans
+`~/.claude/settings.json`, sans toucher au reste du fichier. Il en garde
+d'abord une copie dans `~/.claude/settings.json.darraowl-backup`.
+**Désactiver** retire exactement ces deux entrées. Les sessions de Claude
+déjà ouvertes en tiennent compte à leur prochain lancement.
 
 Le Mac n'écoute que sur `127.0.0.1:52526` et exige un jeton, rangé dans le
 trousseau. Seuls l'événement et le nom du dossier sont lus, jamais le contenu.
 
-Les agents en cours (claude, codex, gemini) sont détectés automatiquement,
-avec leur projet. Les noms de projets peuvent être masqués dans les réglages.
+Les noms de projets peuvent être masqués dans les réglages des alertes.
 
 ## Ce que DarraOwl modifie
 
@@ -217,8 +255,9 @@ scripts/uninstall.sh          # session arrêtée, réglages rétablis, app supp
 scripts/uninstall.sh --purge  # supprime aussi les préférences
 ```
 
-La désinstallation supprime aussi les clés d'appairage et les données
-iCloud de DarraOwl. Le script ne lance jamais `sudo`. Si la veille n'a pas pu être rétablie, il
+La désinstallation supprime aussi les clés d'appairage, les données
+iCloud de DarraOwl, ses hooks dans `~/.claude/settings.json` et le lien
+`~/.local/bin/darraowl`. Le script ne lance jamais `sudo`. Si la veille n'a pas pu être rétablie, il
 affiche la commande exacte à lancer.
 
 ## Développement

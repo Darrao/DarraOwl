@@ -12,6 +12,8 @@ struct DarraOwlActivityAttributes: ActivityAttributes {
         var agentsRunning: Int
         var agentsWaiting: Int
         var online: Bool
+        /// Agent mode: "claude · DarraOwl".
+        var following: String?
     }
 
     var macName: String

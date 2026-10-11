@@ -71,6 +71,26 @@ enum Uninstaller {
             print("Clés d'appairage supprimées du trousseau.")
         }
 
+        // Our hooks in Claude Code's settings, the hook token, the darraowl link.
+        if ClaudeCodeSetup.state() != .absent {
+            do {
+                try ClaudeCodeSetup.remove()
+                print("Hooks de DarraOwl retirés de \(ClaudeCodeSetup.file.path) (copie : \(ClaudeCodeSetup.backup.lastPathComponent)).")
+            } catch {
+                clean = false
+                print("Hooks de Claude Code : \(error.localizedDescription) Retire à la main les entrées 127.0.0.1:\(HookServer.port).")
+            }
+        }
+        HookToken.remove()
+        if CommandLineLink.state() != .absent, CommandLineLink.state() != .foreign {
+            do {
+                try CommandLineLink.remove()
+                print("Commande darraowl retirée de ~/.local/bin.")
+            } catch {
+                print("Commande darraowl : \(error.localizedDescription)")
+            }
+        }
+
         if SMAppService.mainApp.status != .notRegistered {
             do {
                 try await SMAppService.mainApp.unregister()

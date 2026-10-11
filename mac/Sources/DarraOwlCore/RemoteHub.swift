@@ -35,6 +35,10 @@ public protocol CommandTarget: AnyObject {
     func resumeDocker() async throws
     func stopContainer(id: String) async throws
     func updateSettings(_ settings: PowerSettings) async throws
+    /// Agent mode: stay awake while this agent runs.
+    func watchAgent(pid: Int32) async throws
+    /// Agents now running, to check a watch request against.
+    var agentPIDs: [Int32] { get }
     /// Settings now, to merge a partial change into.
     var currentSettings: PowerSettings? { get }
     /// Containers now running, to check a stop request against.
@@ -250,6 +254,9 @@ public final class RemoteHub {
             guard var s = target.currentSettings else { throw RemoteError.helperUnavailable }
             s.alerts = alerts
             try await target.updateSettings(s)
+        case let .watchAgent(pid):
+            guard target.agentPIDs.contains(pid) else { throw RemoteError.unknownAgent }
+            try await target.watchAgent(pid: pid)
         case let .updateBatteryFloors(lowPower, end):
             guard var s = target.currentSettings else { throw RemoteError.helperUnavailable }
             s.lowPowerFloor = lowPower
@@ -372,12 +379,14 @@ public enum RemoteError: Error, LocalizedError, Sendable {
     case unknownContainer
     case helperUnavailable
     case notDuringSession
+    case unknownAgent
 
     public var errorDescription: String? {
         switch self {
         case .unknownContainer: "Ce conteneur ne tourne pas sur le Mac."
         case .helperUnavailable: "Composant système injoignable."
         case .notDuringSession: "Possible seulement pendant une session."
+        case .unknownAgent: "Cet agent ne tourne plus sur le Mac."
         }
     }
 }
