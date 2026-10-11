@@ -179,6 +179,15 @@ La montre passe par l'iPhone : c'est lui qui signe les commandes avec ses
 clés. Ce qui demande Face ID (veille, arrêt d'un conteneur ou d'un agent)
 reste sur l'iPhone.
 
+## Sans Wi-Fi
+
+Pour que le Mac rejoigne tout seul le partage de connexion de ton iPhone quand
+il perd le Wi-Fi, capot fermé compris : Réglages Système > Wi-Fi > **Proposer
+des partages de connexion** > **Automatique**. Il faut la même Apple ID sur
+le Mac et l'iPhone, avec le Bluetooth et le Wi-Fi activés. DarraOwl compte
+alors la data de la session et te prévient au-delà du seuil choisi dans les
+alertes.
+
 ## Mode agent
 
 Pour qu'une tâche longue finisse capot fermé, sans deviner sa durée : le Mac
