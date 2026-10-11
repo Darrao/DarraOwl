@@ -6,7 +6,7 @@ struct MenuBarLabel: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Image(nsImage: OwlIcon.image(awake: model.session != nil))
+            Image(nsImage: OwlIcon.image(awake: model.session != nil || model.presenceActive))
             if let remaining = model.remaining {
                 Text(DurationText.countdown(remaining))
                     .monospacedDigit()
@@ -32,6 +32,8 @@ struct MenuView: View {
             } else {
                 idle
             }
+            Divider()
+            presenceSection
             messages
             Divider()
             footer
@@ -120,6 +122,38 @@ struct MenuView: View {
             powerLine
         }
         .disabled(model.busy)
+    }
+
+    static let presenceDurations: [TimeInterval] = [3600, 2 * 3600, 4 * 3600, 8 * 3600]
+
+    private var presenceSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Toujours actif").font(.callout)
+                Spacer()
+                if model.presenceActive {
+                    Text(model.presenceUntil.map { "jusqu'à \(DurationText.clock($0))" } ?? "sans limite")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            if model.presenceActive {
+                Button("Arrêter") { model.stopPresence() }
+            } else {
+                HStack {
+                    Button("Sans limite") { model.startPresence(duration: nil) }
+                    ForEach(Self.presenceDurations, id: \.self) { d in
+                        Button(DurationText.short(d)) { model.startPresence(duration: d) }
+                    }
+                }
+                .controlSize(.small)
+            }
+            Text("Le Mac ne se met pas en veille et ton statut Teams reste « Disponible », tant que le capot est ouvert. Capot fermé, lance une session.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !model.presenceActive, let stop = model.presenceLastStop, stop != .user {
+                Text("Mode présence arrêté : \(stop.label.lowercased())").font(.caption).foregroundStyle(.orange)
+            }
+        }
     }
 
     @ViewBuilder

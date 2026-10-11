@@ -19,6 +19,13 @@ public final class AppModel {
     public private(set) var now = Date()
     public private(set) var loginItemEnabled = false
 
+    /// Presence ("toujours actif"): held by the app, independent of sessions.
+    public private(set) var presenceActive = false
+    public private(set) var presenceUntil: Date?
+    public private(set) var presenceLastStop: PresenceStopReason?
+    private let presence = PresenceController(asserter: IOPMPresenceAsserter())
+    static let presenceIndefiniteKey = "presenceIndefinite"
+
     private let client = HelperClient()
     private let log = Logger(subsystem: "com.darrao.darraowl", category: "app")
     private var loop: Task<Void, Never>?
@@ -42,11 +49,17 @@ public final class AppModel {
     public func start() {
         guard loop == nil else { return }
         configureLoginItemOnFirstLaunch()
+        // "Sans limite" survives a relaunch, so the Mac stays active after a
+        // restart; a timed presence does not.
+        if UserDefaults.standard.bool(forKey: Self.presenceIndefiniteKey) {
+            startPresence(duration: nil)
+        }
         loop = Task { [weak self] in
             var tick = 0
             while !Task.isCancelled {
                 guard let self else { return }
                 self.now = Date()
+                self.tickPresence()
                 // Ask the helper every 2 s during a session, every 10 s otherwise.
                 let every = self.session == nil ? 10 : 2
                 if tick % every == 0 { await self.refresh() }
@@ -108,6 +121,41 @@ public final class AppModel {
             }
             NSApp.terminate(nil)
         }
+    }
+
+    // MARK: Presence
+
+    /// `duration` nil: no end time.
+    public func startPresence(duration: TimeInterval?) {
+        let now = Date()
+        do {
+            try presence.start(until: duration.map { now.addingTimeInterval($0) }, now: now)
+            UserDefaults.standard.set(duration == nil, forKey: Self.presenceIndefiniteKey)
+        } catch {
+            lastError = "Mode présence : \(error.localizedDescription)"
+        }
+        syncPresence()
+    }
+
+    public func stopPresence() {
+        presence.stop(.user)
+        UserDefaults.standard.set(false, forKey: Self.presenceIndefiniteKey)
+        syncPresence()
+    }
+
+    private func tickPresence() {
+        guard presence.isActive else { return }
+        presence.tick(now: now, power: status?.power, settings: status?.settings ?? .default)
+        if !presence.isActive {
+            UserDefaults.standard.set(false, forKey: Self.presenceIndefiniteKey)
+        }
+        syncPresence()
+    }
+
+    private func syncPresence() {
+        presenceActive = presence.isActive
+        presenceUntil = presence.until
+        presenceLastStop = presence.lastStop
     }
 
     // MARK: Helper and login item

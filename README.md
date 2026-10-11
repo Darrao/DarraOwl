@@ -58,6 +58,25 @@ Une température critique arrête la session, une température élevée active l
 mode économie d'énergie. Le composant système applique ces règles même quand
 l'app est fermée. Tu peux changer les seuils dans Réglages.
 
+## Toujours actif (mode présence)
+
+C'est le même principe que Caffeine ou Amphetamine. Choisis **Sans limite**,
+1 h, 2 h, 4 h ou 8 h dans la section **Toujours actif**. Tant que le capot
+est ouvert :
+
+- le Mac ne se met pas en veille et l'écran reste allumé ;
+- une activité est déclarée chaque minute, pour que Teams te garde
+  « Disponible ».
+
+**Sans limite** reste actif après un redémarrage, jusqu'à ce que tu cliques
+sur **Arrêter**. Sur batterie, le mode s'arrête sous le seuil de fin de
+session (15 %), ou en cas de température critique.
+
+Ce mode ne change aucun réglage système. Il utilise des assertions
+d'alimentation que macOS retire dès que l'app se ferme, même en cas de
+plantage. Il ne garde pas le Mac éveillé capot fermé : pour ça, lance une
+session, qui a toujours une heure de fin.
+
 ## Ce que DarraOwl modifie
 
 | Réglage | Pendant la session | Retour |
