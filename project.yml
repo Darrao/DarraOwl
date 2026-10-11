@@ -61,4 +61,5 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.darrao.darraowl.mac
         INFOPLIST_FILE: mac/Resources/App/Info.plist
         GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: mac/Resources/App/DarraOwl.entitlements
     scheme: {}

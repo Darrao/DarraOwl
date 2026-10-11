@@ -394,3 +394,16 @@ import Testing
         #expect(!h.journal.snapshot.removed)
     }
 }
+
+@Suite struct SleepNowTests {
+    @Test func sleepNowRestoresBeforeSleeping() async throws {
+        let h = Harness()
+        _ = await h.engine.reconcile()
+        _ = try await h.engine.start(duration: 3600, origin: .phone)
+        h.events.clear()
+        let status = try await h.engine.sleepNow()
+        #expect(status.lastEnd?.reason == .sleepRequested)
+        let events = h.events.all
+        #expect(events.firstIndex(of: "pmset disablesleep 0")! < events.firstIndex(of: "pmset sleepnow")!)
+    }
+}

@@ -60,6 +60,17 @@ enum Uninstaller {
             print("Composant système conservé : il réessaie toutes les 10 s. Relance la désinstallation ensuite.")
         }
 
+        if clean {
+            // Pairing keys and this Mac's iCloud records go too.
+            let store = KeychainPairingStore()
+            if let identity = try? store.identity() {
+                await CloudKitMailbox(macID: identity.macID).removeEverything()
+                print("Données iCloud de DarraOwl supprimées.")
+            }
+            store.removeAll()
+            print("Clés d'appairage supprimées du trousseau.")
+        }
+
         if SMAppService.mainApp.status != .notRegistered {
             do {
                 try await SMAppService.mainApp.unregister()

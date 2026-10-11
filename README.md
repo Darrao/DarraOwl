@@ -113,6 +113,29 @@ d'alimentation que macOS retire dès que l'app se ferme, même en cas de
 plantage. Il ne garde pas le Mac éveillé capot fermé : pour ça, lance une
 session, qui a toujours une heure de fin.
 
+## iPhone (en cours : phase 3)
+
+Le Mac est prêt à être piloté depuis l'iPhone. L'app iPhone arrive en
+phase 3b.
+
+- **Appairage** : DarraOwl > **iPhone…** > **Afficher le code d'appairage**.
+  Le code QR est valable 5 minutes et ne sert qu'une fois. Les clés
+  d'appairage restent dans le trousseau de ce Mac.
+- **Connexion directe** : sur le même Wi-Fi ou sur le partage de connexion de
+  l'iPhone, la connexion est chiffrée en TLS, avec une clé par iPhone
+  appairé. Le Mac est trouvé par Bonjour (`_darraowl._tcp`, port 52525).
+- **iCloud** : sinon, tout passe par ta base iCloud privée (conteneur
+  `iCloud.com.darrao.darraowl`). Le Mac y publie son état à chaque
+  changement, et au moins une fois par minute. Il y lit les commandes et y
+  écrit leurs résultats. Le contenu est chiffré par iCloud (`encryptedValues`).
+  Aucun serveur tiers n'intervient.
+- **Commandes** : la liste est fermée : démarrer, prolonger, arrêter, mettre
+  en veille, Docker, réglages. Chaque commande est signée par l'iPhone,
+  expire au bout de 60 s et ne s'exécute qu'une fois. Mettre en veille ou
+  arrêter un conteneur demande Face ID.
+- **Désappairer**, dans la même fenêtre, coupe l'accès de l'iPhone
+  immédiatement.
+
 ## Ce que DarraOwl modifie
 
 | Réglage | Pendant la session | Retour |
@@ -157,7 +180,8 @@ scripts/uninstall.sh          # session arrêtée, réglages rétablis, app supp
 scripts/uninstall.sh --purge  # supprime aussi les préférences
 ```
 
-Le script ne lance jamais `sudo`. Si la veille n'a pas pu être rétablie, il
+La désinstallation supprime aussi les clés d'appairage et les données
+iCloud de DarraOwl. Le script ne lance jamais `sudo`. Si la veille n'a pas pu être rétablie, il
 affiche la commande exacte à lancer.
 
 ## Développement

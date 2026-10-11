@@ -263,6 +263,20 @@ public actor SessionEngine {
         return status()
     }
 
+    /// Ends any session (everything undone), then puts the Mac to sleep.
+    public func sleepNow() async throws(EngineError) -> EngineStatus {
+        if journal.session != nil {
+            await end(reason: .sleepRequested)
+        }
+        do {
+            try await deps.power.sleepNow()
+        } catch {
+            throw .power(error.localizedDescription)
+        }
+        deps.log.info("sleep requested")
+        return status()
+    }
+
     public func updateSettings(_ new: PowerSettings) async throws(EngineError) -> EngineStatus {
         do {
             try new.validate()

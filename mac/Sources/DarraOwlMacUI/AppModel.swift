@@ -37,6 +37,8 @@ public final class AppModel {
     @ObservationIgnored private var lid: LidCoordinator!
     @ObservationIgnored private let lidObserver = LidObserver()
     @ObservationIgnored private var restoring = false
+    /// Phone link: pairing, direct server, iCloud.
+    public private(set) var remote: RemoteController!
 
     private let client = HelperClient()
     private let log = Logger(subsystem: "com.darrao.darraowl", category: "app")
@@ -61,6 +63,7 @@ public final class AppModel {
             helper: gateway,
             log: OSLogEngineLogger(category: "lid")
         ))
+        remote = RemoteController(model: self)
     }
 
     public var session: Session? { status?.session }
@@ -95,6 +98,8 @@ public final class AppModel {
                 self.now = Date()
                 self.tickPresence()
                 if tick % 30 == 0 { self.sampleBrightnessIfPresent() }
+                if self.reachable { self.remote.start() }
+                self.remote.everySecond()
                 // Ask the helper every 2 s during a session, every 10 s otherwise.
                 let every = self.session == nil ? 10 : 2
                 if tick % every == 0 { await self.refresh() }
@@ -158,6 +163,19 @@ public final class AppModel {
             NSApp.terminate(nil)
         }
     }
+
+    // MARK: Remote
+
+    /// For the remote controller: a helper request whose refusal throws.
+    func sendHelper(_ request: HelperRequest) async throws -> EngineStatus {
+        let response = try await client.send(request)
+        apply(response)
+        if let error = response.error { throw HelperRefusal(message: error) }
+        guard let status = response.status else { throw HelperClientError.badReply }
+        return status
+    }
+
+    var lidCoordinator: LidCoordinator { lid }
 
     // MARK: Lid
 

@@ -26,5 +26,11 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>DarraOwl reçoit les commandes de ton iPhone appairé sur le réseau local, de façon chiffrée.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_darraowl._tcp</string>
+	</array>
 </dict>
 </plist>

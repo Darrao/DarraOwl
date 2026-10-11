@@ -38,6 +38,8 @@ public enum HelperRequest: Codable, Equatable, Sendable {
     case resume(bundleID: String?)
     /// The lid opened or closed: re-evaluate Low Power Mode now.
     case lidChanged
+    /// End the session, then sleep now.
+    case sleepNow
     /// Asks an idle helper to exit so launchd starts the updated binary.
     case restartIfIdle
 }

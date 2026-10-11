@@ -42,6 +42,7 @@ public enum SessionEndReason: String, Codable, Sendable {
     case appQuit
     case uninstall
     case journalUnreadable
+    case sleepRequested
 
     /// French text for the menu and the phone.
     public var label: String {
@@ -55,6 +56,7 @@ public enum SessionEndReason: String, Codable, Sendable {
         case .appQuit: "DarraOwl a été quitté"
         case .uninstall: "Désinstallation"
         case .journalUnreadable: "Journal illisible"
+        case .sleepRequested: "Mise en veille demandée"
         }
     }
 }

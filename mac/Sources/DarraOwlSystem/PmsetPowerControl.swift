@@ -26,6 +26,10 @@ public struct PmsetPowerControl: PowerControlling {
         try await ProcessRunner.runChecked(Self.pmset, ["-a", "disablesleep", disabled ? "1" : "0"])
     }
 
+    public func sleepNow() async throws {
+        try await ProcessRunner.runChecked(Self.pmset, ["sleepnow"])
+    }
+
     public func setLowPowerMode(onBattery: Bool, onAC: Bool) async throws {
         try await ProcessRunner.runChecked(Self.pmset, ["-b", "lowpowermode", onBattery ? "1" : "0"])
         try await ProcessRunner.runChecked(Self.pmset, ["-c", "lowpowermode", onAC ? "1" : "0"])

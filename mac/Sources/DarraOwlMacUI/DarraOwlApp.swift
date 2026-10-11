@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct DarraOwlApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var model = AppModel()
 
     var body: some Scene {
@@ -9,13 +10,21 @@ struct DarraOwlApp: App {
             MenuView(model: model)
         } label: {
             MenuBarLabel(model: model)
-                .task { model.start() }
+                .task {
+                    AppDelegate.onCloudPush = { [model] in model.remote.cloudChanged() }
+                    model.start()
+                }
         }
         .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView(model: model)
         }
+
+        Window("iPhone", id: "pairing") {
+            PairingView(model: model, remote: model.remote)
+        }
+        .windowResizability(.contentSize)
     }
 }
 

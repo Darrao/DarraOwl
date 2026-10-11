@@ -102,6 +102,8 @@ public final class HelperService: NSObject, HelperXPCProtocol, Sendable {
                 status = try await engine.freeze(groups, requesterUID: clientUID)
             case let .resume(bundleID):
                 status = await engine.resume(onlyBundleID: bundleID)
+            case .sleepNow:
+                status = try await engine.sleepNow()
             case .lidChanged:
                 status = await engine.evaluate()
             case .restartIfIdle:

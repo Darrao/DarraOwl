@@ -23,6 +23,8 @@ public protocol PowerControlling: Sendable {
     func setSleepDisabled(_ disabled: Bool) async throws
     /// `pmset -b lowpowermode` and `pmset -c lowpowermode`, each profile on its own.
     func setLowPowerMode(onBattery: Bool, onAC: Bool) async throws
+    /// `pmset sleepnow`.
+    func sleepNow() async throws
 }
 
 public protocol PowerSourceReading: Sendable {

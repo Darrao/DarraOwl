@@ -51,6 +51,10 @@ final class FakePower: PowerControlling, Sendable {
         log.add("pmset disablesleep \(disabled ? 1 : 0)")
     }
 
+    func sleepNow() async throws {
+        log.add("pmset sleepnow")
+    }
+
     func setLowPowerMode(onBattery: Bool, onAC: Bool) async throws {
         try state.withLock {
             if $0.failLowPower { throw FakeError(message: "pmset lowpowermode failed") }

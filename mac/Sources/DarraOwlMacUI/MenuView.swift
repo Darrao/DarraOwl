@@ -21,6 +21,7 @@ struct MenuView: View {
     @State private var freeHours = ""
     @State private var freeMinutes = ""
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -217,6 +218,10 @@ struct MenuView: View {
 
     private var footer: some View {
         HStack {
+            Button("iPhone…") {
+                NSApp.activate()
+                openWindow(id: "pairing")
+            }
             Button("Réglages…") {
                 // A menu bar app is never active by itself: bring the window forward.
                 NSApp.activate()

@@ -284,6 +284,20 @@ public final class LidCoordinator {
         return problems
     }
 
+    /// Phone request: pause Docker Desktop now, with the same two checks
+    /// as at lid close. Throws when it is not running or a container runs.
+    public func pauseDocker() async throws {
+        guard deps.processes.runningApps().contains(where: { $0.bundleID == PausePolicy.dockerBundleID }) else {
+            throw LidError.dockerNotRunning
+        }
+        guard let group = await idleDockerGroup() else { throw LidError.dockerBusy }
+        _ = try await deps.helper.freeze([group])
+    }
+
+    public func resumeDocker() async throws {
+        _ = try await deps.helper.resume(bundleID: PausePolicy.dockerBundleID)
+    }
+
     /// Gives up on a device that will not come back: its sound stays as it is.
     public func forgetAudio(deviceUID: String) async {
         _ = try? await deps.helper.clearUserChanges([.audio(deviceUID: deviceUID)])
@@ -342,6 +356,18 @@ public final class LidCoordinator {
         } catch {
             deps.log.error("docker: probe failed, left alone: \(error.localizedDescription)")
             return nil
+        }
+    }
+}
+
+public enum LidError: Error, LocalizedError, Sendable {
+    case dockerNotRunning
+    case dockerBusy
+
+    public var errorDescription: String? {
+        switch self {
+        case .dockerNotRunning: "Docker Desktop n'est pas ouvert."
+        case .dockerBusy: "Des conteneurs tournent, ou Docker ne répond pas : Docker laissé tel quel."
         }
     }
 }
