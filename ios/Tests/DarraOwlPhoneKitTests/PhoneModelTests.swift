@@ -200,6 +200,24 @@ struct PhoneRig {
         #expect(env.expiresAt.timeIntervalSince(env.issuedAt) == 60)
     }
 
+    @Test func fireSendsWithoutWaiting() async throws {
+        let rig = await PhoneRig().paired()
+        rig.cloud.answer = nil
+        #expect(await rig.model.fire(.extendSession(minutes: 60)))
+        #expect(rig.cloud.sent.count == 1)
+        #expect(rig.cloud.polls == 0)
+    }
+
+    @Test func stateChangesAreReported() async throws {
+        let rig = PhoneRig()
+        rig.direct.connectTo = .local
+        _ = await rig.paired()
+        var seen: MacState?
+        rig.model.onStateChange = { seen = $0 }
+        rig.direct.onState?(rig.state())
+        #expect(seen?.macName == "MacBook")
+    }
+
     @Test func plainCommandsHaveNoFaceIDSignature() async throws {
         let rig = await PhoneRig().paired()
         await rig.model.send(.extendSession(minutes: 30))

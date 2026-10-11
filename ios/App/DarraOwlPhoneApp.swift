@@ -6,12 +6,7 @@ import UIKit
 struct DarraOwlPhoneApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @Environment(\.scenePhase) private var phase
-    @State private var model = PhoneModel(.init(
-        store: KeychainPhoneStore(deviceName: UIDevice.current.name),
-        direct: NWDirectLink(),
-        cloud: CloudKitPhoneLink(),
-        pairing: NWPairingDirect()
-    ))
+    @State private var model = PhoneRuntime.shared.model
 
     var body: some Scene {
         WindowGroup {
@@ -19,10 +14,7 @@ struct DarraOwlPhoneApp: App {
                 .onOpenURL { url in
                     Task { await model.pair(url: url) }
                 }
-                .task {
-                    AppDelegate.model = model
-                    await model.start()
-                }
+                .task { await PhoneRuntime.shared.start() }
                 .onChange(of: model.mac != nil) { _, paired in
                     if paired { Task { await NotificationPermission.request() } }
                 }

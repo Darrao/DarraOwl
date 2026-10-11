@@ -65,6 +65,8 @@ public final class PhoneModel {
     public private(set) var isPairing = false
     public private(set) var now = Date()
 
+    /// Every new Mac state, for the Live Activity and the widgets.
+    @ObservationIgnored public var onStateChange: ((MacState) -> Void)?
     @ObservationIgnored private let deps: Dependencies
     @ObservationIgnored private var identity: PhoneIdentity?
     @ObservationIgnored private var waiters: [UUID: CheckedContinuation<CommandResult?, Never>] = [:]
@@ -241,6 +243,22 @@ public final class PhoneModel {
         }
     }
 
+    /// Signs and sends without waiting for the Mac's answer: for Siri and
+    /// the Live Activity buttons, which have a few seconds only. Returns
+    /// false when it could not be sent at all.
+    @discardableResult
+    public func fire(_ kind: CommandKind) async -> Bool {
+        if mac == nil { mac = deps.store.pairedMac() }
+        guard let mac, let (_, signed) = try? await loadIdentity().sign(kind, for: mac, at: deps.now()) else { return false }
+        if directPath != nil, (try? deps.direct.send(signed)) != nil { return true }
+        do {
+            try await deps.cloud.send(signed, macID: mac.macID)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     static func outcome(for result: CommandResult, kind: CommandKind) -> Outcome {
         switch result.status {
         case .executed, .duplicate: .done("\(kind.label) : fait.")
@@ -262,6 +280,7 @@ public final class PhoneModel {
         guard state.macID == mac?.macID else { return }
         self.state = state
         now = deps.now()
+        onStateChange?(state)
     }
 
     private func receive(_ result: CommandResult) {

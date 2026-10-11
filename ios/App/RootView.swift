@@ -118,49 +118,35 @@ struct MacView: View {
     @State private var showSettings = false
     @State private var confirmStop = false
     @State private var confirmUnpair = false
+    @State private var customHours = 3
 
     var body: some View {
         NavigationStack {
-            List {
-                Section { presenceLine }
-                sessionSection
-                if let state = model.state {
-                    macSection(state)
-                    networkSection(state)
-                    if !state.containers.isEmpty || state.dockerPaused { dockerSection(state) }
-                }
-                Section {
-                    Button("Mettre le Mac en veille", role: .destructive) {
-                        Task { await model.send(.sleepNow) }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 32) {
+                    header
+                    sessionBlock
+                    if let state = model.state {
+                        if !state.agents.isEmpty { agentsBlock(state) }
+                        macBlock(state)
+                        if !state.containers.isEmpty || state.dockerPaused { dockerBlock(state) }
                     }
-                    .disabled(!online)
-                } footer: {
-                    Text("Arrête la session, rétablit tout, puis met le Mac en veille. Demande Face ID.")
+                    if let outcome = model.outcome { outcomeLine(outcome) }
+                    footerActions
                 }
-                if let outcome = model.outcome {
-                    Section { outcomeLine(outcome) }
-                }
-                Section {
-                    Button("Désappairer cet iPhone", role: .destructive) { confirmUnpair = true }
-                }
-            }
-            .listStyle(.plain)
-            .navigationTitle(model.mac?.macName ?? "Mac")
-            .toolbar {
-                Button("Réglages") { showSettings = true }
-                    .disabled(model.state == nil || !online)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 40)
             }
             .refreshable { await model.tick() }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                        .accessibilityLabel("Réglages")
+                        .disabled(model.state == nil || !online)
+                }
+            }
             .sheet(isPresented: $showSettings) {
                 if let state = model.state { SettingsSheet(model: model, settings: state.settings) }
-            }
-            .confirmationDialog("Arrêter la session ?", isPresented: $confirmStop, titleVisibility: .visible) {
-                Button("Arrêter", role: .destructive) { Task { await model.send(.stopSession) } }
-            }
-            .confirmationDialog("Désappairer cet iPhone ?", isPresented: $confirmUnpair, titleVisibility: .visible) {
-                Button("Désappairer", role: .destructive) { model.unpair() }
-            } message: {
-                Text("Sur le Mac, retire aussi cet iPhone dans DarraOwl > iPhone… pour couper son accès.")
             }
         }
     }
@@ -170,87 +156,156 @@ struct MacView: View {
         return false
     }
 
-    @ViewBuilder
-    private var presenceLine: some View {
+    // MARK: Header
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            OwlShape(awake: model.state?.session != nil).stroke(lineWidth: 2.2).frame(width: 40, height: 40)
+            Text(model.mac?.macName ?? "Mac").font(.largeTitle.bold()).lineLimit(1).minimumScaleFactor(0.7)
+            HStack(spacing: 8) {
+                Circle().fill(presenceColor).frame(width: 8, height: 8)
+                Text(presenceText).font(.subheadline).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.top, 8)
+    }
+
+    private var presenceColor: Color {
         switch model.presence {
-        case let .online(path):
-            Label("En ligne, par \(path.label)", systemImage: "circle.fill").foregroundStyle(.primary)
-        case let .asleep(since):
-            Label("En veille depuis \(since.formatted(date: .omitted, time: .shortened))", systemImage: "moon")
-        case let .lastSeen(date):
-            Label("Vu pour la dernière fois à \(date.formatted(date: .omitted, time: .shortened))", systemImage: "circle")
-                .foregroundStyle(.secondary)
-        case .unknown:
-            Label(model.cloudProblem ?? "Recherche du Mac…", systemImage: "circle.dashed").foregroundStyle(.secondary)
+        case .online: .green
+        case .asleep: .indigo
+        case .lastSeen, .unknown: .gray
         }
     }
 
+    private var presenceText: String {
+        switch model.presence {
+        case let .online(path): "En ligne, par \(path.label)"
+        case let .asleep(since): "En veille depuis \(since.formatted(date: .omitted, time: .shortened))"
+        case let .lastSeen(date): "Vu pour la dernière fois à \(date.formatted(date: .omitted, time: .shortened))"
+        case .unknown: model.cloudProblem ?? "Recherche du Mac…"
+        }
+    }
+
+    // MARK: Session
+
     @ViewBuilder
-    private var sessionSection: some View {
-        Section("Session") {
+    private var sessionBlock: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionTitle("Session")
             if let session = model.state?.session {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(timerInterval: Date()...max(Date(), session.endsAt), countsDown: true)
-                        .font(.system(size: 44, weight: .light).monospacedDigit())
+                        .font(.system(size: 64, weight: .thin).monospacedDigit())
+                        .lineLimit(1).minimumScaleFactor(0.6)
                     Text("Fin à \(DurationText.clock(session.endsAt))").foregroundStyle(.secondary)
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        ProgressView(value: progress(session, at: context.date))
+                            .tint(.primary)
+                    }
+                    .padding(.top, 6)
                 }
-                HStack {
+                HStack(spacing: 12) {
                     ForEach([30, 60], id: \.self) { m in
                         Button("+\(DurationText.short(TimeInterval(m * 60)))") {
                             Task { await model.send(.extendSession(minutes: m)) }
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.glass)
+                        .controlSize(.large)
+                    }
+                }
+                .disabled(model.isBusy || !online)
+                Button(role: .destructive) { confirmStop = true } label: {
+                    Text("Arrêter la session").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.glass)
+                .controlSize(.large)
+                .disabled(model.isBusy || !online)
+                .confirmationDialog("Le Mac retrouvera sa veille normale.", isPresented: $confirmStop, titleVisibility: .visible) {
+                    Button("Arrêter la session", role: .destructive) { Task { await model.send(.stopSession) } }
+                    Button("Annuler", role: .cancel) {}
+                }
+            } else {
+                Text(online ? "Le Mac dort normalement." : "Le Mac doit être en ligne pour démarrer une session.")
+                    .foregroundStyle(.secondary)
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    ForEach(Policy.quickDurations, id: \.self) { d in
+                        Button {
+                            Task { await model.send(.startSession(minutes: Int(d / 60))) }
+                        } label: {
+                            Text(DurationText.short(d)).frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.glass)
+                        .controlSize(.large)
+                    }
+                }
+                HStack {
+                    Stepper("Autre durée : \(customHours) h", value: $customHours, in: 1...12)
+                    Button("Démarrer") { Task { await model.send(.startSession(minutes: customHours * 60)) } }
+                        .buttonStyle(.glassProminent)
+                }
+                .disabled(model.isBusy || !online)
+            }
+        }
+        .disabled(model.isBusy || !online)
+    }
+
+    private func progress(_ s: Session, at date: Date) -> Double {
+        let total = s.endsAt.timeIntervalSince(s.startedAt)
+        guard total > 0 else { return 1 }
+        return min(1, max(0, date.timeIntervalSince(s.startedAt) / total))
+    }
+
+    // MARK: Agents
+
+    private func agentsBlock(_ s: MacState) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle("Agents")
+            ForEach(Array(s.agents.enumerated()), id: \.offset) { _, agent in
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: "terminal").foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(agent.project.map { "\(agent.tool) · \($0)" } ?? agent.tool).font(.body.weight(.medium))
+                        Text("depuis \(agent.since.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Arrêter", role: .destructive) { confirmStop = true }
-                        .buttonStyle(.bordered)
-                }
-                .disabled(model.isBusy || !online)
-            } else {
-                Text("Aucune session").foregroundStyle(.secondary)
-                HStack {
-                    ForEach(Policy.quickDurations, id: \.self) { d in
-                        Button(DurationText.short(d)) {
-                            Task { await model.send(.startSession(minutes: Int(d / 60))) }
-                        }
-                        .buttonStyle(.bordered)
+                    if agent.waitingForApproval {
+                        Text("attend ta validation").font(.caption.weight(.medium)).foregroundStyle(.orange)
                     }
                 }
-                .disabled(model.isBusy || !online)
             }
         }
     }
 
-    private func macSection(_ s: MacState) -> some View {
-        Section("Mac") {
+    // MARK: Mac
+
+    private func macBlock(_ s: MacState) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionTitle("Mac").padding(.bottom, 6)
             if let p = s.powerSnapshot {
-                LabeledContent("Batterie", value: batteryText(p))
-                if let m = p.minutesToEmpty { LabeledContent("Autonomie estimée", value: DurationText.short(TimeInterval(m * 60))) }
-                LabeledContent("Température", value: p.thermal.label)
-                if let lid = p.lidClosed { LabeledContent("Capot", value: lid ? "fermé" : "ouvert") }
+                InfoRow("Batterie", batteryText(p), symbol: p.onExternalPower ? "battery.100.bolt" : "battery.75")
+                if let m = p.minutesToEmpty { InfoRow("Autonomie estimée", DurationText.short(TimeInterval(m * 60)), symbol: "clock") }
+                InfoRow("Température", p.thermal.label, symbol: "thermometer.medium")
+                if let lid = p.lidClosed { InfoRow("Capot", lid ? "fermé" : "ouvert", symbol: "laptopcomputer") }
             }
-            if s.lowPowerActive { LabeledContent("Économie d'énergie", value: "activée") }
-            if !s.pausedApps.isEmpty { LabeledContent("En pause", value: s.pausedApps.joined(separator: ", ")) }
+            if s.lowPowerActive { InfoRow("Économie d'énergie", "activée", symbol: "leaf") }
+            InfoRow("Réseau", networkText(s.network), symbol: s.network?.kind == .hotspot ? "personalhotspot" : "wifi")
+            if let bytes = s.network?.sessionBytes { InfoRow("Data de la session", ByteText.short(bytes), symbol: "arrow.up.arrow.down") }
+            if !s.pausedApps.isEmpty { InfoRow("En pause", s.pausedApps.joined(separator: ", "), symbol: "pause.circle") }
         }
     }
 
-    private func networkSection(_ s: MacState) -> some View {
-        Section("Réseau") {
-            LabeledContent("Connexion", value: networkText(s.network))
-            if let name = s.network?.name { LabeledContent("Réseau", value: name) }
-            if let bytes = s.network?.sessionBytes { LabeledContent("Data de la session", value: ByteText.short(bytes)) }
-        }
-    }
-
-    private func dockerSection(_ s: MacState) -> some View {
-        Section("Docker") {
+    private func dockerBlock(_ s: MacState) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionTitle("Docker")
             if s.dockerPaused {
-                Button("Relancer Docker Desktop") { Task { await model.send(.resumeDocker) } }
+                Button("Relancer Docker Desktop") { Task { await model.send(.resumeDocker) } }.buttonStyle(.glass)
             } else if s.session != nil, s.containers.isEmpty {
-                Button("Mettre Docker Desktop en pause") { Task { await model.send(.pauseDocker) } }
+                Button("Mettre Docker Desktop en pause") { Task { await model.send(.pauseDocker) } }.buttonStyle(.glass)
             }
             ForEach(s.containers) { c in
                 HStack {
+                    Image(systemName: "shippingbox").foregroundStyle(.secondary)
                     Text(c.name)
                     Spacer()
                     Button("Arrêter", role: .destructive) { Task { await model.send(.stopContainer(id: c.id)) } }
@@ -261,12 +316,35 @@ struct MacView: View {
         .disabled(model.isBusy || !online)
     }
 
+    // MARK: Footer
+
+    private var footerActions: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Button(role: .destructive) { Task { await model.send(.sleepNow) } } label: {
+                Label("Mettre le Mac en veille", systemImage: "moon.fill").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.glass)
+            .controlSize(.large)
+            .disabled(!online)
+            Text("Arrête la session, rétablit tout, puis met le Mac en veille. Demande Face ID.")
+                .font(.caption).foregroundStyle(.secondary)
+            Button("Désappairer cet iPhone", role: .destructive) { confirmUnpair = true }
+                .font(.footnote)
+                .padding(.top, 12)
+                .confirmationDialog("Désappairer cet iPhone ?", isPresented: $confirmUnpair, titleVisibility: .visible) {
+                    Button("Désappairer", role: .destructive) { model.unpair() }
+                } message: {
+                    Text("Sur le Mac, retire aussi cet iPhone dans DarraOwl > iPhone… pour couper son accès.")
+                }
+        }
+    }
+
     @ViewBuilder
     private func outcomeLine(_ o: PhoneModel.Outcome) -> some View {
         switch o {
-        case let .sending(label): HStack { ProgressView(); Text("\(label)…") }
-        case let .done(text): Text(text)
-        case let .failed(text): Text(text).foregroundStyle(.red)
+        case let .sending(label): HStack { ProgressView(); Text("\(label)…") }.foregroundStyle(.secondary)
+        case let .done(text): Label(text, systemImage: "checkmark.circle").foregroundStyle(.secondary)
+        case let .failed(text): Label(text, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
         }
     }
 
@@ -281,12 +359,45 @@ struct MacView: View {
     }
 
     private func networkText(_ n: MacState.Network?) -> String {
+        let kind: String
         switch n?.kind {
-        case .wifi?: "Wi-Fi"
-        case .hotspot?: "Partage de connexion"
-        case .ethernet?: "Ethernet"
-        case .other?: "Autre"
-        case .none?, nil: "Aucune"
+        case .wifi?: kind = "Wi-Fi"
+        case .hotspot?: kind = "Partage de connexion"
+        case .ethernet?: kind = "Ethernet"
+        case .other?: kind = "Autre"
+        case .none?, nil: kind = "Aucun"
+        }
+        return n?.name.map { "\(kind) · \($0)" } ?? kind
+    }
+}
+
+struct SectionTitle: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text.uppercased()).font(.caption.weight(.semibold)).foregroundStyle(.secondary).tracking(0.8)
+    }
+}
+
+struct InfoRow: View {
+    let label: String
+    let value: String
+    let symbol: String
+    init(_ label: String, _ value: String, symbol: String) {
+        self.label = label
+        self.value = value
+        self.symbol = symbol
+    }
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: symbol).frame(width: 22).foregroundStyle(.secondary)
+                Text(label)
+                Spacer()
+                Text(value).foregroundStyle(.secondary).multilineTextAlignment(.trailing)
+            }
+            .padding(.vertical, 11)
+            Divider().padding(.leading, 34)
         }
     }
 }
@@ -346,33 +457,3 @@ struct SettingsSheet: View {
     }
 }
 
-/// The monochrome owl, same drawing as the Mac's menu bar icon.
-struct OwlShape: Shape {
-    var awake: Bool
-
-    func path(in rect: CGRect) -> Path {
-        let s = min(rect.width, rect.height) / 18
-        func p(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: rect.minX + x * s, y: rect.minY + (18 - y) * s) }
-        var path = Path()
-        path.move(to: p(4, 15.5))
-        path.addLine(to: p(6.5, 13.6))
-        path.addCurve(to: p(11.5, 13.6), control1: p(8, 14.3), control2: p(10, 14.3))
-        path.addLine(to: p(14, 15.5))
-        path.addCurve(to: p(9, 1.5), control1: p(16, 9), control2: p(14, 1.5))
-        path.addCurve(to: p(4, 15.5), control1: p(4, 1.5), control2: p(2, 9))
-        path.closeSubpath()
-        for x in [6.6, 11.4] {
-            if awake {
-                path.addEllipse(in: CGRect(origin: p(x - 2.2, 12.4), size: CGSize(width: 4.4 * s, height: 4.4 * s)))
-            } else {
-                path.move(to: p(x - 2, 10.4))
-                path.addQuadCurve(to: p(x + 2, 10.4), control: p(x, 9.2))
-            }
-        }
-        path.move(to: p(8.2, 7.6))
-        path.addLine(to: p(9.8, 7.6))
-        path.addLine(to: p(9, 5.9))
-        path.closeSubpath()
-        return path
-    }
-}

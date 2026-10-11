@@ -5,7 +5,7 @@ import UserNotifications
 
 /// Notifications from the Mac's events, and their +1 h / Arrêter buttons.
 final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
-    @MainActor static var model: PhoneModel?
+    @MainActor static var model: PhoneModel? { PhoneRuntime.shared.model }
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         let center = UNUserNotificationCenter.current()

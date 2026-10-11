@@ -73,12 +73,15 @@ targets:
     platform: iOS
     sources:
       - path: ios/App
+      - path: ios/Shared
       - path: ios/Resources/Assets.xcassets
       - path: ios/Resources/PrivacyInfo.xcprivacy
     dependencies:
       - package: DarraOwlPhone
         product: DarraOwlPhoneKit
       - package: DarraOwlShared
+      - target: DarraOwlWidgets
+        embed: true
     settings:
       base:
         PRODUCT_NAME: DarraOwl
@@ -90,3 +93,21 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         ENABLE_HARDENED_RUNTIME: NO
     scheme: {}
+
+  DarraOwlWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ios/Widgets
+      - path: ios/Shared
+    settings:
+      base:
+        PRODUCT_NAME: DarraOwlWidgets
+        PRODUCT_BUNDLE_IDENTIFIER: com.darrao.darraowl.widgets
+        INFOPLIST_FILE: ios/Resources/Widgets-Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: ios/Resources/Widgets.entitlements
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: WIDGET_EXTENSION
+        TARGETED_DEVICE_FAMILY: "1"
+        ENABLE_HARDENED_RUNTIME: NO
+        SKIP_INSTALL: YES
