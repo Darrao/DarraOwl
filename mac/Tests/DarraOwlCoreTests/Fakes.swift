@@ -135,6 +135,40 @@ final class InMemoryStore<Value: Codable & Sendable & Equatable>: ValueStoring, 
     }
 }
 
+final class FakeProcesses: ProcessControlling, Sendable {
+    private let table: Mutex<[Int32: ProcessState]>
+    let log: EventLog
+
+    init(log: EventLog, _ table: [Int32: ProcessState] = [:]) {
+        self.log = log
+        self.table = Mutex(table)
+    }
+
+    static let boot = "BOOT-A"
+
+    static func state(uid: UInt32 = 501, start: Int64, stopped: Bool = false, boot: String = boot) -> ProcessState {
+        ProcessState(ppid: 1, uid: uid, stopped: stopped, identity: ProcessIdentity(startSeconds: start, startMicros: 7, bootSession: boot))
+    }
+
+    func set(_ pid: Int32, _ state: ProcessState?) { table.withLock { $0[pid] = state } }
+    func state(_ pid: Int32) -> ProcessState? { table.withLock { $0[pid] } }
+
+    func lookup(_ pid: Int32) -> ProcessLookup {
+        table.withLock { t in t[pid].map { .present($0) } ?? .absent }
+    }
+
+    func signal(_ pid: Int32, _ signal: Int32) -> Int32 {
+        let ok = table.withLock { t -> Bool in
+            guard var s = t[pid] else { return false }
+            s.stopped = signal == SIGSTOP
+            t[pid] = s
+            return true
+        }
+        log.add("\(signal == SIGSTOP ? "SIGSTOP" : "SIGCONT") \(pid)")
+        return ok ? 0 : ESRCH
+    }
+}
+
 struct SilentLog: EngineLogging {
     func info(_ message: String) {}
     func error(_ message: String) {}
@@ -145,6 +179,7 @@ struct Harness {
     let events = EventLog()
     let power: FakePower
     let source = FakeSource()
+    let processes: FakeProcesses
     let clock = FakeClock()
     let journal: InMemoryStore<Journal>
     let settings: InMemoryStore<PowerSettings>
@@ -156,11 +191,13 @@ struct Harness {
         settings initialSettings: PowerSettings? = nil
     ) {
         power = FakePower(log: events, settings: settingsState)
+        processes = FakeProcesses(log: events)
         journal = InMemoryStore(name: "journal", log: events, value: initial)
         settings = InMemoryStore(name: "settings", log: events, value: initialSettings)
         engine = SessionEngine(.init(
             power: power,
             source: source,
+            processes: processes,
             clock: clock,
             journalStore: journal,
             settingsStore: settings,

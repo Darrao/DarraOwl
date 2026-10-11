@@ -23,7 +23,7 @@ let package = Package(
         .target(name: "DarraOwlXPC", dependencies: ["DarraOwlCore", shared]),
         .target(name: "DarraOwlHelperKit", dependencies: ["DarraOwlCore", "DarraOwlSystem", "DarraOwlXPC", shared]),
         .executableTarget(name: "DarraOwlHelper", dependencies: ["DarraOwlHelperKit"]),
-        .target(name: "DarraOwlMacUI", dependencies: ["DarraOwlCore", "DarraOwlXPC", shared]),
+        .target(name: "DarraOwlMacUI", dependencies: ["DarraOwlCore", "DarraOwlSystem", "DarraOwlXPC", shared]),
         .executableTarget(name: "DarraOwlMac", dependencies: ["DarraOwlMacUI"]),
         .testTarget(name: "DarraOwlCoreTests", dependencies: ["DarraOwlCore", shared]),
         .testTarget(name: "DarraOwlXPCTests", dependencies: ["DarraOwlXPC", "DarraOwlCore", shared]),

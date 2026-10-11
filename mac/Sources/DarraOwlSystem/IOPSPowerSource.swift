@@ -15,7 +15,18 @@ public struct IOPSPowerSource: PowerSourceReading {
 
     public func read() -> PowerSnapshot {
         let (battery, external) = Self.readBattery()
-        return PowerSnapshot(battery: battery, onExternalPower: external, thermal: Self.thermal())
+        return PowerSnapshot(battery: battery, onExternalPower: external, thermal: Self.thermal(), lidClosed: Self.lidClosed())
+    }
+
+    /// `AppleClamshellState` of IOPMrootDomain; nil without a lid.
+    public static func lidClosed() -> Bool? {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
+        guard service != 0 else { return nil }
+        defer { IOObjectRelease(service) }
+        guard let value = IORegistryEntryCreateCFProperty(service, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() else {
+            return nil
+        }
+        return (value as? Bool) ?? (value as? NSNumber)?.boolValue
     }
 
     static func thermal() -> ThermalLevel {

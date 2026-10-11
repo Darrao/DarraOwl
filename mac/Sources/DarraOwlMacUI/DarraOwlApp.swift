@@ -23,6 +23,10 @@ struct DarraOwlApp: App {
 public enum DarraOwlEntry {
     @MainActor
     public static func main() {
+        if CommandLine.arguments.contains("--self-check") {
+            Task { @MainActor in exit(await SelfCheck.run()) }
+            RunLoop.main.run()
+        }
         if CommandLine.arguments.contains("--uninstall") {
             Task { @MainActor in
                 let code = await Uninstaller.run()

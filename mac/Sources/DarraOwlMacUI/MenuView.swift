@@ -32,6 +32,7 @@ struct MenuView: View {
             } else {
                 idle
             }
+            lidSection
             Divider()
             presenceSection
             messages
@@ -122,6 +123,32 @@ struct MenuView: View {
             powerLine
         }
         .disabled(model.busy)
+    }
+
+    @ViewBuilder
+    private var lidSection: some View {
+        if let status = model.status {
+            let paused = Set(status.frozen.map(\.name)).sorted()
+            if !paused.isEmpty {
+                Text("En pause : \(paused.joined(separator: ", "))").font(.caption).foregroundStyle(.secondary)
+            }
+            if !model.lidClosed || status.session == nil {
+                ForEach(status.userChanges.audio, id: \.deviceUID) { entry in
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Son de \(entry.name ?? "la sortie audio") coupé, rétabli à sa reconnexion.")
+                            .font(.caption).foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                        Button("Oublier") { model.forgetAudio(deviceUID: entry.deviceUID) }
+                            .controlSize(.small)
+                    }
+                }
+            }
+            ForEach(model.lidProblems, id: \.self) { problem in
+                Text(problem).font(.caption).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     static let presenceDurations: [TimeInterval] = [3600, 2 * 3600, 4 * 3600, 8 * 3600]

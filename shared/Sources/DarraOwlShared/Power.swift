@@ -38,10 +38,13 @@ public struct PowerSnapshot: Codable, Equatable, Sendable {
     /// True on AC power or while charging.
     public var onExternalPower: Bool
     public var thermal: ThermalLevel
+    /// nil on a Mac without a lid, or when the registry could not be read.
+    public var lidClosed: Bool?
 
-    public init(battery: BatteryStatus, onExternalPower: Bool, thermal: ThermalLevel) {
+    public init(battery: BatteryStatus, onExternalPower: Bool, thermal: ThermalLevel, lidClosed: Bool? = nil) {
         self.battery = battery
         self.onExternalPower = onExternalPower
         self.thermal = thermal
+        self.lidClosed = lidClosed
     }
 }

@@ -2,10 +2,22 @@
 
 ## Insomnia
 
-Portions of `mac/Sources/DarraOwlSystem/IOPSPowerSource.swift` (classification
-of the IOKit power source list, `AppleSmartBattery` fallbacks) and of
-`mac/Sources/DarraOwlCore/PmsetParser.swift` are adapted from Insomnia,
-https://github.com/krishhgg/Insomnia.
+Portions of these files are adapted from Insomnia,
+https://github.com/krishhgg/Insomnia:
+
+- `mac/Sources/DarraOwlSystem/IOPSPowerSource.swift`: classification of the
+  IOKit power source list, `AppleSmartBattery` fallbacks.
+- `mac/Sources/DarraOwlCore/PmsetParser.swift`: `pmset` output parsing.
+- `mac/Sources/DarraOwlSystem/DisplayPower.swift`: DisplayServices and
+  CoreBrightness bridges and their guards.
+- `mac/Sources/DarraOwlSystem/CoreAudioControl.swift`: output volume and mute
+  by device UID.
+- `mac/Sources/DarraOwlSystem/LidObserver.swift`: clamshell notification and
+  debounce.
+- `mac/Sources/DarraOwlSystem/SysctlProcessControl.swift`: process table reads
+  and boot session.
+- `mac/Sources/DarraOwlCore/LidCoordinator.swift`: the Docker double probe and
+  the open-lid brightness sample (ideas, rewritten).
 
 MIT License
 

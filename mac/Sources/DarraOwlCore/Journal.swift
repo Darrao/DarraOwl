@@ -11,12 +11,79 @@ public struct Journal: Codable, Equatable, Sendable {
     public var sleep: SleepEntry?
     /// Present from just before Low Power Mode is switched on until the undo succeeded.
     public var lowPower: LowPowerEntry?
+    /// Processes the helper stopped at lid close. The helper (root) resumes them.
+    public var frozen: [FrozenProcess] = []
+    /// Brightness and sound the app changed at lid close. Only the app can
+    /// put them back (they belong to the user's session).
+    public var user = UserChanges()
     public var lastEnd: SessionEndRecord?
 
     public init() {}
 
-    /// No change left to undo.
-    public var isClean: Bool { sleep == nil && lowPower == nil }
+    /// Nothing left that the helper itself must undo.
+    public var isClean: Bool { sleep == nil && lowPower == nil && frozen.isEmpty }
+
+    private enum CodingKeys: String, CodingKey {
+        case version, session, sleep, lowPower, frozen, user, lastEnd
+    }
+
+    /// A journal written by an earlier build lacks the newer keys.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        session = try c.decodeIfPresent(Session.self, forKey: .session)
+        sleep = try c.decodeIfPresent(SleepEntry.self, forKey: .sleep)
+        lowPower = try c.decodeIfPresent(LowPowerEntry.self, forKey: .lowPower)
+        frozen = try c.decodeIfPresent([FrozenProcess].self, forKey: .frozen) ?? []
+        user = try c.decodeIfPresent(UserChanges.self, forKey: .user) ?? UserChanges()
+        lastEnd = try c.decodeIfPresent(SessionEndRecord.self, forKey: .lastEnd)
+    }
+}
+
+/// One output device muted at lid close, with what it had before.
+public struct AudioEntry: Codable, Equatable, Sendable {
+    public var deviceUID: String
+    public var name: String?
+    public var volume: Float
+    public var muted: Bool
+
+    public init(deviceUID: String, name: String?, volume: Float, muted: Bool) {
+        self.deviceUID = deviceUID
+        self.name = name
+        self.volume = volume
+        self.muted = muted
+    }
+}
+
+/// Values the app saved before darkening and muting at lid close.
+public struct UserChanges: Codable, Equatable, Sendable {
+    public var displayBrightness: Float?
+    public var keyboardBrightness: Float?
+    public var audio: [AudioEntry] = []
+
+    public init(displayBrightness: Float? = nil, keyboardBrightness: Float? = nil, audio: [AudioEntry] = []) {
+        self.displayBrightness = displayBrightness
+        self.keyboardBrightness = keyboardBrightness
+        self.audio = audio
+    }
+
+    public var isEmpty: Bool { displayBrightness == nil && keyboardBrightness == nil && audio.isEmpty }
+
+    /// Adds what is not saved yet. A value already saved is kept: a second
+    /// lid close would otherwise save the 0 the first one set.
+    public mutating func merge(_ other: UserChanges) {
+        if displayBrightness == nil { displayBrightness = other.displayBrightness }
+        if keyboardBrightness == nil { keyboardBrightness = other.keyboardBrightness }
+        for entry in other.audio where !audio.contains(where: { $0.deviceUID == entry.deviceUID }) {
+            audio.append(entry)
+        }
+    }
+}
+
+public enum UserChangeKind: Codable, Equatable, Hashable, Sendable {
+    case display
+    case keyboard
+    case audio(deviceUID: String)
 }
 
 public struct SleepEntry: Codable, Equatable, Sendable {

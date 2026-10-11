@@ -91,3 +91,39 @@ import Testing
         #expect(s.isExpired(at: start.addingTimeInterval(60)))
     }
 }
+
+@Suite struct LidSettingsTests {
+    @Test func defaultsPauseSlackWhatsAppDiscord() throws {
+        let s = LidSettings()
+        try s.validate()
+        #expect(s.pausedApps == ["com.tinyspeck.slackmacgap", "net.whatsapp.WhatsApp", "com.hnc.Discord"])
+        #expect(s.darkenDisplay && s.mute && s.lowPower && s.pauseDocker)
+    }
+
+    @Test(arguments: ["com.microsoft.teams2", "us.zoom.xos", "us.zoom.ZoomCefHelper", "com.apple.FaceTime", "com.docker.docker", "com.darrao.darraowl.mac"])
+    func meetingAndSystemAppsAreProtected(id: String) {
+        #expect(throws: LidSettings.ValidationError.protectedApp(id)) {
+            try LidSettings(pausedApps: [id]).validate()
+        }
+    }
+
+    @Test(arguments: ["../../bin/sh", "rm -rf /", "com.slack;ls", "x", "com.é.app", "/Applications/Slack.app"])
+    func malformedBundleIDsAreRefused(id: String) {
+        #expect(throws: LidSettings.ValidationError.invalidBundleID(id)) {
+            try LidSettings(pausedApps: [id]).validate()
+        }
+    }
+
+    @Test func oldSettingsFileGetsLidDefaults() throws {
+        let json = Data(#"{"lowPowerFloor":50,"endFloor":20,"maxSessionDuration":7200}"#.utf8)
+        let s = try JSONDecoder().decode(PowerSettings.self, from: json)
+        #expect(s.lowPowerFloor == 50)
+        #expect(s.lid == LidSettings())
+    }
+
+    @Test func invalidLidMakesSettingsInvalid() {
+        #expect(throws: PowerSettings.ValidationError.lid(.protectedApp("us.zoom.xos"))) {
+            try PowerSettings(lid: LidSettings(pausedApps: ["us.zoom.xos"])).validate()
+        }
+    }
+}

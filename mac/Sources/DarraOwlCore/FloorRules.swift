@@ -35,6 +35,9 @@ public enum FloorRules {
             break
         }
         var wants = power.thermal == .serious
+        if settings.lid.lowPower, power.lidClosed == true {
+            wants = true
+        }
         if case let .percent(p) = power.battery, onBattery, p < settings.lowPowerFloor {
             wants = true
         }

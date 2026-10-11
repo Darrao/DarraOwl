@@ -11,7 +11,7 @@ public enum HelperConstants {
     /// The CLI of phase 5 talks to the helper too.
     public static let cliIdentifier = "com.darrao.darraowl.mac.cli"
     /// Bumped when the request or response shape changes.
-    public static let protocolVersion = 1
+    public static let protocolVersion = 2
 }
 
 /// The XPC surface. Requests and responses travel as JSON so the Objective-C
@@ -28,6 +28,16 @@ public enum HelperRequest: Codable, Equatable, Sendable {
     case stop(reason: SessionEndReason)
     case updateSettings(PowerSettings)
     case prepareUninstall
+    /// Journal brightness and sound values before the app changes them.
+    case recordUserChanges(UserChanges)
+    /// The app restored these values.
+    case clearUserChanges([UserChangeKind])
+    /// Pause these processes (lid close). Only the client's own processes.
+    case freeze([FreezeGroup])
+    /// Resume paused processes: all (nil) or one app's.
+    case resume(bundleID: String?)
+    /// The lid opened or closed: re-evaluate Low Power Mode now.
+    case lidChanged
     /// Asks an idle helper to exit so launchd starts the updated binary.
     case restartIfIdle
 }

@@ -58,6 +58,42 @@ Une température critique arrête la session, une température élevée active l
 mode économie d'énergie. Le composant système applique ces règles même quand
 l'app est fermée. Tu peux changer les seuils dans Réglages.
 
+## Capot fermé
+
+Pendant une session, fermer le capot :
+
+- éteint l'écran et le rétroéclairage du clavier ;
+- coupe le son ;
+- active le mode économie d'énergie ;
+- met en pause Slack, WhatsApp et Discord ;
+- met en pause Docker Desktop, si deux vérifications de suite ne trouvent
+  aucun conteneur en marche.
+
+Tout est rétabli à l'ouverture du capot. Si la session se termine capot
+fermé, ou après un plantage, la restauration a lieu au retour. Les apps
+d'appel, de visio, d'enregistrement et de dictée (Teams, Zoom, Webex,
+FaceTime, etc.) ne sont jamais mises en pause. Tu peux changer chacun de ces
+réglages dans DarraOwl > Réglages > Capot fermé.
+
+Comment ça marche :
+
+- Chaque valeur (luminosité, volume, liste des process mis en pause) est
+  écrite dans le journal du composant système avant d'être modifiée.
+- La mise en pause envoie `SIGSTOP` à l'app et à tous ses process enfants. La
+  reprise envoie `SIGCONT`, seulement aux process dont l'identité (pid, heure
+  de démarrage, démarrage du Mac) n'a pas changé.
+- Le composant système relance lui-même les apps en pause à la fin de la
+  session, même sans l'app.
+- La luminosité et le son ne peuvent être rétablis que par l'app. Elle le
+  fait à son prochain lancement si besoin.
+- Une sortie audio débranchée garde son réglage, rétabli quand elle
+  revient. Le menu propose aussi **Oublier**.
+- Pour l'écran et le clavier, DarraOwl utilise des API privées de macOS. Le
+  moyen public (`pmset displaysleepnow`) ne tient pas : fermer le capot
+  rallume l'écran. Ces API ne sont appelées que sur macOS 26, la version sur
+  laquelle elles ont été mesurées. Sur une autre version, l'écran et le
+  clavier sont laissés tels quels, et les Réglages l'indiquent.
+
 ## Toujours actif (mode présence)
 
 C'est le même principe que Caffeine ou Amphetamine. Choisis **Sans limite**,

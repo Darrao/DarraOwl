@@ -1,3 +1,5 @@
+import DarraOwlCore
+import DarraOwlSystem
 import DarraOwlXPC
 import Foundation
 import ServiceManagement
@@ -14,6 +16,21 @@ enum Uninstaller {
         let registration = ServiceRegistration.helperState()
 
         if registration == .enabled {
+            // Brightness and sound saved at a lid close: only the app can put
+            // them back, so do it before the helper deletes its journal.
+            if let changes = try? await client.send(.status).status?.userChanges, !changes.isEmpty {
+                let lid = LidCoordinator(.init(
+                    display: DisplayServicesDimmer(), keyboard: CoreBrightnessKeyboard(), audio: CoreAudioControl(),
+                    processes: WorkspaceProcesses(), docker: DockerDesktopProbe(),
+                    helper: AppHelperGateway(client: client) { _ in }, log: OSLogEngineLogger(category: "uninstall")
+                ))
+                _ = await lid.restore(changes)
+                if let left = try? await client.send(.status).status?.userChanges, !left.isEmpty {
+                    for entry in left.audio {
+                        print("Son de \(entry.name ?? entry.deviceUID) resté coupé (appareil absent) : remets-le à \(Int(entry.volume * 100)) % toi-même.")
+                    }
+                }
+            }
             do {
                 let response = try await client.send(.prepareUninstall)
                 let pending = response.status?.pendingUndo ?? []

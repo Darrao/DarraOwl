@@ -27,6 +27,12 @@ import Testing
         .updateSettings(PowerSettings(lowPowerFloor: 50, endFloor: 20, maxSessionDuration: 6 * 3600)),
         .prepareUninstall,
         .restartIfIdle,
+        .recordUserChanges(UserChanges(displayBrightness: 0.7, keyboardBrightness: nil, audio: [AudioEntry(deviceUID: "spk", name: "Haut-parleurs", volume: 0.5, muted: false)])),
+        .clearUserChanges([.display, .audio(deviceUID: "spk")]),
+        .freeze([FreezeGroup(bundleID: "com.hnc.Discord", name: "Discord", targets: [FreezeTarget(pid: 42, identity: ProcessIdentity(startSeconds: 1, startMicros: 2, bootSession: "B"))])]),
+        .resume(bundleID: nil),
+        .resume(bundleID: "com.docker.docker"),
+        .lidChanged,
     ])
     func requestRoundTrip(request: HelperRequest) throws {
         let data = try HelperCoding.encode(request)

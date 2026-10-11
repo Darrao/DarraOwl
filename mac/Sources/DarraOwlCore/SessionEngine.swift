@@ -14,6 +14,10 @@ public struct EngineStatus: Codable, Equatable, Sendable {
     /// Undo steps that failed and are retried.
     public var pendingUndo: [String]
     public var lastEnd: SessionEndRecord?
+    /// Processes paused at lid close.
+    public var frozen: [FrozenProcess]
+    /// Brightness and sound saved at lid close, for the app to restore.
+    public var userChanges: UserChanges
     /// Recent problems worth showing in the menu, newest last.
     public var notices: [String]
     public var uninstalling: Bool
@@ -58,6 +62,7 @@ public actor SessionEngine {
     public struct Dependencies: Sendable {
         public var power: any PowerControlling
         public var source: any PowerSourceReading
+        public var processes: any ProcessControlling
         public var clock: any NowProviding
         public var journalStore: any ValueStoring<Journal>
         public var settingsStore: any ValueStoring<PowerSettings>
@@ -66,6 +71,7 @@ public actor SessionEngine {
         public init(
             power: any PowerControlling,
             source: any PowerSourceReading,
+            processes: any ProcessControlling,
             clock: any NowProviding,
             journalStore: any ValueStoring<Journal>,
             settingsStore: any ValueStoring<PowerSettings>,
@@ -73,6 +79,7 @@ public actor SessionEngine {
         ) {
             self.power = power
             self.source = source
+            self.processes = processes
             self.clock = clock
             self.journalStore = journalStore
             self.settingsStore = settingsStore
@@ -308,12 +315,139 @@ public actor SessionEngine {
             lowPowerHeld: journal.lowPower != nil,
             pendingUndo: pendingUndo,
             lastEnd: journal.lastEnd,
+            frozen: journal.frozen,
+            userChanges: journal.user,
             notices: notices,
             uninstalling: uninstalling
         )
     }
 
+    // MARK: Lid close
+
+    /// Journals the brightness and sound values the app is about to change.
+    /// The app changes them only after this returned.
+    public func recordUserChanges(_ changes: UserChanges) async throws(EngineError) -> EngineStatus {
+        guard journal.session != nil else { throw .noActiveSession }
+        let previous = journal.user
+        journal.user.merge(changes)
+        do {
+            try deps.journalStore.save(journal)
+        } catch {
+            journal.user = previous
+            throw .journal(error.localizedDescription)
+        }
+        return status()
+    }
+
+    /// The app restored these values.
+    public func clearUserChanges(_ kinds: [UserChangeKind]) async -> EngineStatus {
+        for kind in kinds {
+            switch kind {
+            case .display: journal.user.displayBrightness = nil
+            case .keyboard: journal.user.keyboardBrightness = nil
+            case let .audio(uid): journal.user.audio.removeAll { $0.deviceUID == uid }
+            }
+        }
+        persist()
+        return status()
+    }
+
+    /// Pauses processes of the requesting user. Each one is checked against
+    /// the identity the app read, journaled, and only then sent SIGSTOP.
+    /// Root processes, other users' processes, already stopped processes and
+    /// changed identities are skipped.
+    public func freeze(_ groups: [FreezeGroup], requesterUID: UInt32) async throws(EngineError) -> EngineStatus {
+        guard !uninstalling else { throw .uninstalling }
+        guard journal.session != nil else { throw .noActiveSession }
+        guard requesterUID != 0 else { return status() }
+
+        var candidates: [FrozenProcess] = []
+        let known = Set(journal.frozen.map(\.pid))
+        for group in groups {
+            guard group.bundleID == PausePolicy.dockerBundleID || !PausePolicy.isProtected(group.bundleID) else {
+                deps.log.error("freeze: refused protected app \(group.bundleID)")
+                continue
+            }
+            for target in group.targets where target.pid > 1 && !known.contains(target.pid) {
+                guard case let .present(state) = deps.processes.lookup(target.pid),
+                      state.uid == requesterUID, !state.stopped, state.identity == target.identity
+                else { continue }
+                candidates.append(FrozenProcess(pid: target.pid, identity: target.identity, bundleID: group.bundleID, name: group.name))
+            }
+        }
+        guard !candidates.isEmpty else { return status() }
+
+        journal.frozen += candidates
+        do {
+            try deps.journalStore.save(journal)
+        } catch {
+            journal.frozen.removeAll { p in candidates.contains(p) }
+            throw .journal(error.localizedDescription)
+        }
+
+        var notStopped: [FrozenProcess] = []
+        for p in candidates {
+            // The identity is checked again right before the signal.
+            guard case let .present(state) = deps.processes.lookup(p.pid), state.identity == p.identity,
+                  deps.processes.signal(p.pid, SIGSTOP) == 0
+            else {
+                notStopped.append(p)
+                continue
+            }
+        }
+        if !notStopped.isEmpty {
+            journal.frozen.removeAll { notStopped.contains($0) }
+            persist()
+        }
+        let names = Set(candidates.filter { !notStopped.contains($0) }.map(\.name)).sorted()
+        deps.log.info("paused \(candidates.count - notStopped.count) process(es): \(names.joined(separator: ", "))")
+        return status()
+    }
+
+    /// Resumes paused processes: all of them (lid open), or one app's.
+    public func resume(onlyBundleID: String? = nil) async -> EngineStatus {
+        let failures = resumeFrozen(onlyBundleID: onlyBundleID)
+        if !failures.isEmpty { addNotice(failures.joined(separator: " ; ")) }
+        return status()
+    }
+
     // MARK: Private
+
+    /// SIGCONT to each journaled process that is still the one we stopped.
+    /// A process that exited, or whose pid now belongs to another process or
+    /// to an earlier boot, is dropped without a signal.
+    private func resumeFrozen(onlyBundleID: String?) -> [String] {
+        var failures: [String] = []
+        var kept: [FrozenProcess] = []
+        var resumed = 0
+        for p in journal.frozen {
+            if let only = onlyBundleID, p.bundleID != only {
+                kept.append(p)
+                continue
+            }
+            switch deps.processes.lookup(p.pid) {
+            case .absent:
+                continue
+            case .unreadable:
+                kept.append(p)
+                failures.append("\(p.name) (pid \(p.pid)) : état illisible")
+            case let .present(state):
+                guard state.identity == p.identity else { continue }
+                if deps.processes.signal(p.pid, SIGCONT) == 0 {
+                    resumed += 1
+                } else {
+                    kept.append(p)
+                    failures.append("\(p.name) (pid \(p.pid)) : reprise refusée")
+                }
+            }
+        }
+        if kept != journal.frozen {
+            journal.frozen = kept
+            persist()
+        }
+        if resumed > 0 { deps.log.info("resumed \(resumed) process(es)") }
+        return failures
+    }
 
     private func end(reason: SessionEndReason) async {
         guard let session = journal.session else { return }
@@ -356,6 +490,7 @@ public actor SessionEngine {
                 deps.log.error("low power restore failed: \(error.localizedDescription)")
             }
         }
+        failures += resumeFrozen(onlyBundleID: nil)
         pendingUndo = failures
         return failures
     }

@@ -34,15 +34,31 @@ public struct PowerSettings: Codable, Equatable, Sendable {
     public var endFloor: Int
     /// A session may never end further than this from now.
     public var maxSessionDuration: TimeInterval
+    public var lid: LidSettings
 
     public init(
         lowPowerFloor: Int = Policy.defaultLowPowerFloor,
         endFloor: Int = Policy.defaultEndFloor,
-        maxSessionDuration: TimeInterval = Policy.defaultMaxSessionDuration
+        maxSessionDuration: TimeInterval = Policy.defaultMaxSessionDuration,
+        lid: LidSettings = LidSettings()
     ) {
         self.lowPowerFloor = lowPowerFloor
         self.endFloor = endFloor
         self.maxSessionDuration = maxSessionDuration
+        self.lid = lid
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case lowPowerFloor, endFloor, maxSessionDuration, lid
+    }
+
+    /// A file written before a key existed gets that key's default.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        lowPowerFloor = try c.decodeIfPresent(Int.self, forKey: .lowPowerFloor) ?? Policy.defaultLowPowerFloor
+        endFloor = try c.decodeIfPresent(Int.self, forKey: .endFloor) ?? Policy.defaultEndFloor
+        maxSessionDuration = try c.decodeIfPresent(TimeInterval.self, forKey: .maxSessionDuration) ?? Policy.defaultMaxSessionDuration
+        lid = try c.decodeIfPresent(LidSettings.self, forKey: .lid) ?? LidSettings()
     }
 
     public static let `default` = PowerSettings()
@@ -51,6 +67,7 @@ public struct PowerSettings: Codable, Equatable, Sendable {
         case endFloorOutOfRange
         case lowPowerFloorOutOfRange
         case maxDurationOutOfRange
+        case lid(LidSettings.ValidationError)
     }
 
     /// Throws unless every value is within the policy ranges.
@@ -62,5 +79,10 @@ public struct PowerSettings: Codable, Equatable, Sendable {
         guard maxSessionDuration >= Policy.minimumMaxSessionDuration,
               maxSessionDuration <= Policy.absoluteMaxSessionDuration
         else { throw .maxDurationOutOfRange }
+        do {
+            try lid.validate()
+        } catch {
+            throw .lid(error)
+        }
     }
 }

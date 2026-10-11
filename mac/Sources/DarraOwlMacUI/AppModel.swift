@@ -1,6 +1,8 @@
 import AppKit
+import CoreGraphics
 import DarraOwlCore
 import DarraOwlShared
+import DarraOwlSystem
 import DarraOwlXPC
 import Foundation
 import Observation
@@ -26,13 +28,40 @@ public final class AppModel {
     private let presence = PresenceController(asserter: IOPMPresenceAsserter())
     static let presenceIndefiniteKey = "presenceIndefinite"
 
+    /// Lid-close actions.
+    public private(set) var lidClosed = false
+    public private(set) var lidProblems: [String] = []
+    /// Why the display or keyboard backlight is left alone on this Mac.
+    public let displayRefusal: String?
+    public let keyboardRefusal: String?
+    @ObservationIgnored private var lid: LidCoordinator!
+    @ObservationIgnored private let lidObserver = LidObserver()
+    @ObservationIgnored private var restoring = false
+
     private let client = HelperClient()
     private let log = Logger(subsystem: "com.darrao.darraowl", category: "app")
     private var loop: Task<Void, Never>?
     private var checkedHelperBuild = false
     static let firstLaunchKey = "didConfigureLoginItem"
 
-    public init() {}
+    public init() {
+        let display = DisplayServicesDimmer()
+        let keyboard = CoreBrightnessKeyboard()
+        displayRefusal = display.refusal()
+        keyboardRefusal = keyboard.refusal()
+        let gateway = AppHelperGateway(client: client) { [weak self] status in
+            self?.status = status
+        }
+        lid = LidCoordinator(.init(
+            display: displayRefusal == nil ? display : nil,
+            keyboard: keyboardRefusal == nil ? keyboard : nil,
+            audio: CoreAudioControl(),
+            processes: WorkspaceProcesses(),
+            docker: DockerDesktopProbe(),
+            helper: gateway,
+            log: OSLogEngineLogger(category: "lid")
+        ))
+    }
 
     public var session: Session? { status?.session }
 
@@ -54,12 +83,18 @@ public final class AppModel {
         if UserDefaults.standard.bool(forKey: Self.presenceIndefiniteKey) {
             startPresence(duration: nil)
         }
+        lidObserver.onChange = { [weak self] closed in
+            Task { await self?.handleLid(closed: closed) }
+        }
+        lidObserver.start()
+        lidClosed = lidObserver.isClosed
         loop = Task { [weak self] in
             var tick = 0
             while !Task.isCancelled {
                 guard let self else { return }
                 self.now = Date()
                 self.tickPresence()
+                if tick % 30 == 0 { self.sampleBrightnessIfPresent() }
                 // Ask the helper every 2 s during a session, every 10 s otherwise.
                 let every = self.session == nil ? 10 : 2
                 if tick % every == 0 { await self.refresh() }
@@ -83,6 +118,7 @@ public final class AppModel {
             let response = try await client.send(.status)
             apply(response)
             await restartHelperIfOutdated(response)
+            await restoreUserChangesIfDue()
         } catch {
             reachable = false
             client.invalidate()
@@ -121,6 +157,48 @@ public final class AppModel {
             }
             NSApp.terminate(nil)
         }
+    }
+
+    // MARK: Lid
+
+    /// Gives up on an audio device that will not come back.
+    public func forgetAudio(deviceUID: String) {
+        Task { await lid.forgetAudio(deviceUID: deviceUID) }
+    }
+
+    private func handleLid(closed: Bool) async {
+        lidClosed = closed
+        guard reachable, let status else { return }
+        if closed {
+            if status.session != nil {
+                lidProblems = await lid.lidClosed(settings: status.settings.lid)
+            } else {
+                _ = try? await client.send(.lidChanged)
+            }
+        } else {
+            lidProblems = await lid.lidOpened(sessionActive: status.session != nil)
+        }
+    }
+
+    /// Brightness and sound saved at a lid close come back once the lid is
+    /// open or the session is over, including after a crash or a relaunch.
+    private func restoreUserChangesIfDue() async {
+        guard let status, !status.userChanges.isEmpty, !restoring, !lid.isBusy,
+              status.session == nil || !lidClosed
+        else { return }
+        restoring = true
+        defer { restoring = false }
+        let problems = await lid.restore(status.userChanges)
+        if !problems.isEmpty { lidProblems = problems }
+    }
+
+    /// The open-lid brightness, read only while the user is at the Mac: the
+    /// idle dim and a closing lid both lower it.
+    private func sampleBrightnessIfPresent() {
+        guard !lidClosed, status?.userChanges.displayBrightness == nil else { return }
+        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+        guard idle < 30 else { return }
+        lid.sampleBrightness()
     }
 
     // MARK: Presence

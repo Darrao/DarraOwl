@@ -50,12 +50,16 @@ public final class HelperService: NSObject, HelperXPCProtocol, Sendable {
     let build: String
     let ticker: Ticker
     let log: any EngineLogging
+    /// Effective uid of the connected client, from the kernel's audit token.
+    /// Only that user's processes can be paused through this connection.
+    let clientUID: UInt32
 
-    init(engine: SessionEngine, build: String, ticker: Ticker, log: any EngineLogging) {
+    init(engine: SessionEngine, build: String, ticker: Ticker, log: any EngineLogging, clientUID: UInt32) {
         self.engine = engine
         self.build = build
         self.ticker = ticker
         self.log = log
+        self.clientUID = clientUID
     }
 
     public func handle(_ request: Data, reply: @escaping @Sendable (Data) -> Void) {
@@ -90,9 +94,19 @@ public final class HelperService: NSObject, HelperXPCProtocol, Sendable {
                 status = try await engine.updateSettings(settings)
             case .prepareUninstall:
                 status = await engine.prepareUninstall()
+            case let .recordUserChanges(changes):
+                status = try await engine.recordUserChanges(changes)
+            case let .clearUserChanges(kinds):
+                status = await engine.clearUserChanges(kinds)
+            case let .freeze(groups):
+                status = try await engine.freeze(groups, requesterUID: clientUID)
+            case let .resume(bundleID):
+                status = await engine.resume(onlyBundleID: bundleID)
+            case .lidChanged:
+                status = await engine.evaluate()
             case .restartIfIdle:
                 status = await engine.status()
-                if status.session == nil, !status.sleepHeld, !status.lowPowerHeld {
+                if status.session == nil, !status.sleepHeld, !status.lowPowerHeld, status.frozen.isEmpty {
                     log.info("restarting for update")
                     Task {
                         try? await Task.sleep(for: .milliseconds(300))
@@ -110,15 +124,24 @@ public final class HelperService: NSObject, HelperXPCProtocol, Sendable {
 }
 
 final class ListenerDelegate: NSObject, NSXPCListenerDelegate, Sendable {
-    let service: HelperService
+    let engine: SessionEngine
+    let build: String
+    let ticker: Ticker
+    let log: any EngineLogging
 
-    init(service: HelperService) {
-        self.service = service
+    init(engine: SessionEngine, build: String, ticker: Ticker, log: any EngineLogging) {
+        self.engine = engine
+        self.build = build
+        self.ticker = ticker
+        self.log = log
     }
 
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection connection: NSXPCConnection) -> Bool {
         connection.exportedInterface = NSXPCInterface(with: HelperXPCProtocol.self)
-        connection.exportedObject = service
+        connection.exportedObject = HelperService(
+            engine: engine, build: build, ticker: ticker, log: log,
+            clientUID: connection.effectiveUserIdentifier
+        )
         connection.resume()
         return true
     }

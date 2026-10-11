@@ -17,6 +17,7 @@ public enum HelperMain {
         let engine = SessionEngine(.init(
             power: PmsetPowerControl(),
             source: IOPSPowerSource(),
+            processes: SysctlProcessControl(),
             clock: SystemClock(),
             journalStore: JSONFileStore<Journal>(directory: stateDirectory, fileName: "journal.json"),
             settingsStore: JSONFileStore<PowerSettings>(directory: stateDirectory, fileName: "settings.json"),
@@ -59,7 +60,7 @@ public enum HelperMain {
                 // this process, so step aside as soon as nothing is held and
                 // let launchd (KeepAlive) start the new one.
                 if let binary, binary.wasReplaced(),
-                   status.session == nil, !status.sleepHeld, !status.lowPowerHeld {
+                   status.session == nil, !status.sleepHeld, !status.lowPowerHeld, status.frozen.isEmpty {
                     log.info("binary replaced by an update, restarting")
                     exit(0)
                 }
@@ -67,8 +68,7 @@ public enum HelperMain {
         }
 
         if let team = CodeRequirements.currentTeamID(), let requirement = CodeRequirements.client(teamID: team) {
-            let service = HelperService(engine: engine, build: build, ticker: ticker, log: log)
-            let delegate = ListenerDelegate(service: service)
+            let delegate = ListenerDelegate(engine: engine, build: build, ticker: ticker, log: log)
             let listener = NSXPCListener(machServiceName: HelperConstants.machServiceName)
             listener.setConnectionCodeSigningRequirement(requirement)
             listener.delegate = delegate
