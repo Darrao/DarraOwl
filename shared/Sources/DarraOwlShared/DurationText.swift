@@ -41,6 +41,24 @@ public enum DurationText {
         return nil
     }
 
+    /// Days, hours and minutes typed in three fields. An empty field counts
+    /// as 0. Returns nil when a field is not a whole number, is negative, or
+    /// when the total is zero.
+    public static func total(days: String, hours: String, minutes: String) -> TimeInterval? {
+        var values: [Int] = []
+        for field in [days, hours, minutes] {
+            let s = field.trimmingCharacters(in: .whitespaces)
+            if s.isEmpty {
+                values.append(0)
+                continue
+            }
+            guard s.allSatisfy(\.isASCII), let n = Int(s), n >= 0, n <= 10_000 else { return nil }
+            values.append(n)
+        }
+        let seconds = TimeInterval(values[0] * 86_400 + values[1] * 3600 + values[2] * 60)
+        return seconds > 0 ? seconds : nil
+    }
+
     private static func total(hours: Int, minutes: Int) -> TimeInterval? {
         let seconds = TimeInterval(hours * 3600 + minutes * 60)
         return seconds > 0 ? seconds : nil

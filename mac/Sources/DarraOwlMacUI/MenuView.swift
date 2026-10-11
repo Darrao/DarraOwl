@@ -17,7 +17,9 @@ struct MenuBarLabel: View {
 
 struct MenuView: View {
     @Bindable var model: AppModel
-    @State private var freeText = ""
+    @State private var freeDays = ""
+    @State private var freeHours = ""
+    @State private var freeMinutes = ""
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
@@ -105,13 +107,16 @@ struct MenuView: View {
                         .keyboardShortcut(duration == Policy.defaultSessionDuration ? .defaultAction : nil)
                 }
             }
-            HStack {
-                TextField("Durée libre, ex. 1h30", text: $freeText)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(startFree)
+            Text("Durée libre").font(.callout).padding(.top, 4)
+            HStack(spacing: 6) {
+                durationField("Jours", text: $freeDays)
+                durationField("Heures", text: $freeHours)
+                durationField("Minutes", text: $freeMinutes)
                 Button("Démarrer", action: startFree)
-                    .disabled(DurationText.parse(freeText) == nil)
+                    .disabled(freeDuration == nil)
             }
+            Text(freeHint).font(.caption)
+                .foregroundStyle(freeIsTooLong ? .red : .secondary)
             powerLine
         }
         .disabled(model.busy)
@@ -164,10 +169,48 @@ struct MenuView: View {
 
     // MARK: Helpers
 
+    private func durationField(_ label: String, text: Binding<String>) -> some View {
+        TextField(label, text: text)
+            .textFieldStyle(.roundedBorder)
+            .multilineTextAlignment(.center)
+            .frame(width: 56)
+            .onSubmit(startFree)
+            .onChange(of: text.wrappedValue) { _, new in
+                let digits = String(new.filter(\.isNumber).prefix(4))
+                if digits != new { text.wrappedValue = digits }
+            }
+    }
+
+    private var maxDuration: TimeInterval {
+        model.status?.settings.maxSessionDuration ?? Policy.defaultMaxSessionDuration
+    }
+
+    private var typedDuration: TimeInterval? {
+        DurationText.total(days: freeDays, hours: freeHours, minutes: freeMinutes)
+    }
+
+    private var freeIsTooLong: Bool {
+        (typedDuration ?? 0) > maxDuration
+    }
+
+    /// A duration the helper will accept: at least 1 min, at most the cap.
+    private var freeDuration: TimeInterval? {
+        guard let d = typedDuration, d >= Policy.minimumSessionDuration, d <= maxDuration else { return nil }
+        return d
+    }
+
+    private var freeHint: String {
+        if freeIsTooLong { return "Au-delà de la durée maximale (\(DurationText.short(maxDuration)), modifiable dans Réglages)." }
+        if let d = freeDuration { return "Fin à \(DurationText.clock(Date().addingTimeInterval(d)))" }
+        return "Maximum \(DurationText.short(maxDuration))"
+    }
+
     private func startFree() {
-        guard let seconds = DurationText.parse(freeText) else { return }
+        guard let seconds = freeDuration else { return }
         model.startSession(seconds: seconds)
-        freeText = ""
+        freeDays = ""
+        freeHours = ""
+        freeMinutes = ""
     }
 
     private func powerText(_ power: PowerSnapshot) -> String {

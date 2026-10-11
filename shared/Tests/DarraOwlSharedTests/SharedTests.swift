@@ -24,6 +24,17 @@ import Testing
         #expect(DurationText.parse(text) == nil)
     }
 
+    @Test func threeFields() {
+        #expect(DurationText.total(days: "", hours: "1", minutes: "30") == 5400)
+        #expect(DurationText.total(days: "1", hours: "", minutes: "") == 86_400)
+        #expect(DurationText.total(days: " ", hours: "0", minutes: "45") == 2700)
+        #expect(DurationText.total(days: "", hours: "", minutes: "") == nil)
+        #expect(DurationText.total(days: "0", hours: "0", minutes: "0") == nil)
+        #expect(DurationText.total(days: "", hours: "-1", minutes: "") == nil)
+        #expect(DurationText.total(days: "", hours: "1.5", minutes: "") == nil)
+        #expect(DurationText.total(days: "", hours: "a", minutes: "") == nil)
+    }
+
     @Test func shortFormat() {
         #expect(DurationText.short(1800) == "30 min")
         #expect(DurationText.short(3600) == "1 h")
