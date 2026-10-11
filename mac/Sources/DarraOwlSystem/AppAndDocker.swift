@@ -10,7 +10,9 @@ public final class WorkspaceProcesses: ProcessSnapshotting {
     public func runningApps() -> [RunningApp] {
         NSWorkspace.shared.runningApplications.compactMap { app in
             guard let id = app.bundleIdentifier, app.processIdentifier > 1 else { return nil }
-            return RunningApp(pid: app.processIdentifier, bundleID: id, name: app.localizedName ?? id)
+            // Some names carry invisible direction marks ("\u{200E}WhatsApp").
+            let name = (app.localizedName ?? id).unicodeScalars.filter { $0.properties.generalCategory != .format }
+            return RunningApp(pid: app.processIdentifier, bundleID: id, name: String(String.UnicodeScalarView(name)))
         }
     }
 

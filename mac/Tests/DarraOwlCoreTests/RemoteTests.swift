@@ -362,11 +362,14 @@ struct HubRig {
 
     @Test func pairingThroughCloud() async throws {
         let rig = HubRig()
+        var notified: RemoteHub.Channel?
+        rig.hub.onPaired = { _, channel in notified = channel }
         let invite = try rig.hub.makeInvite(macName: "MacBook", endpoints: nil)
         rig.cloud.inbox = CloudInbox(pairings: [("p1", rig.phone.pairingRequest(for: invite, at: rig.clock.now()))])
         await rig.hub.pollCloud(macName: "MacBook")
         #expect(rig.cloud.pairings.map(\.accepted) == [true])
         #expect(rig.store.stored.count == 1)
+        #expect(notified == .cloud, "the window and the direct server must hear about an iCloud pairing too")
     }
 }
 

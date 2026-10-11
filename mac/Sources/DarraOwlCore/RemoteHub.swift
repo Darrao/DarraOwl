@@ -96,6 +96,9 @@ public final class RemoteHub {
     private var polling = false
     /// Called after a device is removed, so the direct link can drop it.
     public var onDeviceRemoved: ((UUID) -> Void)?
+    /// Called after a pairing succeeded, whichever path it came by (direct
+    /// or iCloud), so the window and the direct server catch up.
+    public var onPaired: ((PairedDevice, RemoteHub.Channel) -> Void)?
     /// Called with every result, so the direct link can send it.
     public var onResult: ((CommandResult) -> Void)?
 
@@ -135,7 +138,7 @@ public final class RemoteHub {
     }
 
     /// Accepts the request only for the invite on screen, once, before it expires.
-    public func handlePairing(_ request: PairingRequest, macName: String) -> PairingResponse {
+    public func handlePairing(_ request: PairingRequest, macName: String, via channel: Channel = .direct) -> PairingResponse {
         let macID = (try? store.identity().macID) ?? request.macID
         func refuse(_ m: String) -> PairingResponse {
             log.error("pairing refused: \(m)")
@@ -163,7 +166,8 @@ public final class RemoteHub {
             return refuse("Trousseau : \(error.localizedDescription)")
         }
         self.invite = nil
-        log.info("paired device \(device.id) (\(name))")
+        log.info("paired device \(device.id) (\(name)) via \(channel.rawValue)")
+        onPaired?(device, channel)
         return PairingResponse(accepted: true, macID: macID, macName: macName, message: nil)
     }
 
@@ -333,7 +337,7 @@ public final class RemoteHub {
         }
         var done: [String] = []
         for item in inbox.pairings {
-            let response = handlePairing(item.request, macName: macName)
+            let response = handlePairing(item.request, macName: macName, via: .cloud)
             try? await cloud.deliver(pairing: response, requestID: item.itemID)
             done.append(item.itemID)
         }

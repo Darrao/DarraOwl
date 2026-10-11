@@ -68,6 +68,13 @@ public final class RemoteController: CommandTarget {
             self?.lastResult = result
             self?.server?.broadcast(.result(result))
         }
+        hub.onPaired = { [weak self] _, _ in
+            guard let self else { return }
+            self.devices = self.hub.pairedDevices()
+            self.server?.stopPairing()
+            self.invite = nil
+            self.restartServer()
+        }
         hub.onDeviceRemoved = { [weak self] id in
             self?.server?.disconnect(deviceID: id)
             self?.restartServer()
@@ -165,14 +172,7 @@ public final class RemoteController: CommandTarget {
     }
 
     private func pair(_ request: PairingRequest) -> PairingResponse {
-        let response = hub.handlePairing(request, macName: macName)
-        if response.accepted {
-            devices = hub.pairedDevices()
-            server?.stopPairing()
-            invite = nil
-            restartServer()
-        }
-        return response
+        hub.handlePairing(request, macName: macName, via: .direct)
     }
 
     // MARK: Direct link
