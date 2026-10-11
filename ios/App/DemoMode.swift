@@ -28,7 +28,7 @@ enum DemoMode {
         ]
     }()
 
-    static func state(sessionEnd: Date?, watching: [Int32] = []) -> MacState {
+    static func state(sessionEnd: Date?, watching: [Int32] = [], presence: MacState.Presence = .init(active: false, until: nil), muted: Bool = false) -> MacState {
         let now = Date()
         let followed = watching.compactMap { pid in
             demoAgents.first { $0.pid == pid }.map {
@@ -43,7 +43,7 @@ enum DemoMode {
             network: .init(kind: .hotspot, name: "iPhone", sessionBytes: 184_000_000),
             agents: demoAgents,
             containers: [.init(id: "3f9a2c1b7d4e", name: "postgres"), .init(id: "8b1e5d2a9c0f", name: "redis")],
-            dockerPaused: false, settings: .default
+            dockerPaused: false, settings: .default, presence: presence, muted: muted
         )
     }
 }
@@ -67,11 +67,13 @@ private final class DemoDirect: DirectLink {
     var onPathChange: ((ConnectionPath?) -> Void)?
     private var end: Date? = Date().addingTimeInterval(6420)
     private var watching: [Int32] = []
+    private var presence = MacState.Presence(active: false, until: nil)
+    private var muted = false
 
     func connect(to mac: PairedMac, identity: PhoneIdentity) {
         path = .local
         onPathChange?(.local)
-        onState?(DemoMode.state(sessionEnd: end, watching: watching))
+        onState?(DemoMode.state(sessionEnd: end, watching: watching, presence: presence, muted: muted))
     }
 
     func disconnect() {}
@@ -87,13 +89,16 @@ private final class DemoDirect: DirectLink {
         case .stopSession, .sleepNow:
             end = nil
             watching = []
+        case let .startPresence(m): presence = .init(active: true, until: m.map { Date().addingTimeInterval(TimeInterval($0 * 60)) })
+        case .stopPresence: presence = .init(active: false, until: nil)
+        case let .setMuted(value): muted = value
         default: break
         }
         onResult?(CommandResult(commandID: env.id, status: .executed, message: nil, at: Date()))
-        onState?(DemoMode.state(sessionEnd: end, watching: watching))
+        onState?(DemoMode.state(sessionEnd: end, watching: watching, presence: presence, muted: muted))
     }
 
-    func requestState() { onState?(DemoMode.state(sessionEnd: end, watching: watching)) }
+    func requestState() { onState?(DemoMode.state(sessionEnd: end, watching: watching, presence: presence, muted: muted)) }
 }
 
 @MainActor

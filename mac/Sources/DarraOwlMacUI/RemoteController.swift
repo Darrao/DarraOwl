@@ -27,6 +27,7 @@ public final class RemoteController: CommandTarget {
     @ObservationIgnored private var cloud: CloudKitMailbox?
     @ObservationIgnored private let network = NetworkInfo()
     @ObservationIgnored private let docker = DockerControl()
+    @ObservationIgnored private let audio = CoreAudioControl()
     @ObservationIgnored private let log = OSLogEngineLogger(category: "remote")
     @ObservationIgnored private var lastBroadcast: MacState?
     @ObservationIgnored private var tick = 0
@@ -267,7 +268,9 @@ public final class RemoteController: CommandTarget {
             agents: signals.states(agents, now: Date(), mask: mask),
             containers: containers,
             dockerPaused: status.frozen.contains { $0.bundleID == PausePolicy.dockerBundleID },
-            settings: status.settings
+            settings: status.settings,
+            presence: MacState.Presence(active: model.presenceActive, until: model.presenceUntil),
+            muted: (try? audio.readDefaultOutput())?.muted
         )
     }
 
@@ -366,5 +369,50 @@ public final class RemoteController: CommandTarget {
             throw RemoteError.unknownAgent
         }
         _ = try await model.sendHelper(request)
+    }
+
+    public func stopAgent(pid: Int32) async throws {
+        // Still the agent that was published: same pid, same start second.
+        guard let agent = agents.first(where: { $0.pid == pid }),
+              case let .present(state) = SysctlProcessControl().lookup(pid),
+              state.uid == getuid(),
+              state.identity.startSeconds == Int64(agent.startedAt.timeIntervalSince1970)
+        else { throw RemoteError.unknownAgent }
+        let outcome = await AgentStopper(processes: SysctlProcessControl()).stop(pid: pid, identity: state.identity)
+        refreshAgents()
+        if outcome == .stillRunning { throw RemoteError.agentStillRunning }
+    }
+
+    public func startPresence(seconds: TimeInterval?) async throws {
+        model.startPresence(duration: seconds)
+        if let error = model.lastError, !model.presenceActive { throw HelperRefusal(message: error) }
+        publishSoon()
+    }
+
+    public func stopPresence() async throws {
+        model.stopPresence()
+        publishSoon()
+    }
+
+    public func displayOff() async throws {
+        PublicDisplaySleep().requestSleep()
+    }
+
+    public func lockScreen() async throws {
+        guard ScreenLock.lockNow() else { throw RemoteError.lockUnavailable }
+    }
+
+    public func setMuted(_ muted: Bool) async throws {
+        try await model.lidCoordinator.setMuted(muted, sessionActive: model.session != nil, saved: model.status?.userChanges.audio ?? [])
+        publishSoon()
+    }
+
+    public func pauseApps() async throws {
+        guard model.session != nil, let settings = model.status?.settings else { throw RemoteError.notDuringSession }
+        try await model.lidCoordinator.pauseApps(settings.lid.pausedApps)
+    }
+
+    public func resumeApps() async throws {
+        try await model.lidCoordinator.resumeApps(model.status?.frozen.map(\.bundleID) ?? [])
     }
 }

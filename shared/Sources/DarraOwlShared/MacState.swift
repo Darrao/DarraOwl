@@ -67,6 +67,18 @@ public struct MacState: Codable, Equatable, Sendable {
         }
     }
 
+    /// "Toujours actif" (presence), held by the app.
+    public struct Presence: Codable, Equatable, Sendable {
+        public var active: Bool
+        /// nil: no end time.
+        public var until: Date?
+
+        public init(active: Bool, until: Date?) {
+            self.active = active
+            self.until = until
+        }
+    }
+
     public var macID: UUID
     public var macName: String
     public var updatedAt: Date
@@ -83,12 +95,16 @@ public struct MacState: Codable, Equatable, Sendable {
     public var dockerPaused: Bool
     public var settings: PowerSettings
     public var protocolVersion: Int
+    /// Optional: a Mac on an older version does not send them.
+    public var presence: Presence?
+    /// The default output is muted.
+    public var muted: Bool?
 
     public init(
         macID: UUID, macName: String, updatedAt: Date, power: Power, session: Session?,
         powerSnapshot: PowerSnapshot?, lowPowerActive: Bool, pausedApps: [String], network: Network?,
         agents: [Agent] = [], containers: [Container] = [], dockerPaused: Bool, settings: PowerSettings,
-        protocolVersion: Int = LinkProtocol.version
+        protocolVersion: Int = LinkProtocol.version, presence: Presence? = nil, muted: Bool? = nil
     ) {
         self.macID = macID
         self.macName = macName
@@ -104,6 +120,8 @@ public struct MacState: Codable, Equatable, Sendable {
         self.dockerPaused = dockerPaused
         self.settings = settings
         self.protocolVersion = protocolVersion
+        self.presence = presence
+        self.muted = muted
     }
 }
 

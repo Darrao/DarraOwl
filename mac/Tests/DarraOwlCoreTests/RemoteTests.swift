@@ -64,6 +64,14 @@ final class FakeTarget: CommandTarget {
     func updateSettings(_ settings: PowerSettings) async throws { try record("settings \(settings.lowPowerFloor)/\(settings.endFloor)"); currentSettings = settings }
     var agentPIDs: [Int32] = [4242]
     func watchAgent(pid: Int32) async throws { try record("watch \(pid)") }
+    func stopAgent(pid: Int32) async throws { try record("stopAgent \(pid)") }
+    func startPresence(seconds: TimeInterval?) async throws { try record("presence \(seconds.map { Int($0) } ?? -1)") }
+    func stopPresence() async throws { try record("stopPresence") }
+    func displayOff() async throws { try record("displayOff") }
+    func lockScreen() async throws { try record("lock") }
+    func setMuted(_ muted: Bool) async throws { try record("muted \(muted)") }
+    func pauseApps() async throws { try record("pauseApps") }
+    func resumeApps() async throws { try record("resumeApps") }
 }
 
 @MainActor
@@ -205,6 +213,28 @@ struct HubRig {
         #expect(await rig.hub.handle(unknown, via: .cloud).status == .rejected)
         #expect(await rig.hub.handle(gone, via: .cloud).status == .failed)
         #expect(rig.target.calls == ["watch 4242"])
+    }
+
+    @Test func controlsReachTheMac() async throws {
+        let rig = HubRig().paired()
+        let kinds: [CommandKind] = [.startPresence(minutes: nil), .startPresence(minutes: 90), .stopPresence, .displayOff,
+                                    .lockScreen, .setMuted(true), .pauseApps, .resumeApps]
+        for kind in kinds {
+            let cmd = try rig.phone.sign(kind, mac: rig.macID, at: rig.clock.now())
+            #expect(await rig.hub.handle(cmd, via: .direct).status == .executed, "\(kind)")
+        }
+        #expect(rig.target.calls == ["presence -1", "presence 5400", "stopPresence", "displayOff", "lock", "muted true", "pauseApps", "resumeApps"])
+    }
+
+    @Test func stopAgentNeedsFaceIDAndAPublishedAgent() async throws {
+        let rig = HubRig().paired()
+        let withoutFaceID = try rig.phone.sign(.stopAgent(pid: 4242), mac: rig.macID, at: rig.clock.now())
+        #expect(await rig.hub.handle(withoutFaceID, via: .direct).status == .unauthorized)
+        let unknown = try rig.phone.sign(.stopAgent(pid: 777), mac: rig.macID, at: rig.clock.now(), faceID: true)
+        #expect(await rig.hub.handle(unknown, via: .direct).status == .failed)
+        let known = try rig.phone.sign(.stopAgent(pid: 4242), mac: rig.macID, at: rig.clock.now(), faceID: true)
+        #expect(await rig.hub.handle(known, via: .direct).status == .executed)
+        #expect(rig.target.calls == ["stopAgent 4242"])
     }
 
     @Test func unknownContainerFails() async throws {

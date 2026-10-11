@@ -147,6 +147,7 @@ struct MacView: View {
     @State private var confirmStop = false
     @State private var confirmUnpair = false
     @State private var customHours = 3
+    @State private var agentToStop: MacState.Agent?
 
     var body: some View {
         NavigationStack {
@@ -165,6 +166,7 @@ struct MacView: View {
                     sessionBlock
                     if let state = model.state {
                         if !state.agents.isEmpty { agentsBlock(state) }
+                        if state.presence != nil { controlsBlock(state) }
                         macBlock(state)
                         if !state.containers.isEmpty || state.dockerPaused { dockerBlock(state) }
                     }
@@ -330,6 +332,13 @@ struct MacView: View {
                                 .disabled(model.isBusy || !online)
                                 .accessibilityHint("Garde le Mac éveillé tant que cet agent tourne")
                         }
+                        Menu {
+                            Button("Arrêter l'agent", systemImage: "stop.fill", role: .destructive) { agentToStop = agent }
+                        } label: {
+                            Image(systemName: "ellipsis").frame(width: 32, height: 32).contentShape(Rectangle())
+                        }
+                        .disabled(model.isBusy || !online)
+                        .accessibilityLabel("Plus d'actions pour \(agent.tool)")
                     }
                 }
             }
@@ -338,6 +347,82 @@ struct MacView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
+        .confirmationDialog(
+            "Arrêter \(agentToStop?.tool ?? "l'agent") ?", isPresented: Binding(get: { agentToStop != nil }, set: { if !$0 { agentToStop = nil } }),
+            titleVisibility: .visible, presenting: agentToStop
+        ) { agent in
+            Button("Arrêter", role: .destructive) {
+                if let pid = agent.pid { Task { await model.send(.stopAgent(pid: pid)) } }
+            }
+            Button("Annuler", role: .cancel) {}
+        } message: { _ in
+            Text("Comme un Ctrl-C dans son terminal : la tâche en cours s'interrompt. Demande Face ID.")
+        }
+    }
+
+    // MARK: Controls
+
+    static let presenceDurations: [Int] = [60, 120, 240, 480]
+
+    private func controlsBlock(_ s: MacState) -> some View {
+        let presence = s.presence ?? MacState.Presence(active: false, until: nil)
+        let appsPaused = s.pausedApps.count - (s.dockerPaused ? 1 : 0) > 0
+        return VStack(alignment: .leading, spacing: 14) {
+            SectionTitle("Contrôles")
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Toujours actif").font(.body.weight(.medium))
+                    Text(presenceText(presence)).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if presence.active {
+                    Button("Arrêter") { Task { await model.send(.stopPresence) } }.buttonStyle(.glass)
+                } else {
+                    Menu("Activer") {
+                        Button("Sans limite") { Task { await model.send(.startPresence(minutes: nil)) } }
+                        ForEach(Self.presenceDurations, id: \.self) { m in
+                            Button(DurationText.short(TimeInterval(m * 60))) { Task { await model.send(.startPresence(minutes: m)) } }
+                        }
+                    }
+                    .buttonStyle(.glass)
+                }
+            }
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                controlButton("Éteindre l'écran", symbol: "display") { await model.send(.displayOff) }
+                controlButton("Verrouiller", symbol: "lock.fill") { await model.send(.lockScreen) }
+                if let muted = s.muted {
+                    controlButton(muted ? "Remettre le son" : "Couper le son", symbol: muted ? "speaker.wave.2.fill" : "speaker.slash.fill") {
+                        await model.send(.setMuted(!muted))
+                    }
+                }
+                if appsPaused {
+                    controlButton("Relancer les apps", symbol: "play.fill") { await model.send(.resumeApps) }
+                } else if s.session != nil {
+                    controlButton("Pause des apps", symbol: "pause.fill") { await model.send(.pauseApps) }
+                }
+            }
+            Text("Toujours actif : le Mac ne se met pas en veille et ton statut Teams reste « Disponible », capot ouvert. Pause des apps : Slack, WhatsApp, Discord, pendant une session.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .disabled(model.isBusy || !online)
+    }
+
+    private func presenceText(_ p: MacState.Presence) -> String {
+        guard p.active else { return "désactivé" }
+        return p.until.map { "jusqu'à \(DurationText.clock($0))" } ?? "sans limite"
+    }
+
+    private func controlButton(_ title: String, symbol: String, action: @escaping () async -> Void) -> some View {
+        Button {
+            Task { await action() }
+        } label: {
+            VStack(spacing: 6) {
+                Image(systemName: symbol).font(.title3)
+                Text(title).font(.subheadline).lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity, minHeight: 64)
+        }
+        .buttonStyle(.glass)
     }
 
     // MARK: Mac

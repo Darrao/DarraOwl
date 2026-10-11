@@ -37,8 +37,17 @@ public protocol CommandTarget: AnyObject {
     func updateSettings(_ settings: PowerSettings) async throws
     /// Agent mode: stay awake while this agent runs.
     func watchAgent(pid: Int32) async throws
-    /// Agents now running, to check a watch request against.
+    /// Agents now running, to check a watch or stop request against.
     var agentPIDs: [Int32] { get }
+    func stopAgent(pid: Int32) async throws
+    /// nil: no end time.
+    func startPresence(seconds: TimeInterval?) async throws
+    func stopPresence() async throws
+    func displayOff() async throws
+    func lockScreen() async throws
+    func setMuted(_ muted: Bool) async throws
+    func pauseApps() async throws
+    func resumeApps() async throws
     /// Settings now, to merge a partial change into.
     var currentSettings: PowerSettings? { get }
     /// Containers now running, to check a stop request against.
@@ -257,6 +266,16 @@ public final class RemoteHub {
         case let .watchAgent(pid):
             guard target.agentPIDs.contains(pid) else { throw RemoteError.unknownAgent }
             try await target.watchAgent(pid: pid)
+        case let .stopAgent(pid):
+            guard target.agentPIDs.contains(pid) else { throw RemoteError.unknownAgent }
+            try await target.stopAgent(pid: pid)
+        case let .startPresence(m): try await target.startPresence(seconds: m.map { TimeInterval($0 * 60) })
+        case .stopPresence: try await target.stopPresence()
+        case .displayOff: try await target.displayOff()
+        case .lockScreen: try await target.lockScreen()
+        case let .setMuted(muted): try await target.setMuted(muted)
+        case .pauseApps: try await target.pauseApps()
+        case .resumeApps: try await target.resumeApps()
         case let .updateBatteryFloors(lowPower, end):
             guard var s = target.currentSettings else { throw RemoteError.helperUnavailable }
             s.lowPowerFloor = lowPower
@@ -380,6 +399,8 @@ public enum RemoteError: Error, LocalizedError, Sendable {
     case helperUnavailable
     case notDuringSession
     case unknownAgent
+    case agentStillRunning
+    case lockUnavailable
 
     public var errorDescription: String? {
         switch self {
@@ -387,6 +408,8 @@ public enum RemoteError: Error, LocalizedError, Sendable {
         case .helperUnavailable: "Composant système injoignable."
         case .notDuringSession: "Possible seulement pendant une session."
         case .unknownAgent: "Cet agent ne tourne plus sur le Mac."
+        case .agentStillRunning: "L'agent ne s'est pas arrêté."
+        case .lockUnavailable: "Verrouillage indisponible sur cette version de macOS."
         }
     }
 }

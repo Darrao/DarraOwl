@@ -315,6 +315,44 @@ public final class LidCoordinator {
         _ = try await deps.helper.resume(bundleID: PausePolicy.dockerBundleID)
     }
 
+    /// Phone request: mute or unmute the default output. During a session
+    /// the level is journaled before muting, so the end of the session puts
+    /// it back; outside a session it is a plain mute, as with the key.
+    public func setMuted(_ muted: Bool, sessionActive: Bool, saved: [AudioEntry]) async throws {
+        let output = try deps.audio.readDefaultOutput()
+        if muted {
+            guard !output.muted else { return }
+            if sessionActive {
+                let entry = AudioEntry(deviceUID: output.deviceUID, name: output.name, volume: output.volume, muted: output.muted)
+                _ = try await deps.helper.recordUserChanges(UserChanges(audio: [entry]))
+            }
+            try deps.audio.mute(deviceUID: output.deviceUID)
+        } else {
+            let previous = saved.first { $0.deviceUID == output.deviceUID }
+            // Unmuting at volume 0 would still be silent.
+            let volume = max(previous?.volume ?? output.volume, Self.audibleVolume)
+            try deps.audio.apply(volume: volume, muted: false, deviceUID: output.deviceUID)
+            if previous != nil { _ = try? await deps.helper.clearUserChanges([.audio(deviceUID: output.deviceUID)]) }
+        }
+    }
+
+    static let audibleVolume: Float = 0.25
+
+    /// Phone request: pause the listed apps now (the helper refuses outside
+    /// a session: they are resumed at its end).
+    public func pauseApps(_ bundleIDs: [String]) async throws {
+        let groups = appGroups(bundleIDs)
+        guard !groups.isEmpty else { throw LidError.noAppToPause }
+        _ = try await deps.helper.freeze(groups)
+    }
+
+    /// Phone request: resume the paused apps, Docker excepted.
+    public func resumeApps(_ frozenBundleIDs: [String]) async throws {
+        for id in Set(frozenBundleIDs) where id != PausePolicy.dockerBundleID {
+            _ = try await deps.helper.resume(bundleID: id)
+        }
+    }
+
     /// Gives up on a device that will not come back: its sound stays as it is.
     public func forgetAudio(deviceUID: String) async {
         _ = try? await deps.helper.clearUserChanges([.audio(deviceUID: deviceUID)])
@@ -380,10 +418,12 @@ public final class LidCoordinator {
 public enum LidError: Error, LocalizedError, Sendable {
     case dockerNotRunning
     case dockerBusy
+    case noAppToPause
 
     public var errorDescription: String? {
         switch self {
         case .dockerNotRunning: "Docker Desktop n'est pas ouvert."
+        case .noAppToPause: "Aucune des apps à mettre en pause n'est ouverte."
         case .dockerBusy: "Des conteneurs tournent, ou Docker ne répond pas : Docker laissé tel quel."
         }
     }

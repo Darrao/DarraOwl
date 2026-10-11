@@ -33,6 +33,14 @@ import Foundation
     func updateSettings(_ settings: PowerSettings) async throws { calls.append("settings") }
     var agentPIDs: [Int32] = []
     func watchAgent(pid: Int32) async throws { calls.append("watch \(pid)") }
+    func stopAgent(pid: Int32) async throws {}
+    func startPresence(seconds: TimeInterval?) async throws {}
+    func stopPresence() async throws {}
+    func displayOff() async throws {}
+    func lockScreen() async throws {}
+    func setMuted(_ muted: Bool) async throws {}
+    func pauseApps() async throws {}
+    func resumeApps() async throws {}
 }
 
 final class MemoryLedger: ValueStoring, @unchecked Sendable {

@@ -127,3 +127,42 @@ import Testing
         }
     }
 }
+
+@Suite struct RemoteControlCommandTests {
+    @Test func onlyStoppingThingsNeedsFaceID() {
+        #expect(CommandKind.stopAgent(pid: 42).isSensitive)
+        #expect(CommandKind.sleepNow.isSensitive)
+        for kind: CommandKind in [.watchAgent(pid: 42), .startPresence(minutes: nil), .stopPresence, .displayOff,
+                                  .lockScreen, .setMuted(true), .pauseApps, .resumeApps] {
+            #expect(!kind.isSensitive, "\(kind)")
+        }
+    }
+
+    @Test func presenceDurationsAreBounded() throws {
+        try CommandKind.startPresence(minutes: nil).validateArguments()
+        try CommandKind.startPresence(minutes: 60).validateArguments()
+        try CommandKind.startPresence(minutes: 24 * 60).validateArguments()
+        #expect(throws: CommandKind.ArgumentError.duration) { try CommandKind.startPresence(minutes: 0).validateArguments() }
+        #expect(throws: CommandKind.ArgumentError.duration) { try CommandKind.startPresence(minutes: 24 * 60 + 1).validateArguments() }
+        #expect(throws: CommandKind.ArgumentError.process) { try CommandKind.stopAgent(pid: 1).validateArguments() }
+    }
+
+    @Test func commandsSurviveTheWire() throws {
+        let kinds: [CommandKind] = [.stopAgent(pid: 7), .startPresence(minutes: nil), .startPresence(minutes: 120), .setMuted(false), .lockScreen]
+        for kind in kinds {
+            let data = try JSONEncoder().encode(kind)
+            #expect(try JSONDecoder().decode(CommandKind.self, from: data) == kind)
+        }
+    }
+
+    @Test func stateFromAnOlderMacHasNoPresenceNorSound() throws {
+        let state = MacState(macID: UUID(), macName: "Mac", updatedAt: Date(timeIntervalSince1970: 0), power: .awake, session: nil,
+                             powerSnapshot: nil, lowPowerActive: false, pausedApps: [], network: nil, dockerPaused: false, settings: .default)
+        var json = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(state)) as? [String: Any])
+        json.removeValue(forKey: "presence")
+        json.removeValue(forKey: "muted")
+        let decoded = try JSONDecoder().decode(MacState.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(decoded.presence == nil)
+        #expect(decoded.muted == nil)
+    }
+}

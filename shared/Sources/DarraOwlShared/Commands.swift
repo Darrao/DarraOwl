@@ -19,11 +19,26 @@ public enum CommandKind: Codable, Equatable, Sendable {
     /// Agent mode: stay awake while this agent runs (a pid from the list the
     /// Mac published), at most the configured cap.
     case watchAgent(pid: Int32)
+    /// Interrupts an agent from the published list (SIGINT, then SIGTERM).
+    /// Sensitive.
+    case stopAgent(pid: Int32)
+    /// "Toujours actif" (presence): nil minutes for no end time.
+    case startPresence(minutes: Int?)
+    case stopPresence
+    /// Turns the display off now.
+    case displayOff
+    /// Locks the Mac now.
+    case lockScreen
+    /// Mutes or unmutes the default output.
+    case setMuted(Bool)
+    /// Pauses or resumes the apps listed in the lid settings (session only).
+    case pauseApps
+    case resumeApps
 
     /// Needs a Face ID signature from the phone's Secure Enclave key.
     public var isSensitive: Bool {
         switch self {
-        case .sleepNow, .stopContainer: true
+        case .sleepNow, .stopContainer, .stopAgent: true
         default: false
         }
     }
@@ -41,10 +56,20 @@ public enum CommandKind: Codable, Equatable, Sendable {
         case .updateBatteryFloors: "Changer les seuils de batterie"
         case .updateAlerts: "Changer les alertes"
         case .watchAgent: "Rester éveillé tant que l'agent tourne"
+        case .stopAgent: "Arrêter l'agent"
+        case let .startPresence(m): m.map { "Toujours actif pendant \(DurationText.short(TimeInterval($0 * 60)))" } ?? "Toujours actif, sans limite"
+        case .stopPresence: "Arrêter « Toujours actif »"
+        case .displayOff: "Éteindre l'écran"
+        case .lockScreen: "Verrouiller le Mac"
+        case let .setMuted(muted): muted ? "Couper le son" : "Remettre le son"
+        case .pauseApps: "Mettre les apps en pause"
+        case .resumeApps: "Relancer les apps"
         }
     }
 
     public static let extensionMinutes: Set<Int> = [30, 60]
+    /// "Toujours actif" with an end time: at most a day.
+    public static let maxPresenceMinutes = 24 * 60
 
     /// A Docker container id: 12 to 64 lower-case hex characters.
     public static func isWellFormedContainerID(_ id: String) -> Bool {
@@ -75,9 +100,12 @@ public enum CommandKind: Codable, Equatable, Sendable {
             do { try PowerSettings(lowPowerFloor: lowPower, endFloor: end).validate() } catch { throw .settings }
         case let .updateAlerts(a):
             do { try PowerSettings(alerts: a).validate() } catch { throw .settings }
-        case let .watchAgent(pid):
+        case let .watchAgent(pid), let .stopAgent(pid):
             guard pid > 1 else { throw .process }
-        case .stopSession, .sleepNow, .pauseDocker, .resumeDocker:
+        case let .startPresence(m):
+            if let m { guard (1...Self.maxPresenceMinutes).contains(m) else { throw .duration } }
+        case .stopSession, .sleepNow, .pauseDocker, .resumeDocker, .stopPresence, .displayOff, .lockScreen,
+             .setMuted, .pauseApps, .resumeApps:
             break
         }
     }
