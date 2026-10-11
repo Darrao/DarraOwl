@@ -73,12 +73,13 @@ Les données restent sur les appareils de l'utilisateur et dans sa base iCloud
 privée, à laquelle le développeur n'a pas accès. Selon la définition d'Apple,
 ce n'est pas une collecte.
 
-## Conformité export (au premier envoi d'un build)
+## Conformité export (à chaque build)
 
 - L'app utilise-t-elle du chiffrement ? **Oui**.
-- Ce chiffrement est-il exempté ? **Oui** : l'app n'utilise que le chiffrement
-  standard fourni par iOS (TLS, CryptoKit) pour protéger la liaison avec le Mac
-  de l'utilisateur.
+- Quel type d'algorithme de chiffrement votre app utilise-t-elle ? **Aucun des
+  algorithmes mentionnés ci-dessus**. L'app n'utilise que le chiffrement fourni
+  par iOS et watchOS (TLS de Network.framework, CryptoKit, Secure Enclave),
+  sans algorithme propre ni implémentation à elle d'un algorithme standard.
 
 C'est toi qui fais cette déclaration.
 
