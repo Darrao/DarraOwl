@@ -6,7 +6,7 @@ import Testing
 @Suite struct AgentDetectorTests {
     let t = Date(timeIntervalSince1970: 1_800_000_000)
 
-    func c(_ pid: Int32, _ ppid: Int32, _ name: String, _ args: [String] = [], cwd: String? = "/Users/elio/Dev/DarraOwl", at: TimeInterval = 0) -> AgentDetector.Candidate {
+    func c(_ pid: Int32, _ ppid: Int32, _ name: String, _ args: [String] = [], cwd: String? = "/Users/me/Dev/DarraOwl", at: TimeInterval = 0) -> AgentDetector.Candidate {
         .init(pid: pid, ppid: ppid, name: name, arguments: args, cwd: cwd, startedAt: t.addingTimeInterval(at))
     }
 
@@ -15,7 +15,7 @@ import Testing
             c(10, 1, "zsh"),
             c(11, 10, "claude", at: 1),
             c(12, 11, "claude", at: 2),               // helper of 11
-            c(20, 1, "node", ["node", "/opt/homebrew/bin/gemini"], cwd: "/Users/elio/Dev/site", at: 3),
+            c(20, 1, "node", ["node", "/opt/homebrew/bin/gemini"], cwd: "/Users/me/Dev/site", at: 3),
             c(30, 1, "codex", cwd: "/", at: 4),
             c(40, 1, "node", ["node", "server.js"]),
         ])
@@ -25,13 +25,13 @@ import Testing
 
     @Test func signalsAndMasking() {
         var s = AgentSignals()
-        let a = AgentProcess(pid: 11, tool: "claude", cwd: "/Users/elio/Dev/DarraOwl", startedAt: t)
-        s.record(.waiting, cwd: "/Users/elio/Dev/DarraOwl", at: t)
+        let a = AgentProcess(pid: 11, tool: "claude", cwd: "/Users/me/Dev/DarraOwl", startedAt: t)
+        s.record(.waiting, cwd: "/Users/me/Dev/DarraOwl", at: t)
         #expect(s.states([a], now: t.addingTimeInterval(60), mask: false) == [MacState.Agent(tool: "claude", project: "DarraOwl", since: t, waitingForApproval: true)])
         #expect(s.states([a], now: t.addingTimeInterval(60), mask: true).first?.project == nil)
-        s.record(.finished, cwd: "/Users/elio/Dev/DarraOwl", at: t.addingTimeInterval(90))
+        s.record(.finished, cwd: "/Users/me/Dev/DarraOwl", at: t.addingTimeInterval(90))
         #expect(!s.isWaiting(cwd: a.cwd, now: t.addingTimeInterval(100)))
-        s.record(.waiting, cwd: "/Users/elio/Dev/DarraOwl", at: t)
+        s.record(.waiting, cwd: "/Users/me/Dev/DarraOwl", at: t)
         #expect(!s.isWaiting(cwd: a.cwd, now: t.addingTimeInterval(3600)), "stale after 30 min")
     }
 }
