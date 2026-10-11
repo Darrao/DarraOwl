@@ -85,20 +85,17 @@ C'est toi qui fais cette déclaration.
 
 ## Captures d'écran
 
-`docs/app-store/screenshots/`, au format iPhone 6,9" (1320 × 2868), à déposer
-dans cet ordre :
+Dans la version, section « Aperçus et captures d'écran » :
 
-1. `1-session.png` : session en cours, agents
-2. `2-mac.png` : état du Mac, Docker
-3. `3-reglages.png` : réglages capot fermé, alertes, batterie
-4. `4-bienvenue.png` : premier lancement
+- **iPhone, écran moyen (6,3", obligatoire)** : les 5 fichiers de
+  `docs/app-store/screenshots/iphone-6.3/` (1206 × 2622), dans l'ordre :
+  session, contrôles, état du Mac, réglages, bienvenue.
+- **iPhone, grand écran (6,9", facultatif)** : `iphone-6.9/` (1320 × 2868),
+  captures d'avant les contrôles. Sans elles, Apple agrandit celles du 6,3".
+- **Apple Watch (obligatoire, l'app contient une app Watch)** : les 2 fichiers
+  de `watch/` (416 × 496, Series 10 à 12) : session, agents et contrôles.
 
-Apple adapte automatiquement ces captures aux autres tailles d'iPhone.
-
-Apple Watch (416 × 496), dans la section Apple Watch de la version :
-
-1. `watch-1-session.png` : session en cours
-2. `watch-2-controles.png` : agents et contrôles
+Les captures viennent de la démonstration (`-DarraOwlDemo`, en français).
 
 ## Notes pour l'équipe de vérification (App Review)
 
