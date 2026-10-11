@@ -193,7 +193,7 @@ scripts/build-mac.sh Debug
 ```
 
 Les tests utilisent des faux : ils ne lancent jamais `pmset`, iCloud ni le
-réseau. Les règles du projet sont dans [CLAUDE.md](CLAUDE.md).
+réseau.
 
 ## Licence
 
