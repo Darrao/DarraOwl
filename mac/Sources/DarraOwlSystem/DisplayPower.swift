@@ -22,11 +22,14 @@ public struct DisplayPowerError: Error, LocalizedError, Sendable {
 
 public enum DisplayGuards {
     /// macOS major versions the DisplayServices calls were measured on.
-    public static let measuredDisplayServicesMajors: Set<Int> = [26]
+    /// 26: read, write and lid-close behaviour (Insomnia, then DarraOwl).
+    /// 27: symbols present and brightness read on 27.0.1 (2026-10-11); the
+    /// write is confirmed by the manual lid-close check.
+    public static let measuredDisplayServicesMajors: Set<Int> = [26, 27]
 
     public static func displayServicesRefusal(osMajorVersion major: Int) -> String? {
         guard !measuredDisplayServicesMajors.contains(major) else { return nil }
-        return "Luminosité de l'écran : appels mesurés sur macOS 26 seulement, macOS \(major) laissé tel quel"
+        return "Luminosité de l'écran : appels mesurés sur macOS 26 et 27 seulement, macOS \(major) laissé tel quel"
     }
 
     /// KeyboardBrightnessClient type encodings measured on macOS 26 (arm64),

@@ -4,6 +4,10 @@
 # Prints the path of the built app on the last line.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Prefer Xcode 27 when it sits next to an older Xcode.
+if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode-27.app ]; then
+  export DEVELOPER_DIR=/Applications/Xcode-27.app/Contents/Developer
+fi
 
 CONFIG="${1:-Release}"
 # Each build gets its own number so the app can tell an outdated helper apart.
