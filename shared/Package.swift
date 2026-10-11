@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "DarraOwlShared",
-    platforms: [.macOS(.v26), .iOS(.v26)],
+    platforms: [.macOS(.v26), .iOS(.v26), .watchOS(.v26)],
     products: [
         .library(name: "DarraOwlShared", targets: ["DarraOwlShared"]),
     ],

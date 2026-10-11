@@ -97,6 +97,14 @@ final class PhoneRuntime {
         )
         SharedStore.save(snapshot)
         liveActivity.update(state: state, online: snapshot.online)
+        if let watch = watchSnapshot() { WatchBridge.shared.push(watch) }
+    }
+
+    /// What the Apple Watch shows. Nil before pairing and in the demonstration.
+    func watchSnapshot() -> WatchLink.Snapshot? {
+        guard !isDemo, let mac = model.mac else { return nil }
+        let online = { if case .online = model.presence { return true } else { return false } }()
+        return WatchLink.Snapshot(state: model.state, macName: mac.macName, presence: presenceText, online: online, at: Date())
     }
 
     var presenceText: String {

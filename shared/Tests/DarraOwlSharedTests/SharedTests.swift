@@ -166,3 +166,20 @@ import Testing
         #expect(decoded.muted == nil)
     }
 }
+
+@Suite struct WatchLinkTests {
+    @Test func theWatchNeverAsksForFaceIDCommands() {
+        #expect(!WatchLink.allowed(.sleepNow))
+        #expect(!WatchLink.allowed(.stopContainer(id: "0123456789ab")))
+        #expect(!WatchLink.allowed(.stopAgent(pid: 42)))
+        #expect(WatchLink.allowed(.extendSession(minutes: 60)))
+        #expect(WatchLink.allowed(.lockScreen))
+    }
+
+    @Test func messagesSurviveTheWire() throws {
+        let request = WatchLink.Request.command(.startPresence(minutes: nil))
+        #expect(try WatchLink.decode(WatchLink.Request.self, from: WatchLink.encode(request)) == request)
+        let reply = WatchLink.Reply(ok: true, message: "fait", snapshot: .init(state: nil, macName: "Mac", presence: "En ligne", online: true, at: Date(timeIntervalSince1970: 0)))
+        #expect(try WatchLink.decode(WatchLink.Reply.self, from: WatchLink.encode(reply)) == reply)
+    }
+}

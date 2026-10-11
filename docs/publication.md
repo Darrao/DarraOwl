@@ -41,8 +41,9 @@ Dans App Store Connect > DarraOwl > Distribution :
 
 1. Recopie tout ce qui est dans `docs/app-store/fiche.md` : textes, URL,
    catégorie, mots-clés, confidentialité, notes pour la vérification.
-2. Dépose les 4 captures de `docs/app-store/screenshots/` dans la taille
-   iPhone 6,9".
+2. Dépose les 4 captures iPhone de `docs/app-store/screenshots/` dans la
+   taille iPhone 6,9", et les 2 captures `watch-*.png` dans la section
+   Apple Watch.
 3. Sous Build, choisis le dernier build TestFlight.
 4. Clique sur **Ajouter pour vérification**, puis **Soumettre**. La vérification
    prend en général 24 à 48 h. L'équipe d'Apple peut tester sans Mac grâce à

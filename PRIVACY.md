@@ -40,6 +40,12 @@ produisent tes agents de code. Pour les hooks de Claude Code, seuls le nom de
 l'événement et le nom du dossier sont lus. Ces hooks ne sont ajoutés à
 `~/.claude/settings.json` que si tu cliques sur Activer.
 
+## Apple Watch
+
+L'iPhone transmet à ta montre l'état du Mac par la liaison Bluetooth et Wi-Fi
+entre l'iPhone et la montre (WatchConnectivity). La montre ne garde aucune clé :
+elle demande à l'iPhone d'envoyer les commandes.
+
 ## Réseau local, caméra, Face ID, notifications
 
 - **Réseau local** : pour joindre ton Mac directement. La connexion est

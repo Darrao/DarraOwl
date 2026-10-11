@@ -4,6 +4,7 @@ options:
   deploymentTarget:
     macOS: "26.0"
     iOS: "26.0"
+    watchOS: "26.0"
   createIntermediateGroups: true
 settings:
   base:
@@ -107,6 +108,11 @@ targets:
       - package: DarraOwlShared
       - target: DarraOwlWidgets
         embed: true
+      - target: DarraOwlWatch
+        embed: true
+        copy:
+          destination: productsDirectory
+          subpath: $(CONTENTS_FOLDER_PATH)/Watch
     settings:
       base:
         PRODUCT_NAME: DarraOwl
@@ -134,5 +140,49 @@ targets:
         CODE_SIGN_ENTITLEMENTS: ios/Resources/Widgets.entitlements
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: WIDGET_EXTENSION
         TARGETED_DEVICE_FAMILY: "1"
+        ENABLE_HARDENED_RUNTIME: NO
+        SKIP_INSTALL: YES
+
+  # Apple Watch: talks to the Mac through the iPhone (WatchConnectivity).
+  DarraOwlWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - path: watch/App
+      - path: watch/Shared
+      - path: ios/Shared/OwlShape.swift
+      - path: watch/Resources/Assets.xcassets
+    dependencies:
+      - package: DarraOwlShared
+      - target: DarraOwlWatchWidgets
+        embed: true
+    settings:
+      base:
+        PRODUCT_NAME: DarraOwl
+        PRODUCT_BUNDLE_IDENTIFIER: com.darrao.darraowl.watchkitapp
+        INFOPLIST_FILE: watch/Resources/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: watch/Resources/DarraOwlWatch.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "4"
+        ENABLE_HARDENED_RUNTIME: NO
+        SKIP_INSTALL: YES
+    scheme: {}
+
+  DarraOwlWatchWidgets:
+    type: app-extension
+    platform: watchOS
+    sources:
+      - path: watch/Widgets
+      - path: watch/Shared
+      - path: ios/Shared/OwlShape.swift
+    settings:
+      base:
+        PRODUCT_NAME: DarraOwlWatchWidgets
+        PRODUCT_BUNDLE_IDENTIFIER: com.darrao.darraowl.watchkitapp.widgets
+        INFOPLIST_FILE: watch/Resources/Widgets-Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: watch/Resources/Widgets.entitlements
+        TARGETED_DEVICE_FAMILY: "4"
         ENABLE_HARDENED_RUNTIME: NO
         SKIP_INSTALL: YES

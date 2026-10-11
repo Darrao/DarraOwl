@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             UNNotificationCategory(identifier: MacEvent.infoCategory, actions: [], intentIdentifiers: []),
         ])
         application.registerForRemoteNotifications()
+        WatchBridge.shared.activate()
         return true
     }
 

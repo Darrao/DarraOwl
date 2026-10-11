@@ -139,9 +139,15 @@ session, qui a toujours une heure de fin.
   température, le capot, le réseau et la data de la session, les agents de
   code en cours, les conteneurs Docker.
 - **Ce que l'iPhone peut faire** : démarrer, prolonger ou arrêter une session,
-  mettre le Mac en veille, gérer Docker, changer les réglages capot fermé, les
-  alertes et les seuils de batterie. Mettre en veille et arrêter un conteneur
-  demandent Face ID.
+  suivre un agent, mettre le Mac en veille, gérer Docker, changer les réglages
+  capot fermé, les alertes et les seuils de batterie.
+- **Contrôles** : « Toujours actif » (sans limite ou 1 à 8 h), éteindre
+  l'écran, verrouiller le Mac, couper ou remettre le son, mettre en pause ou
+  relancer Slack, WhatsApp et Discord (pendant une session), arrêter un agent
+  (comme un Ctrl-C). Pendant une session, le son coupé à distance est noté
+  dans le journal et rétabli à la fin.
+- **Face ID** est demandé pour mettre en veille, arrêter un conteneur et
+  arrêter un agent.
 - **Notifications**, avec les boutons +1 h et Arrêter : session bientôt finie,
   batterie qui ne tiendra pas, Mac qui chauffe, capot ouvert ou chargeur
   débranché, réseau revenu après une coupure, data au-delà du seuil, récap de
@@ -158,6 +164,19 @@ session, qui a toujours une heure de fin.
   directe. Sinon, elle passe par ta base iCloud privée. Chaque commande est
   signée, expire au bout de 60 s et ne s'exécute qu'une fois.
 - **Désappairer**, depuis le Mac, coupe l'accès de l'iPhone immédiatement.
+
+## Apple Watch
+
+L'app Watch s'installe avec l'app iPhone. Elle montre la session, les agents
+et la batterie, et permet de démarrer, prolonger ou arrêter une session, de
+suivre un agent, d'activer « Toujours actif », d'éteindre l'écran, de
+verrouiller et de couper le son. Siri sur la montre comprend les mêmes
+phrases que sur l'iPhone. Une complication affiche le temps restant sur le
+cadran.
+
+La montre passe par l'iPhone : c'est lui qui signe les commandes avec ses
+clés. Ce qui demande Face ID (veille, arrêt d'un conteneur ou d'un agent)
+reste sur l'iPhone.
 
 ## Mode agent
 

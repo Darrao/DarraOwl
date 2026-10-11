@@ -36,7 +36,13 @@ SUR L'IPHONE
 • Docker : conteneurs actifs, pause de Docker Desktop, arrêt d'un conteneur
 • Live Activity sur l'écran verrouillé et dans la Dynamic Island, avec les boutons +1 h et Arrêter
 • Widgets pour l'écran d'accueil et l'écran verrouillé
+• Contrôles : « Toujours actif », écran, verrouillage, son, apps en pause
 • Siri : « Prolonge le Mac d'une heure avec DarraOwl »
+
+SUR L'APPLE WATCH
+• Temps restant, agents et batterie, avec une complication pour le cadran
+• Démarrer, prolonger, arrêter, suivre un agent, verrouiller le Mac
+• Siri sur la montre
 
 CAPOT FERMÉ
 Écran et clavier éteints, son coupé, mode économie d'énergie, apps bruyantes mises en pause, Docker en pause s'il ne sert pas. Tout est rétabli à l'ouverture du capot.
@@ -87,6 +93,11 @@ dans cet ordre :
 4. `4-bienvenue.png` : premier lancement
 
 Apple adapte automatiquement ces captures aux autres tailles d'iPhone.
+
+Apple Watch (416 × 496), dans la section Apple Watch de la version :
+
+1. `watch-1-session.png` : session en cours
+2. `watch-2-controles.png` : agents et contrôles
 
 ## Notes pour l'équipe de vérification (App Review)
 
