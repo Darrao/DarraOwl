@@ -41,9 +41,9 @@ struct DarraOwlLiveActivity: Widget {
                         }
                         AgentsLine(running: context.state.agentsRunning, waiting: context.state.agentsWaiting)
                         HStack {
-                            Button(intent: ExtendMacIntent()) { Label("+1 h", systemImage: "plus") }
+                            Button(intent: ExtendSessionIntent()) { Label("+1 h", systemImage: "plus") }
                                 .buttonStyle(.bordered).tint(.white)
-                            Button(intent: StopMacSessionIntent()) { Label("Arrêter", systemImage: "stop.fill") }
+                            Button(intent: StopSessionIntent()) { Label("Arrêter", systemImage: "stop.fill") }
                                 .buttonStyle(.bordered).tint(.red)
                         }
                     }
@@ -82,8 +82,8 @@ struct LockScreenActivityView: View {
             }
             Spacer()
             VStack(spacing: 8) {
-                Button(intent: ExtendMacIntent()) { Text("+1 h") }.buttonStyle(.bordered).tint(.white)
-                Button(intent: StopMacSessionIntent()) { Image(systemName: "stop.fill") }.buttonStyle(.bordered).tint(.red)
+                Button(intent: ExtendSessionIntent()) { Text("+1 h") }.buttonStyle(.bordered).tint(.white)
+                Button(intent: StopSessionIntent()) { Image(systemName: "stop.fill") }.buttonStyle(.bordered).tint(.red)
             }
         }
         .padding(16)

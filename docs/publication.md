@@ -29,9 +29,12 @@ Le script archive l'app, la signe pour l'App Store et l'envoie. Ensuite, dans
 App Store Connect > TestFlight :
 
 1. Attends la fin du traitement (10 à 30 min).
-2. Réponds à la conformité export : chiffrement exempté (voir `docs/app-store/fiche.md`).
-3. Tests internes : ajoute-toi au groupe, puis installe depuis l'app TestFlight.
-4. Pour d'autres testeurs, crée un groupe de tests externes et ajoute des
+2. Si le build passe en « Échec », clique dessus pour lire la raison. Par
+   exemple, Apple refuse le mot « Mac » dans les titres, descriptions et
+   phrases des raccourcis Siri (ITMS-90626).
+3. Réponds à la conformité export : chiffrement exempté (voir `docs/app-store/fiche.md`).
+4. Tests internes : ajoute-toi au groupe, puis installe depuis l'app TestFlight.
+5. Pour d'autres testeurs, crée un groupe de tests externes et ajoute des
    adresses e-mail, ou génère un lien public. La première version externe passe
    une courte vérification d'Apple (« Beta App Review »).
 

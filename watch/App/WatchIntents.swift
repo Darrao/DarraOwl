@@ -4,9 +4,9 @@ import Foundation
 
 // Siri on the watch. Each intent asks the iPhone, which signs and sends.
 
-struct ExtendMacIntent: AppIntent {
-    static let title: LocalizedStringResource = "Prolonger le Mac d'une heure"
-    static let description = IntentDescription("Le Mac reste éveillé une heure de plus.")
+struct ExtendSessionIntent: AppIntent {
+    static let title: LocalizedStringResource = "Prolonger la session d'une heure"
+    static let description = IntentDescription("Garde l'ordinateur éveillé une heure de plus.")
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
@@ -15,9 +15,9 @@ struct ExtendMacIntent: AppIntent {
     }
 }
 
-struct StopMacSessionIntent: AppIntent {
-    static let title: LocalizedStringResource = "Arrêter la session du Mac"
-    static let description = IntentDescription("Le Mac retrouve sa veille normale.")
+struct StopSessionIntent: AppIntent {
+    static let title: LocalizedStringResource = "Arrêter la session"
+    static let description = IntentDescription("L'ordinateur retrouve sa veille normale.")
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
@@ -26,9 +26,9 @@ struct StopMacSessionIntent: AppIntent {
     }
 }
 
-struct StartMacSessionIntent: AppIntent {
-    static let title: LocalizedStringResource = "Garder le Mac éveillé"
-    static let description = IntentDescription("Démarre une session sur le Mac.")
+struct StartSessionIntent: AppIntent {
+    static let title: LocalizedStringResource = "Démarrer une session"
+    static let description = IntentDescription("Garde l'ordinateur éveillé quelques heures.")
 
     @Parameter(title: "Heures", default: 2, inclusiveRange: (1, 12))
     var hours: Int
@@ -40,9 +40,9 @@ struct StartMacSessionIntent: AppIntent {
     }
 }
 
-struct MacStatusIntent: AppIntent {
-    static let title: LocalizedStringResource = "État du Mac"
-    static let description = IntentDescription("Dit si le Mac est éveillé et jusqu'à quand.")
+struct SessionStatusIntent: AppIntent {
+    static let title: LocalizedStringResource = "État de la session"
+    static let description = IntentDescription("Dit si l'ordinateur est éveillé et jusqu'à quand.")
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
@@ -62,20 +62,20 @@ struct MacStatusIntent: AppIntent {
 
 struct DarraOwlWatchShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
-        AppShortcut(intent: ExtendMacIntent(), phrases: [
-            "Prolonge le Mac d'une heure avec \(.applicationName)",
-            "\(.applicationName) prolonge le Mac",
+        AppShortcut(intent: ExtendSessionIntent(), phrases: [
+            "Prolonge la session avec \(.applicationName)",
+            "\(.applicationName) prolonge la session",
         ], shortTitle: "Prolonger d'1 h", systemImageName: "plus.circle")
-        AppShortcut(intent: StopMacSessionIntent(), phrases: [
-            "Arrête la session du Mac avec \(.applicationName)",
-            "\(.applicationName) arrête le Mac",
+        AppShortcut(intent: StopSessionIntent(), phrases: [
+            "Arrête la session avec \(.applicationName)",
+            "\(.applicationName) arrête la session",
         ], shortTitle: "Arrêter", systemImageName: "stop.circle")
-        AppShortcut(intent: StartMacSessionIntent(), phrases: [
-            "Garde le Mac éveillé avec \(.applicationName)",
+        AppShortcut(intent: StartSessionIntent(), phrases: [
+            "Démarre une session avec \(.applicationName)",
         ], shortTitle: "Garder éveillé", systemImageName: "moon.zzz")
-        AppShortcut(intent: MacStatusIntent(), phrases: [
-            "État du Mac avec \(.applicationName)",
-            "\(.applicationName) où en est le Mac",
-        ], shortTitle: "État du Mac", systemImageName: "laptopcomputer")
+        AppShortcut(intent: SessionStatusIntent(), phrases: [
+            "État de la session avec \(.applicationName)",
+            "\(.applicationName) où en est la session",
+        ], shortTitle: "État de la session", systemImageName: "laptopcomputer")
     }
 }

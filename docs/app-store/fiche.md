@@ -37,7 +37,7 @@ SUR L'IPHONE
 • Live Activity sur l'écran verrouillé et dans la Dynamic Island, avec les boutons +1 h et Arrêter
 • Widgets pour l'écran d'accueil et l'écran verrouillé
 • Contrôles : « Toujours actif », écran, verrouillage, son, apps en pause
-• Siri : « Prolonge le Mac d'une heure avec DarraOwl »
+• Siri : « Prolonge la session avec DarraOwl »
 
 SUR L'APPLE WATCH
 • Temps restant, agents et batterie, avec une complication pour le cadran
@@ -121,5 +121,5 @@ Apple Watch (416 × 496), dans la section Apple Watch de la version :
 
 Appairer l'iPhone avec le Mac. Démarrer une session depuis l'iPhone, fermer le
 capot, vérifier la Live Activity et la Dynamic Island. Essayer +1 h depuis la
-notification ou la Live Activity. Ajouter le widget. Dire à Siri « Prolonge le
-Mac d'une heure avec DarraOwl ».
+notification ou la Live Activity. Ajouter le widget. Dire à Siri « Prolonge la
+session avec DarraOwl ».

@@ -157,8 +157,9 @@ session, qui a toujours une heure de fin.
   de push, elle démarre quand tu ouvres l'app pendant une session, ou quand tu
   lances la session depuis l'iPhone.
 - **Widgets** pour l'écran d'accueil et l'écran verrouillé.
-- **Siri** : « Prolonge le Mac d'une heure avec DarraOwl », « Arrête la session
-  du Mac avec DarraOwl », « État du Mac avec DarraOwl ».
+- **Siri** : « Prolonge la session avec DarraOwl » (une heure de plus),
+  « Arrête la session avec DarraOwl », « Démarre une session avec DarraOwl »,
+  « État de la session avec DarraOwl ».
 - **Connexion** : chiffrée en TLS, avec une clé par iPhone appairé. Sur le même
   Wi-Fi, sur le partage de connexion de l'iPhone ou via Tailscale, elle est
   directe. Sinon, elle passe par ta base iCloud privée. Chaque commande est
