@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import CryptoKit
 import DarraOwlCore
 import DarraOwlShared
@@ -32,6 +33,10 @@ public final class RemoteController: CommandTarget {
     @ObservationIgnored private var started = false
     @ObservationIgnored private var accountProblem: String?
     @ObservationIgnored private var events = EventCenter()
+    @ObservationIgnored private var signals = AgentSignals()
+    @ObservationIgnored private var agentsSeenInSession: (session: UUID?, tools: [String]) = (nil, [])
+    @ObservationIgnored private(set) var hookServer: HookServer?
+    public private(set) var agents: [AgentProcess] = []
     @ObservationIgnored private var dataMeter = DataMeter()
     public private(set) var sessionBytes: Int64?
 
@@ -85,6 +90,10 @@ public final class RemoteController: CommandTarget {
             isPaired: { [weak self] id in self?.devices.contains { $0.id == id } ?? false }
         ))
         network.onChange = { [weak self] in self?.publishSoon() }
+        let hooks = HookServer(token: HookToken.current()) { [weak self] parsed in self?.handleHook(parsed) }
+        hooks.start()
+        hookServer = hooks
+        agents = AgentScanner.scan()
         network.start()
         devices = hub.pairedDevices()
         restartServer()
@@ -106,6 +115,7 @@ public final class RemoteController: CommandTarget {
         if tick % pollEvery == 0 { Task { await hub.pollCloud(macName: macName) } }
         if tick % 30 == 0 { Task { await refreshContainers() } }
         if tick % 5 == 0 { checkEvents() }
+        if tick % 10 == 0 { refreshAgents() }
         if tick % 3600 == 0 { Task { await cloud?.removeEvents(before: Date().addingTimeInterval(-86_400)) } }
         if let invite, Date() > invite.expiresAt { cancelInvite() }
         let problem = accountProblem ?? hub.cloudError.map { "iCloud : \($0)" }
@@ -118,6 +128,56 @@ public final class RemoteController: CommandTarget {
         Task { await hub.pollCloud(macName: macName) }
     }
 
+    // MARK: Agents
+
+    private func refreshAgents() {
+        let found = AgentScanner.scan()
+        if found != agents {
+            agents = found
+            publishSoon()
+        }
+        let session = model.status?.session?.id
+        if agentsSeenInSession.session != session { agentsSeenInSession = (session, []) }
+        if session != nil {
+            for a in found where !agentsSeenInSession.tools.contains(a.tool) { agentsSeenInSession.tools.append(a.tool) }
+        }
+    }
+
+    /// Claude Code hook: "finished" or "waiting for approval". Notifies the
+    /// phone only when nobody is at the Mac (lid closed or 60 s idle).
+    private func handleHook(_ parsed: ClaudeHook.Parsed) {
+        let now = Date()
+        let mask = model.status?.settings.alerts.maskProjectNames ?? false
+        func project(_ cwd: String?) -> String {
+            guard !mask, let cwd, case let name = URL(fileURLWithPath: cwd).lastPathComponent, !name.isEmpty, name != "/" else { return "Un projet" }
+            return name
+        }
+        var event: MacEvent?
+        switch parsed {
+        case let .finished(cwd):
+            if let cwd { signals.record(.finished, cwd: cwd, at: now) }
+            event = MacEvent(kind: .agentDone, title: "Claude a fini", body: project(cwd), at: now)
+        case let .waiting(cwd):
+            if let cwd { signals.record(.waiting, cwd: cwd, at: now) }
+            event = MacEvent(kind: .agentWaiting, title: "Claude attend ta validation", body: project(cwd), at: now)
+        case .ignored:
+            break
+        }
+        publishSoon()
+        guard let event, nobodyAtTheMac else { return }
+        Task { await hub.post([event]) }
+    }
+
+    private var nobodyAtTheMac: Bool {
+        if model.lidClosed { return true }
+        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+        return idle >= 60
+    }
+
+    var hookSnippet: String {
+        ClaudeHook.settingsSnippet(port: HookServer.port, token: HookToken.current())
+    }
+
     // MARK: Events
 
     private func checkEvents() {
@@ -125,7 +185,8 @@ public final class RemoteController: CommandTarget {
         sessionBytes = dataMeter.update(session: status.session?.id, counter: NetworkInfo.byteCounter())
         let found = events.update(EventCenter.Input(
             now: Date(), session: status.session, power: status.power, networkUp: network.isUp,
-            sessionBytes: sessionBytes, lastEnd: status.lastEnd, alerts: status.settings.alerts
+            sessionBytes: sessionBytes, lastEnd: status.lastEnd, alerts: status.settings.alerts,
+            agentsDuringSession: agentsSeenInSession.tools
         ))
         if !found.isEmpty || !hub.pendingEvents.isEmpty {
             Task { await hub.post(found) }
@@ -202,6 +263,7 @@ public final class RemoteController: CommandTarget {
             session: status.session, powerSnapshot: status.power, lowPowerActive: status.lowPowerHeld,
             pausedApps: Set(status.frozen.map(\.name)).sorted(),
             network: MacState.Network(kind: network.kind, sessionBytes: sessionBytes),
+            agents: signals.states(agents, now: Date(), mask: status.settings.alerts.maskProjectNames),
             containers: containers,
             dockerPaused: status.frozen.contains { $0.bundleID == PausePolicy.dockerBundleID },
             settings: status.settings

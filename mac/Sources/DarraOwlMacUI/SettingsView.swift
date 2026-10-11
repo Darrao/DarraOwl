@@ -1,5 +1,6 @@
 import AppKit
 import DarraOwlShared
+import DarraOwlSystem
 import SwiftUI
 
 struct SettingsView: View {
@@ -42,6 +43,22 @@ struct SettingsView: View {
                     Button("Enregistrer") { model.updateSettings(edited) }
                         .disabled(!model.reachable || !changed)
                 }
+            }
+            Section("Claude Code") {
+                Text("Pour être prévenu sur l'iPhone quand Claude a fini ou attend ta validation, ajoute cette configuration dans ~/.claude/settings.json. Seuls l'événement et le nom du dossier sont lus, jamais le contenu.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button("Copier la configuration") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(model.remote.hookSnippet, forType: .string)
+                    }
+                    Spacer()
+                    Text(model.remote.hookServer?.isListening == true ? "Écoute sur 127.0.0.1:\(HookServer.port)" : "Arrêté")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Text("Les notifications partent quand personne n'est devant le Mac : capot fermé ou une minute sans activité.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Système") {
                 Toggle("Ouvrir DarraOwl à la connexion", isOn: Binding(

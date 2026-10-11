@@ -65,6 +65,9 @@ enum SelfCheck {
             }
         }
 
+        let agents = AgentScanner.scan()
+        line("Agents", agents.isEmpty ? "aucun" : agents.map { "\($0.tool) (\($0.project ?? "?"))" }.joined(separator: ", "))
+
         if apps.contains(where: { $0.bundleID == PausePolicy.dockerBundleID }) {
             do {
                 let idle = try await DockerDesktopProbe().isIdle()
