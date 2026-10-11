@@ -15,7 +15,15 @@ public struct IOPSPowerSource: PowerSourceReading {
 
     public func read() -> PowerSnapshot {
         let (battery, external) = Self.readBattery()
-        return PowerSnapshot(battery: battery, onExternalPower: external, thermal: Self.thermal(), lidClosed: Self.lidClosed())
+        return PowerSnapshot(battery: battery, onExternalPower: external, thermal: Self.thermal(), lidClosed: Self.lidClosed(),
+                             minutesToEmpty: external ? nil : Self.minutesToEmpty())
+    }
+
+    /// macOS's own estimate; nil while it is still computing.
+    static func minutesToEmpty() -> Int? {
+        let seconds = IOPSGetTimeRemainingEstimate()
+        guard seconds > 0 else { return nil }
+        return Int(seconds / 60)
     }
 
     /// `AppleClamshellState` of IOPMrootDomain; nil without a lid.

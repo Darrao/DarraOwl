@@ -35,21 +35,24 @@ public struct PowerSettings: Codable, Equatable, Sendable {
     /// A session may never end further than this from now.
     public var maxSessionDuration: TimeInterval
     public var lid: LidSettings
+    public var alerts: AlertSettings
 
     public init(
         lowPowerFloor: Int = Policy.defaultLowPowerFloor,
         endFloor: Int = Policy.defaultEndFloor,
         maxSessionDuration: TimeInterval = Policy.defaultMaxSessionDuration,
-        lid: LidSettings = LidSettings()
+        lid: LidSettings = LidSettings(),
+        alerts: AlertSettings = AlertSettings()
     ) {
         self.lowPowerFloor = lowPowerFloor
         self.endFloor = endFloor
         self.maxSessionDuration = maxSessionDuration
         self.lid = lid
+        self.alerts = alerts
     }
 
     private enum CodingKeys: String, CodingKey {
-        case lowPowerFloor, endFloor, maxSessionDuration, lid
+        case lowPowerFloor, endFloor, maxSessionDuration, lid, alerts
     }
 
     /// A file written before a key existed gets that key's default.
@@ -59,6 +62,7 @@ public struct PowerSettings: Codable, Equatable, Sendable {
         endFloor = try c.decodeIfPresent(Int.self, forKey: .endFloor) ?? Policy.defaultEndFloor
         maxSessionDuration = try c.decodeIfPresent(TimeInterval.self, forKey: .maxSessionDuration) ?? Policy.defaultMaxSessionDuration
         lid = try c.decodeIfPresent(LidSettings.self, forKey: .lid) ?? LidSettings()
+        alerts = try c.decodeIfPresent(AlertSettings.self, forKey: .alerts) ?? AlertSettings()
     }
 
     public static let `default` = PowerSettings()
@@ -68,6 +72,7 @@ public struct PowerSettings: Codable, Equatable, Sendable {
         case lowPowerFloorOutOfRange
         case maxDurationOutOfRange
         case lid(LidSettings.ValidationError)
+        case alerts
     }
 
     /// Throws unless every value is within the policy ranges.
@@ -84,5 +89,40 @@ public struct PowerSettings: Codable, Equatable, Sendable {
         } catch {
             throw .lid(error)
         }
+        guard AlertSettings.dataThresholdRange.contains(alerts.dataThresholdMB),
+              AlertSettings.endingSoonRange.contains(alerts.endingSoonMinutes)
+        else { throw .alerts }
+    }
+}
+
+/// Which events notify the phone.
+public struct AlertSettings: Codable, Equatable, Sendable {
+    /// Lid opened or charger unplugged during a session.
+    public var antitheft: Bool
+    /// Notify once a session used this much data (MB).
+    public var dataThresholdMB: Int
+    /// "Session bientôt finie" this many minutes before the end.
+    public var endingSoonMinutes: Int
+    /// Agent project names are left out of everything sent to iCloud.
+    public var maskProjectNames: Bool
+
+    public static let dataThresholdRange = 50...100_000
+    public static let endingSoonRange = 1...60
+
+    public init(antitheft: Bool = true, dataThresholdMB: Int = 1000, endingSoonMinutes: Int = 10, maskProjectNames: Bool = false) {
+        self.antitheft = antitheft
+        self.dataThresholdMB = dataThresholdMB
+        self.endingSoonMinutes = endingSoonMinutes
+        self.maskProjectNames = maskProjectNames
+    }
+
+    private enum CodingKeys: String, CodingKey { case antitheft, dataThresholdMB, endingSoonMinutes, maskProjectNames }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        antitheft = try c.decodeIfPresent(Bool.self, forKey: .antitheft) ?? true
+        dataThresholdMB = try c.decodeIfPresent(Int.self, forKey: .dataThresholdMB) ?? 1000
+        endingSoonMinutes = try c.decodeIfPresent(Int.self, forKey: .endingSoonMinutes) ?? 10
+        maskProjectNames = try c.decodeIfPresent(Bool.self, forKey: .maskProjectNames) ?? false
     }
 }

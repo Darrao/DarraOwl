@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var endFloor = Policy.defaultEndFloor
     @State private var capHours = Int(Policy.defaultMaxSessionDuration / 3600)
     @State private var lid = LidSettings()
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Form {
@@ -52,6 +53,10 @@ struct SettingsView: View {
                     Button("Ouvrir Réglages Système") { model.openApprovalSettings() }
                 }
                 LabeledContent("Version", value: model.appBuild)
+                Button("Revoir la bienvenue") {
+                    NSApp.activate()
+                    openWindow(id: "welcome")
+                }
             }
         }
         .formStyle(.grouped)
@@ -110,7 +115,8 @@ struct SettingsView: View {
     // MARK: State
 
     private var edited: PowerSettings {
-        PowerSettings(lowPowerFloor: lowPowerFloor, endFloor: endFloor, maxSessionDuration: TimeInterval(capHours * 3600), lid: lid)
+        PowerSettings(lowPowerFloor: lowPowerFloor, endFloor: endFloor, maxSessionDuration: TimeInterval(capHours * 3600), lid: lid,
+                      alerts: model.status?.settings.alerts ?? AlertSettings())
     }
 
     private var changed: Bool {

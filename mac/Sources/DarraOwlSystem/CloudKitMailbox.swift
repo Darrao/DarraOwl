@@ -118,6 +118,34 @@ public final class CloudKitMailbox: CloudMailbox {
         _ = try await database.modifyRecords(saving: [], deleting: ids)
     }
 
+    public func post(_ event: MacEvent) async throws {
+        try await ensureZone()
+        let record = CKRecord(recordType: "Event", recordID: CKRecord.ID(recordName: "event-\(event.id.uuidString)", zoneID: zoneID))
+        record["macID"] = macID.uuidString
+        record["kind"] = event.kind.rawValue
+        record["category"] = event.category
+        // Plain, so the notification shows them without the app.
+        record["title"] = event.title
+        record["body"] = event.body
+        record["at"] = event.at
+        _ = try await database.modifyRecords(saving: [record], deleting: [], savePolicy: .allKeys)
+        var sent = UserDefaults.standard.dictionary(forKey: Self.eventsKey) as? [String: Date] ?? [:]
+        sent[record.recordID.recordName] = event.at
+        UserDefaults.standard.set(sent, forKey: Self.eventsKey)
+    }
+
+    public func removeEvents(before date: Date) async {
+        var sent = UserDefaults.standard.dictionary(forKey: Self.eventsKey) as? [String: Date] ?? [:]
+        let old = sent.filter { $0.value < date }.map(\.key)
+        guard !old.isEmpty else { return }
+        if (try? await database.modifyRecords(saving: [], deleting: old.map { CKRecord.ID(recordName: $0, zoneID: zoneID) })) != nil {
+            old.forEach { sent[$0] = nil }
+            UserDefaults.standard.set(sent, forKey: Self.eventsKey)
+        }
+    }
+
+    static let eventsKey = "cloudSentEvents"
+
     /// Deletes this Mac's records (uninstall).
     public func removeEverything() async {
         _ = try? await database.deleteRecordZone(withID: zoneID)

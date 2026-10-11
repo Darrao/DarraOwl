@@ -4,6 +4,7 @@ import UIKit
 
 @main
 struct DarraOwlPhoneApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @Environment(\.scenePhase) private var phase
     @State private var model = PhoneModel(.init(
         store: KeychainPhoneStore(deviceName: UIDevice.current.name),
@@ -18,7 +19,13 @@ struct DarraOwlPhoneApp: App {
                 .onOpenURL { url in
                     Task { await model.pair(url: url) }
                 }
-                .task { await model.start() }
+                .task {
+                    AppDelegate.model = model
+                    await model.start()
+                }
+                .onChange(of: model.mac != nil) { _, paired in
+                    if paired { Task { await NotificationPermission.request() } }
+                }
                 .task(id: phase) {
                     // Refresh while the app is on screen.
                     while phase == .active, !Task.isCancelled {

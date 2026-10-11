@@ -306,6 +306,24 @@ public final class CloudKitPhoneLink: CloudLink {
         return name
     }
 
+    /// One query subscription on `Event` records in the DarraOwl zone. The
+    /// alert text comes from the record's plain `title` and `body` fields.
+    public func subscribeToEvents() async throws {
+        let subscription = CKQuerySubscription(recordType: "Event", predicate: NSPredicate(value: true),
+                                               subscriptionID: "events", options: [.firesOnRecordCreation])
+        subscription.zoneID = zoneID
+        let info = CKSubscription.NotificationInfo()
+        info.titleLocalizationKey = "%1$@"
+        info.titleLocalizationArgs = ["title"]
+        info.alertLocalizationKey = "%1$@"
+        info.alertLocalizationArgs = ["body"]
+        info.soundName = "default"
+        info.category = MacEvent.sessionCategory
+        info.shouldSendContentAvailable = true
+        subscription.notificationInfo = info
+        _ = try await database.modifySubscriptions(saving: [subscription], deleting: [])
+    }
+
     public func pairingResponse(requestID: String) async throws -> PairingResponse? {
         let id = CKRecord.ID(recordName: "pairing-\(requestID)", zoneID: zoneID)
         do {

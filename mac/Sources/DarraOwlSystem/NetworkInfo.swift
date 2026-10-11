@@ -8,6 +8,7 @@ import Network
 @MainActor
 public final class NetworkInfo {
     public private(set) var kind: MacState.NetworkKind = .none
+    public var isUp: Bool { kind != .none }
     public var onChange: (() -> Void)?
     private let monitor = NWPathMonitor()
 
@@ -56,6 +57,38 @@ public final class NetworkInfo {
             result.append(.init(name: name, ipv4: ip))
         }
         return result
+    }
+}
+
+extension NetworkInfo {
+    /// Bytes in + out of the physical interfaces (en*), 64-bit counters from
+    /// sysctl NET_RT_IFLIST2 (the getifaddrs ones are 32-bit and wrap).
+    public nonisolated static func byteCounter() -> Int64? {
+        var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0]
+        var size = 0
+        guard sysctl(&mib, 6, nil, &size, nil, 0) == 0, size > 0 else { return nil }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 6, &buffer, &size, nil, 0) == 0 else { return nil }
+        var total: Int64 = 0
+        var offset = 0
+        return buffer.withUnsafeBytes { raw -> Int64? in
+            while offset + MemoryLayout<if_msghdr>.size <= size {
+                let header = raw.load(fromByteOffset: offset, as: if_msghdr.self)
+                guard header.ifm_msglen > 0 else { break }
+                if Int32(header.ifm_type) == RTM_IFINFO2 {
+                    let msg = raw.load(fromByteOffset: offset, as: if_msghdr2.self)
+                    var nameBuf = [CChar](repeating: 0, count: Int(IF_NAMESIZE))
+                    if if_indextoname(UInt32(msg.ifm_index), &nameBuf) != nil {
+                        let name = String(decoding: nameBuf.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+                        if name.hasPrefix("en") {
+                            total += Int64(msg.ifm_data.ifi_ibytes) + Int64(msg.ifm_data.ifi_obytes)
+                        }
+                    }
+                }
+                offset += Int(header.ifm_msglen)
+            }
+            return total
+        }
     }
 }
 

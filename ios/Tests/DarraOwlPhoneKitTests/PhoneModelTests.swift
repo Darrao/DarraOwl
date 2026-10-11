@@ -84,6 +84,8 @@ final class FakeCloudLink: CloudLink {
         return "req-1"
     }
     func pairingResponse(requestID: String) async throws -> PairingResponse? { pairingResponse }
+    var subscribed = 0
+    func subscribeToEvents() async throws { subscribed += 1 }
 }
 
 @MainActor
@@ -223,6 +225,21 @@ struct PhoneRig {
         #expect(rig.pairing.calls == 1)
         #expect(rig.cloud.pairingRequests.count == 1)
         #expect(rig.model.mac != nil)
+    }
+
+    @Test func pairingSubscribesToEvents() async throws {
+        let rig = PhoneRig()
+        rig.pairing.response = PairingResponse(accepted: true, macID: rig.macID, macName: "MacBook", message: nil)
+        await rig.model.pair(url: try rig.invite().url())
+        #expect(rig.cloud.subscribed == 1)
+    }
+
+    @Test func notificationButtonsSendCommands() async throws {
+        let rig = await PhoneRig().paired()
+        await rig.model.handleNotificationAction(MacEvent.extendAction)
+        await rig.model.handleNotificationAction(MacEvent.stopAction)
+        let kinds = try rig.cloud.sent.map { try LinkCoding.decoder().decode(CommandEnvelope.self, from: $0.payload).kind }
+        #expect(kinds == [.extendSession(minutes: 60), .stopSession])
     }
 
     @Test func refusalIsShown() async throws {

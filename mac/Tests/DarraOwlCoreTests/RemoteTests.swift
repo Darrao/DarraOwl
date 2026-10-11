@@ -80,6 +80,13 @@ final class FakeCloud: CloudMailbox {
     func deliver(result: CommandResult) async throws { results.append(result) }
     func deliver(pairing: PairingResponse, requestID: String) async throws { pairings.append(pairing) }
     func discard(itemIDs: [String]) async throws { discarded += itemIDs }
+    var events: [MacEvent] = []
+    var failEvents = false
+    func post(_ event: MacEvent) async throws {
+        if failEvents { throw FakeError(message: "offline") }
+        events.append(event)
+    }
+    func removeEvents(before date: Date) async {}
 }
 
 @MainActor
@@ -329,6 +336,18 @@ struct HubRig {
         rig.clock.advance(25)
         #expect(await rig.hub.publishIfDue(state(rig), endpoints: nil, force: true))
         #expect(rig.hub.cloudError == nil)
+    }
+
+    @Test func eventsWaitForTheNetwork() async {
+        let rig = HubRig()
+        rig.cloud.failEvents = true
+        await rig.hub.post([MacEvent(kind: .hot, title: "t", body: "b", at: rig.clock.now())])
+        #expect(rig.hub.pendingEvents.count == 1)
+        rig.cloud.failEvents = false
+        rig.clock.advance(31)
+        await rig.hub.post([])
+        #expect(rig.cloud.events.map(\.kind) == [.hot])
+        #expect(rig.hub.pendingEvents.isEmpty)
     }
 
     @Test func inboxCommandsRunAndAnswersGoBackToCloud() async throws {

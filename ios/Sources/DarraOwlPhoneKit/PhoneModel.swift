@@ -90,7 +90,18 @@ public final class PhoneModel {
     public func start() async {
         mac = deps.store.pairedMac()
         cloudProblem = await deps.cloud.accountProblem()
+        if mac != nil, cloudProblem == nil { try? await deps.cloud.subscribeToEvents() }
         await tick()
+    }
+
+    /// A button on a notification: +1 h or Arrêter.
+    public func handleNotificationAction(_ id: String) async {
+        if mac == nil { mac = deps.store.pairedMac() }
+        switch id {
+        case MacEvent.extendAction: await send(.extendSession(minutes: 60))
+        case MacEvent.stopAction: await send(.stopSession)
+        default: break
+        }
     }
 
     /// Call every few seconds while the app is in the foreground.
@@ -160,6 +171,7 @@ public final class PhoneModel {
         }
         mac = paired
         lastConnectAttempt = nil
+        try? await deps.cloud.subscribeToEvents()
         await tick()
     }
 

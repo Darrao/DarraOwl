@@ -31,6 +31,9 @@ public final class RemoteController: CommandTarget {
     @ObservationIgnored private var tick = 0
     @ObservationIgnored private var started = false
     @ObservationIgnored private var accountProblem: String?
+    @ObservationIgnored private var events = EventCenter()
+    @ObservationIgnored private var dataMeter = DataMeter()
+    public private(set) var sessionBytes: Int64?
 
     public let macName = Host.current().localizedName ?? "Mac"
 
@@ -95,6 +98,8 @@ public final class RemoteController: CommandTarget {
         let pollEvery = model.session == nil ? 60 : 20
         if tick % pollEvery == 0 { Task { await hub.pollCloud(macName: macName) } }
         if tick % 30 == 0 { Task { await refreshContainers() } }
+        if tick % 5 == 0 { checkEvents() }
+        if tick % 3600 == 0 { Task { await cloud?.removeEvents(before: Date().addingTimeInterval(-86_400)) } }
         if let invite, Date() > invite.expiresAt { cancelInvite() }
         let problem = accountProblem ?? hub.cloudError.map { "iCloud : \($0)" }
         if problem != cloudProblem { cloudProblem = problem }
@@ -104,6 +109,20 @@ public final class RemoteController: CommandTarget {
     func cloudChanged() {
         guard started else { return }
         Task { await hub.pollCloud(macName: macName) }
+    }
+
+    // MARK: Events
+
+    private func checkEvents() {
+        guard let status = model.status else { return }
+        sessionBytes = dataMeter.update(session: status.session?.id, counter: NetworkInfo.byteCounter())
+        let found = events.update(EventCenter.Input(
+            now: Date(), session: status.session, power: status.power, networkUp: network.isUp,
+            sessionBytes: sessionBytes, lastEnd: status.lastEnd, alerts: status.settings.alerts
+        ))
+        if !found.isEmpty || !hub.pendingEvents.isEmpty {
+            Task { await hub.post(found) }
+        }
     }
 
     // MARK: Pairing
@@ -182,7 +201,7 @@ public final class RemoteController: CommandTarget {
             macID: identity.macID, macName: macName, updatedAt: Date(), power: macPower,
             session: status.session, powerSnapshot: status.power, lowPowerActive: status.lowPowerHeld,
             pausedApps: Set(status.frozen.map(\.name)).sorted(),
-            network: MacState.Network(kind: network.kind),
+            network: MacState.Network(kind: network.kind, sessionBytes: sessionBytes),
             containers: containers,
             dockerPaused: status.frozen.contains { $0.bundleID == PausePolicy.dockerBundleID },
             settings: status.settings

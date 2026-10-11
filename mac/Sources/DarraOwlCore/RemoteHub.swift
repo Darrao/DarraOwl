@@ -50,6 +50,10 @@ public protocol CloudMailbox: AnyObject {
     func deliver(result: CommandResult) async throws
     func deliver(pairing: PairingResponse, requestID: String) async throws
     func discard(itemIDs: [String]) async throws
+    /// An `Event` record: the phone's subscription turns it into a notification.
+    func post(_ event: MacEvent) async throws
+    /// Deletes this Mac's events older than `date`.
+    func removeEvents(before date: Date) async
 }
 
 public struct CloudInbox: Sendable {
@@ -238,6 +242,10 @@ public final class RemoteHub {
             guard var s = target.currentSettings else { throw RemoteError.helperUnavailable }
             s.lid = lid
             try await target.updateSettings(s)
+        case let .updateAlerts(alerts):
+            guard var s = target.currentSettings else { throw RemoteError.helperUnavailable }
+            s.alerts = alerts
+            try await target.updateSettings(s)
         case let .updateBatteryFloors(lowPower, end):
             guard var s = target.currentSettings else { throw RemoteError.helperUnavailable }
             s.lowPowerFloor = lowPower
@@ -285,6 +293,29 @@ public final class RemoteHub {
             return false
         }
     }
+
+    /// Sends events now; on failure they wait in memory for the next try
+    /// (at most 20, the oldest dropped).
+    public func post(_ events: [MacEvent]) async {
+        pendingEvents += events
+        if pendingEvents.count > 20 { pendingEvents.removeFirst(pendingEvents.count - 20) }
+        guard let cloud, !pendingEvents.isEmpty else { return }
+        if let backoff, clock.now() < backoff.until { return }
+        var sent = 0
+        for event in pendingEvents {
+            do {
+                try await cloud.post(event)
+                sent += 1
+                log.info("event \(event.kind.rawValue) sent")
+            } catch {
+                failed(error, "iCloud event")
+                break
+            }
+        }
+        pendingEvents.removeFirst(sent)
+    }
+
+    public private(set) var pendingEvents: [MacEvent] = []
 
     /// Reads commands and pairing requests left in iCloud, answers them there.
     public func pollCloud(macName: String) async {

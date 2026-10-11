@@ -15,6 +15,7 @@ public enum CommandKind: Codable, Equatable, Sendable {
     case stopContainer(id: String)
     case updateLidSettings(LidSettings)
     case updateBatteryFloors(lowPower: Int, end: Int)
+    case updateAlerts(AlertSettings)
 
     /// Needs a Face ID signature from the phone's Secure Enclave key.
     public var isSensitive: Bool {
@@ -35,6 +36,7 @@ public enum CommandKind: Codable, Equatable, Sendable {
         case .stopContainer: "Arrêter un conteneur"
         case .updateLidSettings: "Changer les réglages capot fermé"
         case .updateBatteryFloors: "Changer les seuils de batterie"
+        case .updateAlerts: "Changer les alertes"
         }
     }
 
@@ -66,6 +68,8 @@ public enum CommandKind: Codable, Equatable, Sendable {
             do { try s.validate() } catch { throw .settings }
         case let .updateBatteryFloors(lowPower, end):
             do { try PowerSettings(lowPowerFloor: lowPower, endFloor: end).validate() } catch { throw .settings }
+        case let .updateAlerts(a):
+            do { try PowerSettings(alerts: a).validate() } catch { throw .settings }
         case .stopSession, .sleepNow, .pauseDocker, .resumeDocker:
             break
         }

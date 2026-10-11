@@ -38,6 +38,7 @@ struct OnboardingView: View {
                          model.cloudProblem ?? "iCloud est disponible sur cet iPhone.",
                          ok: model.cloudProblem == nil)
                     step(2, "Sur le Mac", "Clique sur la chouette, puis iPhone…, puis Afficher le code d'appairage.", ok: nil)
+                    step(3, "Notifications", "Après l'appairage, autorise-les : fin de session, batterie, chaleur, Claude.", ok: nil)
                 }
                 Section {
                     if DataScannerViewController.isSupported {
@@ -224,6 +225,7 @@ struct MacView: View {
         Section("Mac") {
             if let p = s.powerSnapshot {
                 LabeledContent("Batterie", value: batteryText(p))
+                if let m = p.minutesToEmpty { LabeledContent("Autonomie estimée", value: DurationText.short(TimeInterval(m * 60))) }
                 LabeledContent("Température", value: p.thermal.label)
                 if let lid = p.lidClosed { LabeledContent("Capot", value: lid ? "fermé" : "ouvert") }
             }
@@ -236,6 +238,7 @@ struct MacView: View {
         Section("Réseau") {
             LabeledContent("Connexion", value: networkText(s.network))
             if let name = s.network?.name { LabeledContent("Réseau", value: name) }
+            if let bytes = s.network?.sessionBytes { LabeledContent("Data de la session", value: ByteText.short(bytes)) }
         }
     }
 
@@ -304,6 +307,14 @@ struct SettingsSheet: View {
                     Toggle("Mode économie d'énergie", isOn: $settings.lid.lowPower)
                     Toggle("Docker en pause sans conteneur", isOn: $settings.lid.pauseDocker)
                 }
+                Section("Alertes") {
+                    Toggle("Antivol : capot ouvert, chargeur débranché", isOn: $settings.alerts.antitheft)
+                    Stepper("Fin de session : \(settings.alerts.endingSoonMinutes) min avant", value: $settings.alerts.endingSoonMinutes,
+                            in: AlertSettings.endingSoonRange, step: 5)
+                    Stepper("Data : au-delà de \(ByteText.short(Int64(settings.alerts.dataThresholdMB) * 1_000_000))",
+                            value: $settings.alerts.dataThresholdMB, in: AlertSettings.dataThresholdRange, step: 250)
+                    Toggle("Masquer les noms de projets", isOn: $settings.alerts.maskProjectNames)
+                }
                 Section("Batterie") {
                     Stepper("Économie d'énergie sous \(settings.lowPowerFloor) %", value: $settings.lowPowerFloor,
                             in: (settings.endFloor + Policy.floorGap)...Policy.maxLowPowerFloor, step: 5)
@@ -322,6 +333,7 @@ struct SettingsSheet: View {
                         let original = model.state?.settings
                         Task {
                             if settings.lid != original?.lid { await model.send(.updateLidSettings(settings.lid)) }
+                            if settings.alerts != original?.alerts { await model.send(.updateAlerts(settings.alerts)) }
                             if settings.lowPowerFloor != original?.lowPowerFloor || settings.endFloor != original?.endFloor {
                                 await model.send(.updateBatteryFloors(lowPower: settings.lowPowerFloor, end: settings.endFloor))
                             }

@@ -10,6 +10,7 @@ struct DarraOwlApp: App {
             MenuView(model: model)
         } label: {
             MenuBarLabel(model: model)
+                .modifier(FirstLaunch())
                 .task {
                     AppDelegate.onCloudPush = { [model] in model.remote.cloudChanged() }
                     model.start()
@@ -20,6 +21,11 @@ struct DarraOwlApp: App {
         Settings {
             SettingsView(model: model)
         }
+
+        Window("Bienvenue", id: "welcome") {
+            WelcomeView(model: model)
+        }
+        .windowResizability(.contentSize)
 
         Window("iPhone", id: "pairing") {
             PairingView(model: model, remote: model.remote)
@@ -44,5 +50,20 @@ public enum DarraOwlEntry {
             RunLoop.main.run()
         }
         DarraOwlApp.main()
+    }
+}
+
+/// Opens the welcome window once, on the very first launch.
+struct FirstLaunch: ViewModifier {
+    @Environment(\.openWindow) private var openWindow
+    static let key = "didShowWelcome"
+
+    func body(content: Content) -> some View {
+        content.task {
+            guard !UserDefaults.standard.bool(forKey: Self.key) else { return }
+            UserDefaults.standard.set(true, forKey: Self.key)
+            NSApp.activate()
+            openWindow(id: "welcome")
+        }
     }
 }
