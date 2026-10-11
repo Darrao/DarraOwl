@@ -1,0 +1,64 @@
+name: DarraOwl
+options:
+  bundleIdPrefix: com.darrao.darraowl
+  deploymentTarget:
+    macOS: "26.0"
+    iOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    DEVELOPMENT_TEAM: S3YD258U2R
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "6.0"
+    ENABLE_HARDENED_RUNTIME: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEAD_CODE_STRIPPING: YES
+packages:
+  DarraOwlMacPackage:
+    path: mac
+  DarraOwlShared:
+    path: shared
+targets:
+  DarraOwlHelper:
+    type: tool
+    platform: macOS
+    sources:
+      - path: mac/Sources/DarraOwlHelper
+    dependencies:
+      - package: DarraOwlMacPackage
+        product: DarraOwlHelperKit
+    settings:
+      base:
+        PRODUCT_NAME: DarraOwlHelper
+        PRODUCT_BUNDLE_IDENTIFIER: com.darrao.darraowl.mac.helper
+        INFOPLIST_FILE: mac/Resources/Helper/Info.plist
+        CREATE_INFOPLIST_SECTION_IN_BINARY: YES
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+
+  DarraOwlMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: mac/Sources/DarraOwlMac
+      - path: mac/Resources/Helper/com.darrao.darraowl.mac.helper.plist
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchDaemons
+    dependencies:
+      - package: DarraOwlMacPackage
+        product: DarraOwlMacUI
+      - target: DarraOwlHelper
+        embed: true
+        codeSign: true
+        copy:
+          destination: executables
+    settings:
+      base:
+        PRODUCT_NAME: DarraOwl
+        PRODUCT_BUNDLE_IDENTIFIER: com.darrao.darraowl.mac
+        INFOPLIST_FILE: mac/Resources/App/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+    scheme: {}
