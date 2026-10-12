@@ -114,3 +114,15 @@ import Testing
         #expect(ClaudeHook.parse(payload(nil)) == .waiting(cwd: "/p/x"), "older versions send no type")
     }
 }
+
+@Suite struct AgentHelperModeTests {
+    let t = Date(timeIntervalSince1970: 1_800_000_000)
+
+    @Test func theChromeBridgeAndMCPServersAreNotSessions() {
+        let bridge = AgentDetector.Candidate(pid: 20, ppid: 1, name: "2.1.220", arguments: ["/Users/me/.local/share/claude/versions/2.1.220", "--chrome-native-host"],
+                                             cwd: "/", startedAt: t, path: "/Users/me/.local/share/claude/versions/2.1.220")
+        let mcp = AgentDetector.Candidate(pid: 21, ppid: 1, name: "claude", arguments: ["claude", "mcp", "serve"], cwd: "/p", startedAt: t)
+        let session = AgentDetector.Candidate(pid: 22, ppid: 1, name: "claude", arguments: ["claude"], cwd: "/p/site", startedAt: t)
+        #expect(AgentDetector.agents(in: [bridge, mcp, session]).map(\.pid) == [22])
+    }
+}

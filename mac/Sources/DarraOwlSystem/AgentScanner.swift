@@ -25,7 +25,9 @@ public enum AgentScanner {
             let versioned = AgentDetector.isVersionName(name)
             let interesting = AgentDetector.tools.contains(name) || name.hasPrefix("node") || name == "bun" || versioned
             guard interesting else { continue }
-            let args = AgentDetector.tools.contains(name) ? [] : arguments(pid)
+            // Arguments always read: they tell a session from a helper mode
+            // of the same binary (Chrome bridge, MCP server).
+            let args = arguments(pid)
             let started = Date(timeIntervalSince1970: TimeInterval(e.kp_proc.p_starttime.tv_sec))
             candidates.append(.init(pid: pid, ppid: e.kp_eproc.e_ppid, name: name, arguments: args, cwd: cwd(pid),
                                     startedAt: started, path: versioned ? executablePath(pid) : nil))

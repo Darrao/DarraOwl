@@ -56,8 +56,15 @@ public enum AgentDetector {
         return parts.count >= 2 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
     }
 
+    /// Helper modes of an agent's binary that are not a coding session: the
+    /// Chrome bridge (`--chrome-native-host`) and MCP servers (`claude mcp …`).
+    static func isHelperMode(_ arguments: [String]) -> Bool {
+        arguments.contains("--chrome-native-host") || arguments.dropFirst().first == "mcp"
+    }
+
     /// The tool a process is, or nil. Node-based CLIs run as `node <path>/gemini`.
     public static func tool(of c: Candidate) -> String? {
+        if isHelperMode(c.arguments) { return nil }
         if tools.contains(c.name) { return c.name }
         if isVersionName(c.name) {
             for tool in tools {
