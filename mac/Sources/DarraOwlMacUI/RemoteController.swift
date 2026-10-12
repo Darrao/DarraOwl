@@ -163,7 +163,7 @@ public final class RemoteController: CommandTarget {
         guard started, let hub else { return }
         tick += 1
         if tick % 2 == 0 { Task { await publish() } }
-        let pollEvery = model.session == nil ? 60 : 20
+        let pollEvery = hub.cloudPollInterval(sessionRunning: model.session != nil)
         if tick % pollEvery == 0 { Task { await hub.pollCloud(macName: macName) } }
         if tick % 30 == 0 { Task { await refreshContainers() } }
         if tick % 5 == 0 { checkEvents() }

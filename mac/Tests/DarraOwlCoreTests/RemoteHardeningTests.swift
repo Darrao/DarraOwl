@@ -135,6 +135,49 @@ import Testing
         #expect(await rig.hub.publishIfDue(state(rig), endpoints: nil, force: true))
     }
 
+    /// The bytes of the session move every second: iCloud is not written
+    /// for them, only with a real change or the heartbeat.
+    @Test func countersAloneDoNotRewriteTheICloudState() async {
+        let rig = HubRig()
+        func counting(_ bytes: Int64, battery: Int = 80, minutes: Int? = 200) -> MacState {
+            var s = state(rig, battery: battery)
+            s.network = MacState.Network(kind: .wifi, sessionBytes: bytes)
+            s.powerSnapshot?.minutesToEmpty = minutes
+            s.containers = [MacState.Container(id: "abc", name: "db", cpuPercent: Double(bytes % 100), memoryBytes: bytes)]
+            return s
+        }
+        #expect(await rig.hub.publishIfDue(counting(1_000), endpoints: nil))
+        rig.clock.advance(5)
+        #expect(await !rig.hub.publishIfDue(counting(9_000, minutes: 190), endpoints: nil))
+        rig.clock.advance(5)
+        #expect(await rig.hub.publishIfDue(counting(12_000, battery: 79), endpoints: nil), "a real change")
+        rig.clock.advance(RemoteHub.heartbeat)
+        #expect(await rig.hub.publishIfDue(counting(80_000, battery: 79), endpoints: nil), "the heartbeat")
+        #expect(rig.cloud.published.map { $0.network?.sessionBytes } == [1_000, 12_000, 80_000])
+    }
+
+    /// After a phone command through iCloud, the next one is read within
+    /// seconds rather than at the next push or the usual poll.
+    @Test func iCloudIsReadOftenRightAfterAPhoneCommand() async throws {
+        let rig = HubRig().paired()
+        #expect(rig.hub.cloudPollInterval(sessionRunning: false) == RemoteHub.idlePoll)
+        #expect(rig.hub.cloudPollInterval(sessionRunning: true) == RemoteHub.sessionPoll)
+        let cmd = try rig.phone.sign(.extendSession(minutes: 60), mac: rig.macID, at: rig.clock.now())
+        rig.cloud.inbox = CloudInbox(commands: [("c1", cmd)])
+        await rig.hub.pollCloud(macName: "MacBook")
+        #expect(rig.hub.cloudPollInterval(sessionRunning: false) == RemoteHub.fastPoll)
+        rig.clock.advance(RemoteHub.fastPollWindow + 1)
+        #expect(rig.hub.cloudPollInterval(sessionRunning: false) == RemoteHub.idlePoll)
+    }
+
+    /// A command whose push never came is still read before it expires,
+    /// even after the phone spent 10 s on the direct link and a few seconds
+    /// writing it.
+    @Test func thePollAloneReadsACommandBeforeItExpires() {
+        let slowest = Double(max(RemoteHub.idlePoll, RemoteHub.sessionPoll))
+        #expect(10 + 5 + slowest < Policy.commandLifetime)
+    }
+
     /// A Mac with many virtual machines still gives a list the phone accepts.
     @Test func publishedAddressesAreCappedAndSkipVirtualNetworks() {
         var interfaces = [EndpointPicker.Interface(name: "en0", ipv4: "192.168.1.20")]

@@ -121,9 +121,14 @@ enum Uninstaller {
                 print("Ouverture à la connexion : \(error.localizedDescription)")
             }
         }
+        // Only the user can take back a permission given in System Settings.
+        if UserDefaults.standard.bool(forKey: MouseNudge.askedKey) {
+            print("Accessibilité : si tu avais autorisé DarraOwl (option « Bouger la souris »), retire-le dans Réglages Système > Confidentialité et sécurité > Accessibilité.")
+        }
         // A reinstall starts afresh: opened at login again, no presence
         // switched back on by itself.
-        for key in [AppModel.firstLaunchKey, AppModel.presenceIndefiniteKey, AppModel.presenceWhileClosedKey, AppModel.lidClosedKey, FirstLaunch.key, Updater.automaticKey, Updater.lastCheckKey] {
+        for key in [AppModel.firstLaunchKey, AppModel.presenceIndefiniteKey, AppModel.presenceWhileClosedKey, AppModel.mouseNudgeKey, MouseNudge.askedKey,
+                    AppModel.lidClosedKey, FirstLaunch.key, Updater.automaticKey, Updater.lastCheckKey] {
             UserDefaults.standard.removeObject(forKey: key)
         }
         return 0

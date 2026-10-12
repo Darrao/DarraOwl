@@ -161,6 +161,13 @@ l'écran s'éteint (Réglages Système > Écran verrouillé > « Exiger le mot d
 passe… »). À toi de juger : un portable non verrouillé est ouvert à quiconque
 soulève le capot.
 
+**Bouger la souris d'un pixel** (option, désactivée par défaut) : à chaque
+activité déclarée, le pointeur fait un aller-retour d'un pixel, pour les apps
+qui ne regardent que la souris. macOS demande d'autoriser DarraOwl dans
+Réglages Système > Confidentialité et sécurité > **Accessibilité** ; sans
+cette autorisation, l'option ne fait rien. Seul toi peux la retirer : la
+désinstallation te le rappelle si DarraOwl l'a demandée.
+
 ## iPhone
 
 - **Appairage** : DarraOwl > **iPhone…** > **Afficher le code d'appairage**,

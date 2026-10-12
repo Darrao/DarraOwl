@@ -12,6 +12,12 @@ final class IOPMPresenceAsserter: PresenceAsserting {
     /// The display or the system-only assertion, whichever is held.
     private var held: (id: IOPMAssertionID, display: Bool)?
     private var activityAssertion: IOPMAssertionID = 0
+    /// The option to also move the pointer a pixel with each activity.
+    private let nudgeMouse: () -> Bool
+
+    init(nudgeMouse: @escaping () -> Bool = { false }) {
+        self.nudgeMouse = nudgeMouse
+    }
 
     func hold(display: Bool) throws {
         if let held, held.display == display { return }
@@ -42,6 +48,7 @@ final class IOPMPresenceAsserter: PresenceAsserting {
         // Passing the previous id back updates that assertion instead of
         // creating a new one each minute.
         _ = IOPMAssertionDeclareUserActivity("DarraOwl : mode présence" as CFString, kIOPMUserActiveLocal, &activityAssertion)
+        if nudgeMouse() { MouseNudge.nudge() }
     }
 
     private func releaseActivity() {

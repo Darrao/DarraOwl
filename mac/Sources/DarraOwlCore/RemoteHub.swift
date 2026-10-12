@@ -92,6 +92,16 @@ public final class RemoteHub {
     public static let minPublishInterval: TimeInterval = 2
     public static let heartbeat: TimeInterval = 60
 
+    /// iCloud is read this often when no push came (pushes are best effort,
+    /// and Apple can hold one 10 s). Right after a phone command another
+    /// one often follows: every 3 s for two minutes. Otherwise 20 s in a
+    /// session, 30 s outside: well within the 60 s a command lives, even
+    /// after the phone spent 10 s on the direct link first.
+    public static let fastPoll = 3
+    public static let fastPollWindow: TimeInterval = 120
+    public static let sessionPoll = 20
+    public static let idlePoll = 30
+
     private let store: any PairingStore
     private let target: any CommandTarget
     private let cloud: (any CloudMailbox)?
@@ -119,6 +129,8 @@ public final class RemoteHub {
     private var polling = false
     /// A poll asked for while another one ran: done right after it.
     private var pollAgain = false
+    /// When the last command or pairing request came through iCloud.
+    private var lastCloudRequest: Date?
     private var posting = false
     /// Commands being run now.
     private var running: Set<UUID> = []
@@ -398,7 +410,7 @@ public final class RemoteHub {
             if isBackingOff(.publish) { return false }
             if let last = lastPublished {
                 let age = now.timeIntervalSince(last.at)
-                let changed = !Self.sameContent(last.state, state)
+                let changed = !Self.sameContent(last.state, state, ignoringCounters: true)
                 guard (changed && age >= Self.minPublishInterval) || age >= Self.heartbeat else { return false }
             }
         }
@@ -450,6 +462,12 @@ public final class RemoteHub {
     static let maxPendingEvents = 20
     public private(set) var pendingEvents: [MacEvent] = []
 
+    /// Seconds between two reads of iCloud, see `fastPoll`.
+    public func cloudPollInterval(sessionRunning: Bool) -> Int {
+        if let last = lastCloudRequest, clock.now().timeIntervalSince(last) < Self.fastPollWindow { return Self.fastPoll }
+        return sessionRunning ? Self.sessionPoll : Self.idlePoll
+    }
+
     /// Reads commands and pairing requests left in iCloud, answers them there.
     public func pollCloud(macName: String) async {
         guard cloud != nil, !isBackingOff(.inbox) else { return }
@@ -494,7 +512,10 @@ public final class RemoteHub {
             await deliverToCloud(result)
             done.append(item.itemID)
         }
-        if !done.isEmpty { try? await cloud.discard(itemIDs: done) }
+        if !done.isEmpty {
+            lastCloudRequest = clock.now()
+            try? await cloud.discard(itemIDs: done)
+        }
     }
 
     private func deliverToCloud(_ result: CommandResult) async {
@@ -560,10 +581,27 @@ public final class RemoteHub {
     }
 
     /// `updatedAt` changes every time; it alone is no reason to publish.
-    public static func sameContent(_ a: MacState, _ b: MacState) -> Bool {
+    /// The same state but for when it was made. For iCloud
+    /// (`ignoringCounters`), figures that move all the time are no change
+    /// either: the bytes of the session, the battery's time estimate, the
+    /// containers' processor and memory. They go with the next real change
+    /// or the heartbeat, instead of a write every few seconds.
+    public static func sameContent(_ a: MacState, _ b: MacState, ignoringCounters: Bool = false) -> Bool {
         var a = a, b = b
         a.updatedAt = .distantPast
         b.updatedAt = .distantPast
+        if ignoringCounters {
+            func strip(_ s: inout MacState) {
+                s.network?.sessionBytes = nil
+                s.powerSnapshot?.minutesToEmpty = nil
+                for i in s.containers.indices {
+                    s.containers[i].cpuPercent = nil
+                    s.containers[i].memoryBytes = nil
+                }
+            }
+            strip(&a)
+            strip(&b)
+        }
         return a == b
     }
 }

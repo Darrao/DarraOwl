@@ -27,7 +27,14 @@ public final class AppModel {
     public private(set) var presenceUntil: Date?
     public private(set) var presenceLastStop: PresenceStopReason?
     public private(set) var presenceWhileClosed = UserDefaults.standard.bool(forKey: AppModel.presenceWhileClosedKey)
-    private let presence = PresenceController(asserter: IOPMPresenceAsserter())
+    private let presence = PresenceController(asserter: IOPMPresenceAsserter(nudgeMouse: {
+        UserDefaults.standard.bool(forKey: AppModel.mouseNudgeKey)
+    }))
+    /// Option: each declared activity also moves the pointer a pixel.
+    static let mouseNudgeKey = "presenceMouseNudge"
+    public private(set) var mouseNudge = UserDefaults.standard.bool(forKey: AppModel.mouseNudgeKey)
+    /// macOS lets DarraOwl move the pointer (Accessibility).
+    public var mouseNudgeAllowed: Bool { MouseNudge.allowed }
     static let presenceIndefiniteKey = "presenceIndefinite"
     /// Option: "Toujours actif" goes on with the lid closed, during a session.
     static let presenceWhileClosedKey = "presenceWhileClosed"
@@ -424,6 +431,14 @@ public final class AppModel {
     /// nobody is using the Mac.
     var mayInstallUpdate: Bool {
         UpdatePolicy.mayInstall(sessionRunning: session != nil, timedPresence: presenceActive && presenceUntil != nil, userIdle: UserIdle.seconds())
+    }
+
+    /// The option to move the pointer a pixel with each declared activity.
+    /// Turning it on shows macOS's Accessibility prompt when needed.
+    public func setMouseNudge(_ on: Bool) {
+        mouseNudge = on
+        UserDefaults.standard.set(on, forKey: Self.mouseNudgeKey)
+        if on, !MouseNudge.allowed { MouseNudge.askPermission() }
     }
 
     /// The option to stay available with the lid closed (during a session).

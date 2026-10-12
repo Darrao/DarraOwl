@@ -78,6 +78,7 @@ final class FakeCloudLink: CloudLink {
     var answer: CommandResult.Status? = .executed
     var answerAfterPolls = 1
     var polls = 0
+    var onPoll: (() -> Void)?
     var pairingResponse: PairingResponse?
     var pairingRequests: [PairingRequest] = []
 
@@ -85,6 +86,7 @@ final class FakeCloudLink: CloudLink {
     func fetchState(macID: UUID) async throws -> (state: MacState, endpoints: Endpoints?)? { state }
     func send(_ command: SignedCommand, macID: UUID) async throws { sent.append(command) }
     func result(for commandID: UUID) async throws -> CommandResult? {
+        onPoll?()
         polls += 1
         guard let answer, polls >= answerAfterPolls else { return nil }
         return CommandResult(commandID: commandID, status: answer, message: answer == .executed ? nil : "Refusé", at: Date())
@@ -173,6 +175,17 @@ struct PhoneRig {
         await rig.model.send(.stopSession)
         #expect(rig.cloud.sent.count == 1)
         #expect(rig.cloud.polls == 3)
+        #expect(rig.model.outcome == .done("Arrêter la session : fait."))
+    }
+
+    /// Through iCloud the Mac can take some 10 s: the screen says which way
+    /// the command went while it waits.
+    @Test func theWaitThroughICloudIsShown() async throws {
+        let rig = await PhoneRig().paired()
+        var shown: PhoneModel.Outcome?
+        rig.cloud.onPoll = { shown = rig.model.outcome }
+        await rig.model.send(.stopSession)
+        #expect(shown == .sending("Arrêter la session · par iCloud"))
         #expect(rig.model.outcome == .done("Arrêter la session : fait."))
     }
 

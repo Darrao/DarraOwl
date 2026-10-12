@@ -240,6 +240,16 @@ struct MenuView: View {
             ))
             .toggleStyle(.checkbox)
             .controlSize(.small)
+            Toggle("Bouger la souris d'un pixel (pour Teams)", isOn: Binding(
+                get: { model.mouseNudge },
+                set: { model.setMouseNudge($0) }
+            ))
+            .toggleStyle(.checkbox)
+            .controlSize(.small)
+            if model.mouseNudge, !model.mouseNudgeAllowed {
+                Button("Autoriser DarraOwl dans Accessibilité…") { MouseNudge.askPermission() }
+                    .buttonStyle(.link).font(.caption)
+            }
             Text(model.presenceWhileClosed
                  ? "Le Mac ne se met pas en veille et ton statut Teams reste « Disponible ». Capot fermé, pendant une session, aussi, si le Mac ne se verrouille pas quand l'écran s'éteint."
                  : "Le Mac ne se met pas en veille et ton statut Teams reste « Disponible », tant que le capot est ouvert. Capot fermé, lance une session.")

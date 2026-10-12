@@ -54,6 +54,15 @@ struct SettingsView: View {
                 Text("Avec « Toujours actif », pendant une session : capot fermé, une activité est déclarée toutes les 4 minutes pour que Teams te garde « Disponible ». L'écran se rallume un instant sous le capot, luminosité à zéro, puis s'éteint. Ne marche que si le Mac ne se verrouille pas quand l'écran s'éteint (Réglages Système > Écran verrouillé).")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Toggle("Bouger la souris d'un pixel à chaque activité", isOn: Binding(
+                    get: { model.mouseNudge },
+                    set: { model.setMouseNudge($0) }
+                ))
+                Text(model.mouseNudge && !model.mouseNudgeAllowed
+                     ? "macOS ne l'autorise pas encore : Réglages Système > Confidentialité et sécurité > Accessibilité, active DarraOwl."
+                     : "Comme une vraie souris, pour les apps qui ne comptent que les mouvements réels. Demande l'autorisation Accessibilité de macOS.")
+                    .font(.caption).foregroundStyle(model.mouseNudge && !model.mouseNudgeAllowed ? .orange : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Section {
                 HStack {
