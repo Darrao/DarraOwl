@@ -13,6 +13,10 @@ settings:
     SWIFT_VERSION: "6.0"
     ENABLE_HARDENED_RUNTIME: YES
     MARKETING_VERSION: "0.1.0"
+    # The Mac app's version (GitHub releases), apart from the iPhone's: a
+    # local build carries the last released one, so the updater does not
+    # replace it with that release.
+    MAC_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     DEAD_CODE_STRIPPING: YES
 packages:
@@ -34,6 +38,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: DarraOwlHelper
+        MARKETING_VERSION: $(MAC_VERSION)
         PRODUCT_BUNDLE_IDENTIFIER: com.darrao.darraowl.mac.helper
         INFOPLIST_FILE: mac/Resources/Helper/Info.plist
         CREATE_INFOPLIST_SECTION_IN_BINARY: YES
@@ -53,6 +58,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: darraowl
+        MARKETING_VERSION: $(MAC_VERSION)
         PRODUCT_BUNDLE_IDENTIFIER: com.darrao.darraowl.mac.cli
         INFOPLIST_FILE: mac/Resources/CLI/Info.plist
         CREATE_INFOPLIST_SECTION_IN_BINARY: YES
@@ -92,6 +98,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: DarraOwl
+        MARKETING_VERSION: $(MAC_VERSION)
         PRODUCT_BUNDLE_IDENTIFIER: com.darrao.darraowl.mac
         INFOPLIST_FILE: mac/Resources/App/Info.plist
         GENERATE_INFOPLIST_FILE: NO

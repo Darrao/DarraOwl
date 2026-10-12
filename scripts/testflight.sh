@@ -1,10 +1,12 @@
 #!/bin/bash
 # Archives the iPhone app and uploads it to App Store Connect (TestFlight).
 # Needs: the app record in App Store Connect (bundle id com.darrao.darraowl),
-# the CloudKit schema deployed to Production, an Xcode account signed in.
+# the CloudKit schema deployed to Production, and an App Store Connect API
+# key (see asc-auth.sh) or an Xcode account signed in.
 # Usage: scripts/testflight.sh [--no-upload]
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/asc-auth.sh
 if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode-27.app ]; then
   export DEVELOPER_DIR=/Applications/Xcode-27.app/Contents/Developer
 fi
@@ -17,7 +19,7 @@ xcodegen generate --quiet
 xcodebuild \
   -project DarraOwl.xcodeproj -scheme DarraOwliOS -configuration Release \
   -destination 'generic/platform=iOS' -archivePath "$ARCHIVE" \
-  -allowProvisioningUpdates CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+  -allowProvisioningUpdates ${XCODE_AUTH[@]+"${XCODE_AUTH[@]}"} CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
   -quiet archive
 
 OPTIONS="$(mktemp -t darraowl-export).plist"
@@ -36,6 +38,6 @@ cat > "$OPTIONS" <<PLIST
 </plist>
 PLIST
 xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist "$OPTIONS" \
-  -exportPath "build/export-$BUILD_NUMBER" -allowProvisioningUpdates
+  -exportPath "build/export-$BUILD_NUMBER" -allowProvisioningUpdates ${XCODE_AUTH[@]+"${XCODE_AUTH[@]}"}
 rm -f "$OPTIONS"
 echo "Build $BUILD_NUMBER : $([ "$DESTINATION" = upload ] && echo 'envoyé à App Store Connect' || echo "exporté dans build/export-$BUILD_NUMBER")"

@@ -21,13 +21,33 @@ Les deux utilisent la base CloudKit **Production** du conteneur
    déploie le schéma de Development vers Production (Deploy Schema Changes).
 3. Augmente `MARKETING_VERSION` dans `project.yml` (0.1.0, 0.2.0…).
 
+## Clé App Store Connect (une seule fois)
+
+Les deux scripts d'envoi s'en servent, sans compte Xcode ni mot de passe :
+
+1. App Store Connect > Utilisateurs et accès > Intégrations > App Store Connect
+   API > Clés de l'équipe > « + », accès **Développeur**.
+2. Télécharge `AuthKey_<ID>.p8` (une seule fois possible) et range-le dans
+   `~/.appstoreconnect/private_keys/`.
+3. Crée `~/.appstoreconnect/darraowl.env` avec l'ID de la clé et l'Issuer ID
+   affiché en haut de la page :
+
+   ```
+   ASC_KEY_ID=<ID de la clé>
+   ASC_ISSUER_ID=<Issuer ID>
+   ```
+
+Rien de tout cela ne va dans le dépôt.
+
 ## iPhone : TestFlight
 
 ```bash
 scripts/testflight.sh
 ```
 
-Le script archive l'app, la signe pour l'App Store et l'envoie. Ensuite, dans
+Le script archive l'app, la signe pour l'App Store et l'envoie. Dans l'app
+TestFlight de l'iPhone, active « Mises à jour automatiques » sur la page de
+DarraOwl : chaque build envoyé s'installe seul. Ensuite, dans
 App Store Connect > TestFlight :
 
 1. Attends la fin du traitement (10 à 30 min).
@@ -64,12 +84,9 @@ Dans App Store Connect > DarraOwl > Distribution :
 1. **Certificat Developer ID.** Dans Xcode > Réglages > Comptes, sélectionne
    l'équipe, puis Gérer les certificats > « + » > **Developer ID
    Application**. Seul le titulaire du compte peut le créer : c'est toi.
-2. **Mot de passe pour la notarisation.** Sur appleid.apple.com > Connexion et
-   sécurité > Mots de passe pour app, crée un mot de passe nommé
-   « DarraOwl notarisation ».
-3. **Enregistrer les identifiants.** Dans un Terminal, remplace l'adresse par
-   ton identifiant Apple. La commande te demandera le mot de passe créé à
-   l'étape 2 :
+2. **Notarisation.** La clé App Store Connect (ci-dessus) suffit. Sans elle :
+   sur appleid.apple.com > Connexion et sécurité > Mots de passe pour app,
+   crée un mot de passe « DarraOwl notarisation », puis dans un Terminal :
 
    ```bash
    xcrun notarytool store-credentials DarraOwl --apple-id ton@adresse.fr --team-id S3YD258U2R
@@ -77,14 +94,22 @@ Dans App Store Connect > DarraOwl > Distribution :
 
 ### À chaque version
 
-```bash
-scripts/release-mac.sh 0.1.0
-```
+1. Mets `MAC_VERSION` à la nouvelle version dans `project.yml` : les builds
+   locaux portent cette version, et la mise à jour automatique remplacerait
+   un build local resté derrière la dernière Release.
+2. Lance :
+
+   ```bash
+   scripts/release-mac.sh 0.2.0
+   ```
 
 Le script enchaîne : archive, signature Developer ID (Xcode crée le profil
 Developer ID avec iCloud et push), notarisation Apple, agrafage du ticket,
-vérification Gatekeeper, puis création de la Release GitHub `v0.1.0` avec le
+vérification Gatekeeper, puis création de la Release GitHub `v0.2.0` avec le
 zip et sa somme SHA-256. Avec `--no-publish`, il prépare tout sans publier.
+
+Les Mac où DarraOwl est installé la trouvent dans la journée et l'installent
+seuls quand rien ne tourne (Réglages > Mises à jour).
 
 ## Ce que voit quelqu'un qui installe
 

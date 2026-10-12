@@ -5,18 +5,24 @@
 # Once, before the first release (see docs/publication.md):
 #   1. A "Developer ID Application" certificate (Xcode > Settings > Accounts >
 #      Manage Certificates > + > Developer ID Application).
-#   2. Notary credentials in the Keychain, profile "DarraOwl":
+#   2. An App Store Connect API key (see asc-auth.sh), or notary credentials
+#      in the Keychain, profile "DarraOwl":
 #        xcrun notarytool store-credentials DarraOwl --apple-id <apple id> --team-id S3YD258U2R
-#      (asks for an app-specific password created on appleid.apple.com).
 #
-# Usage: scripts/release-mac.sh 0.1.0 [--no-publish]
+# Each release: set MAC_VERSION in project.yml to the new version first.
+# Usage: scripts/release-mac.sh 0.2.0 [--no-publish]
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/asc-auth.sh
 if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode-27.app ]; then
   export DEVELOPER_DIR=/Applications/Xcode-27.app/Contents/Developer
 fi
 
-VERSION="${1:?Version, par exemple 0.1.0}"
+VERSION="${1:?Version, par exemple 0.2.0}"
+# Local builds carry MAC_VERSION: behind the release, the updater would
+# replace them with it.
+grep -q "^    MAC_VERSION: \"$VERSION\"$" project.yml || {
+  echo "Mets MAC_VERSION à \"$VERSION\" dans project.yml, puis relance." >&2; exit 1; }
 PUBLISH=1
 [ "${2:-}" = "--no-publish" ] && PUBLISH=0
 BUILD_NUMBER="$(date -u +%Y%m%d%H%M)"
@@ -26,12 +32,16 @@ rm -rf "$OUT" && mkdir -p "$OUT"
 
 security find-identity -v -p codesigning | grep -q "Developer ID Application" || {
   echo "Aucun certificat Developer ID Application dans le trousseau. Voir docs/publication.md." >&2; exit 1; }
-xcrun notarytool history --keychain-profile DarraOwl >/dev/null 2>&1 || {
-  echo "Identifiants de notarisation absents (profil DarraOwl). Voir docs/publication.md." >&2; exit 1; }
+# Notarization: the API key when Apple takes it, else the Keychain profile.
+if ! xcrun notarytool history "${NOTARY_AUTH[@]}" >/dev/null 2>&1; then
+  NOTARY_AUTH=(--keychain-profile DarraOwl)
+  xcrun notarytool history "${NOTARY_AUTH[@]}" >/dev/null 2>&1 || {
+    echo "Notarisation impossible : ni clé App Store Connect valable, ni profil DarraOwl. Voir docs/publication.md." >&2; exit 1; }
+fi
 
 xcodegen generate --quiet
 xcodebuild -project DarraOwl.xcodeproj -scheme DarraOwlMac -configuration Release \
-  -destination 'generic/platform=macOS' -archivePath "$ARCHIVE" -allowProvisioningUpdates \
+  -destination 'generic/platform=macOS' -archivePath "$ARCHIVE" -allowProvisioningUpdates ${XCODE_AUTH[@]+"${XCODE_AUTH[@]}"} \
   MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" -quiet archive
 
 OPTIONS="$OUT/ExportOptions.plist"
@@ -46,7 +56,7 @@ cat > "$OPTIONS" <<PLIST
 </dict>
 </plist>
 PLIST
-xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist "$OPTIONS" -exportPath "$OUT" -allowProvisioningUpdates
+xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist "$OPTIONS" -exportPath "$OUT" -allowProvisioningUpdates ${XCODE_AUTH[@]+"${XCODE_AUTH[@]}"}
 
 APP="$OUT/DarraOwl.app"
 codesign --verify --strict --deep "$APP"
@@ -57,7 +67,7 @@ grep -q "Authority=Developer ID Application" <<<"$SIGNATURE" || { echo "L'app n'
 ZIP="$OUT/DarraOwl-$VERSION.zip"
 ditto -c -k --keepParent "$APP" "$ZIP"
 echo "Notarisation (quelques minutes)…"
-xcrun notarytool submit "$ZIP" --keychain-profile DarraOwl --wait
+xcrun notarytool submit "$ZIP" "${NOTARY_AUTH[@]}" --wait
 xcrun stapler staple "$APP"
 spctl --assess --type execute --verbose "$APP"
 rm -f "$ZIP" && ditto -c -k --keepParent "$APP" "$ZIP"
