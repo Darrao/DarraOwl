@@ -34,6 +34,8 @@ public enum CommandKind: Codable, Equatable, Sendable {
     /// Pauses or resumes the apps listed in the lid settings (session only).
     case pauseApps
     case resumeApps
+    /// The phone unpairs itself: the Mac forgets the signer's keys.
+    case forgetThisDevice
 
     /// Needs a Face ID signature from the phone's Secure Enclave key.
     public var isSensitive: Bool {
@@ -45,8 +47,8 @@ public enum CommandKind: Codable, Equatable, Sendable {
 
     public var label: String {
         switch self {
-        case let .startSession(m): "Démarrer une session de \(DurationText.short(Self.seconds(m)))"
-        case let .extendSession(m): "Prolonger de \(DurationText.short(Self.seconds(m)))"
+        case let .startSession(m): "Démarrer une session \(Self.of(Self.seconds(m)))"
+        case let .extendSession(m): "Prolonger \(Self.of(Self.seconds(m)))"
         case .stopSession: "Arrêter la session"
         case .sleepNow: "Mettre le Mac en veille"
         case .pauseDocker: "Mettre Docker en pause"
@@ -64,10 +66,17 @@ public enum CommandKind: Codable, Equatable, Sendable {
         case let .setMuted(muted): muted ? "Couper le son" : "Remettre le son"
         case .pauseApps: "Mettre les apps en pause"
         case .resumeApps: "Relancer les apps"
+        case .forgetThisDevice: "Désappairer cet iPhone"
         }
     }
 
     public static let extensionMinutes: Set<Int> = [30, 60]
+
+    /// "de 30 min", "d'1 h".
+    static func of(_ seconds: TimeInterval) -> String {
+        let d = DurationText.short(seconds)
+        return d.hasPrefix("1 ") ? "d'\(d)" : "de \(d)"
+    }
 
     /// Minutes as seconds, without overflowing on a value no one would send.
     public static func seconds(_ minutes: Int) -> TimeInterval {
@@ -111,7 +120,7 @@ public enum CommandKind: Codable, Equatable, Sendable {
         case let .startPresence(m):
             if let m { guard (1...Self.maxPresenceMinutes).contains(m) else { throw .duration } }
         case .stopSession, .sleepNow, .pauseDocker, .resumeDocker, .stopPresence, .displayOff, .lockScreen,
-             .setMuted, .pauseApps, .resumeApps:
+             .setMuted, .pauseApps, .resumeApps, .forgetThisDevice:
             break
         }
     }

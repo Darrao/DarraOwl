@@ -101,12 +101,16 @@ public struct MacState: Codable, Equatable, Sendable {
     public var muted: Bool?
     /// Docker Desktop is open (nil: older Mac).
     public var dockerRunning: Bool?
+    /// The devices paired with this Mac: a phone missing from a state
+    /// published after its pairing was unpaired on the Mac (nil: older Mac).
+    public var pairedDevices: [UUID]?
 
     public init(
         macID: UUID, macName: String, updatedAt: Date, power: Power, session: Session?,
         powerSnapshot: PowerSnapshot?, lowPowerActive: Bool, pausedApps: [String], network: Network?,
         agents: [Agent] = [], containers: [Container] = [], dockerPaused: Bool, settings: PowerSettings,
-        protocolVersion: Int = LinkProtocol.version, presence: Presence? = nil, muted: Bool? = nil, dockerRunning: Bool? = nil
+        protocolVersion: Int = LinkProtocol.version, presence: Presence? = nil, muted: Bool? = nil, dockerRunning: Bool? = nil,
+        pairedDevices: [UUID]? = nil
     ) {
         self.macID = macID
         self.macName = macName
@@ -125,6 +129,7 @@ public struct MacState: Codable, Equatable, Sendable {
         self.presence = presence
         self.muted = muted
         self.dockerRunning = dockerRunning
+        self.pairedDevices = pairedDevices
     }
 }
 
@@ -158,7 +163,8 @@ public struct Endpoints: Codable, Equatable, Sendable {
         let parts = s.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 4 else { return nil }
         let bytes = parts.compactMap { p -> UInt8? in
-            guard !p.isEmpty, p.count <= 3, p.allSatisfy(\.isASCII), p.allSatisfy(\.isNumber) else { return nil }
+            // No leading zero: "010" is octal to some parsers, decimal to others.
+            guard !p.isEmpty, p.count <= 3, p.allSatisfy(\.isASCII), p.allSatisfy(\.isNumber), p.count == 1 || p.first != "0" else { return nil }
             return UInt8(p)
         }
         return bytes.count == 4 ? bytes : nil

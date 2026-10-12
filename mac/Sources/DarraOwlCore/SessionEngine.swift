@@ -49,9 +49,9 @@ public enum EngineError: Error, Equatable, Sendable, LocalizedError {
         case let .power(m): "Réglages d'alimentation : \(m)"
         case .invalidSettings: "Réglages invalides."
         case .uninstalling: "Désinstallation en cours."
-        case .processGone: "Ce process ne tourne plus."
-        case .notYourProcess: "Ce process appartient à un autre utilisateur."
-        case .tooManyWatched: "Trop de process suivis dans cette session."
+        case .processGone: "Ce processus ne tourne plus."
+        case .notYourProcess: "Ce processus appartient à un autre utilisateur."
+        case .tooManyWatched: "Trop de processus suivis dans cette session."
         }
     }
 }
@@ -73,6 +73,9 @@ public actor SessionEngine {
         public var journalStore: any ValueStoring<Journal>
         public var settingsStore: any ValueStoring<PowerSettings>
         public var log: any EngineLogging
+        /// `kern.bootsessionuuid` of this boot ("" when unknown): a session
+        /// journaled under another boot does not survive the restart.
+        public var bootSession: String
 
         public init(
             power: any PowerControlling,
@@ -81,7 +84,8 @@ public actor SessionEngine {
             clock: any NowProviding,
             journalStore: any ValueStoring<Journal>,
             settingsStore: any ValueStoring<PowerSettings>,
-            log: any EngineLogging
+            log: any EngineLogging,
+            bootSession: String = ""
         ) {
             self.power = power
             self.source = source
@@ -90,6 +94,7 @@ public actor SessionEngine {
             self.journalStore = journalStore
             self.settingsStore = settingsStore
             self.log = log
+            self.bootSession = bootSession
         }
     }
 
@@ -110,7 +115,15 @@ public actor SessionEngine {
     /// The lid state the rules and the status use.
     private var lidSettled: Bool?
     private var lidKnown = false
-    private var unreadableReads = 0
+    /// The settled lid state at the previous check, to see it open.
+    private var lidAtLastCheck: Bool?
+    /// An external display is on, as the app last said (memory only).
+    private var externalDisplay = false
+    /// Since when the battery level has been unreadable (on battery or not).
+    private var unreadableSince: Date?
+    /// An unreadable level ends a session on battery once it lasted this long:
+    /// a single IOKit miss is tolerated, however close the next check is.
+    static let unreadableGrace: TimeInterval = 10
     private var pendingUndo: [String] = []
     private var notices: [String] = []
     /// Set by `prepareUninstall`: new sessions are refused for a while. An
@@ -118,9 +131,10 @@ public actor SessionEngine {
     private var uninstallingSince: Date?
     static let uninstallWindow: TimeInterval = 15 * 60
     private var filesRemoved = false
-    /// Low Power Mode was already on in both profiles when we wanted it: the
-    /// user's, not ours. Not re-read until the floors stop asking for it.
-    private var lowPowerAlreadyOn = false
+    /// Low Power Mode is left alone while the floors ask for it: it was
+    /// already on in both profiles (the user's, not ours), or this Mac does
+    /// not report a plain lowpowermode. Not re-read until they stop asking.
+    private var lowPowerLeftAlone = false
     /// Switching Low Power Mode on failed: not retried for a while.
     private var lowPowerFailedAt: Date?
     static let lowPowerRetryDelay: TimeInterval = 5 * 60
@@ -163,7 +177,8 @@ public actor SessionEngine {
     // MARK: Lifecycle
 
     /// Runs once when the helper starts (boot, crash, update). Restores an
-    /// expired or unreadable session, resumes a valid one.
+    /// expired or unreadable session, or one from before a restart; resumes
+    /// a valid one after a helper crash or update.
     public func reconcile() async -> EngineStatus {
         await enter()
         defer { leave() }
@@ -179,6 +194,11 @@ public actor SessionEngine {
             if session.isExpired(at: now) || session.endsAt > now.addingTimeInterval(Policy.absoluteMaxSessionDuration) {
                 deps.log.info("reconcile: session \(session.id) is over, restoring")
                 await end(reason: .expired)
+            } else if let boot = journal.bootSession, !deps.bootSession.isEmpty, boot != deps.bootSession {
+                // Safety rule 3: after a restart (panic, power loss, forced
+                // shutdown) sleep is back at startup, whatever the end time.
+                deps.log.info("reconcile: session \(session.id) began before a restart, restoring")
+                await end(reason: .macRestarted)
             } else {
                 deps.log.info("reconcile: resuming session ending \(session.endsAt)")
                 await holdSleepForResumedSession()
@@ -202,7 +222,21 @@ public actor SessionEngine {
         var snapshot = deps.source.read()
         snapshot.lidClosed = settledLid(snapshot.lidClosed, now: now)
         lastPower = snapshot
-        if case .unreadable = snapshot.battery { unreadableReads += 1 } else { unreadableReads = 0 }
+        // The lid opened: apps paused at its close start again here too, so
+        // they do not stay stopped when the app crashed or was quit.
+        if lidAtLastCheck == true, snapshot.lidClosed == false, !journal.frozen.isEmpty {
+            deps.log.info("lid opened: resuming paused apps")
+            let failures = resumeFrozen(onlyBundleID: nil)
+            if !failures.isEmpty { addNotice(failures.joined(separator: " ; ")) }
+        }
+        lidAtLastCheck = snapshot.lidClosed
+        if case .unreadable = snapshot.battery {
+            if unreadableSince == nil { unreadableSince = now }
+        } else {
+            unreadableSince = nil
+        }
+        // FloorRules counts misses: one is tolerated, a lasting one is not.
+        let unreadableReads = unreadableSince.map { now.timeIntervalSince($0) >= Self.unreadableGrace ? FloorRules.unreadableReadsBeforeEnd : 1 } ?? 0
 
         // The clock moved back: the end time stays within the cap from now.
         if var session = journal.session, session.endsAt > now.addingTimeInterval(settings.maxSessionDuration) {
@@ -215,7 +249,7 @@ public actor SessionEngine {
             if session.isExpired(at: now) {
                 await end(reason: .expired)
             } else {
-                let decision = FloorRules.decide(power: snapshot, unreadableReads: unreadableReads, settings: settings)
+                let decision = FloorRules.decide(power: snapshot, unreadableReads: unreadableReads, settings: settings, docked: externalDisplay)
                 if let reason = decision.endReason {
                     await end(reason: reason)
                 } else if await followWatched() {
@@ -228,10 +262,11 @@ public actor SessionEngine {
         return status()
     }
 
-    /// The helper received SIGTERM (unregistered, shutdown, update).
+    /// The helper received SIGTERM (unregistered, shutdown, update). The turn
+    /// is never given back: the process exits right after, and no request
+    /// queued meanwhile runs against a machine being restored.
     public func handleTermination() async {
         await enter()
-        defer { leave() }
         if journal.session != nil {
             await end(reason: .helperTerminated)
         } else if !journal.isClean {
@@ -253,15 +288,41 @@ public actor SessionEngine {
         return journal.isClean ? Self.idlePollInterval : Self.activePollInterval
     }
 
-    // MARK: Commands
-
-    public func start(duration: TimeInterval, origin: SessionOrigin) async throws(EngineError) -> EngineStatus {
+    /// For a restart (update): true when nothing is held, and then the turn
+    /// is kept, so no request can start anything before the process exits.
+    public func shutDownIfIdle() async -> Bool {
         await enter()
-        defer { leave() }
-        return try await startLocked(duration: duration, origin: origin, watching: [])
+        if journal.session == nil, journal.isClean { return true }
+        leave()
+        return false
     }
 
-    private func startLocked(duration: TimeInterval, origin: SessionOrigin, watching: [WatchedProcess]) async throws(EngineError) -> EngineStatus {
+    /// The app saw an external display come or go.
+    public func setExternalDisplay(_ on: Bool) async -> EngineStatus {
+        await enter()
+        defer { leave() }
+        guard on != externalDisplay else { return status() }
+        externalDisplay = on
+        return await evaluateLocked()
+    }
+
+    /// The user who started the running session, when known.
+    public func sessionOwner() -> UInt32? {
+        journal.session == nil ? nil : journal.ownerUID
+    }
+
+    // MARK: Commands
+
+    /// `requesterUID`: the user who asked (nil: the helper itself or a test).
+    public func start(duration: TimeInterval, origin: SessionOrigin, requesterUID: UInt32? = nil) async throws(EngineError) -> EngineStatus {
+        await enter()
+        defer { leave() }
+        return try await startLocked(duration: duration, origin: origin, watching: [], owner: requesterUID)
+    }
+
+    private func startLocked(
+        duration: TimeInterval, origin: SessionOrigin, watching: [WatchedProcess], owner: UInt32?
+    ) async throws(EngineError) -> EngineStatus {
         guard !uninstalling else { throw .uninstalling }
         await endIfExpired()
         guard journal.session == nil else { throw .alreadyActive }
@@ -289,11 +350,18 @@ public actor SessionEngine {
         let session = Session(startedAt: now, endsAt: now.addingTimeInterval(duration), origin: origin, watching: watching)
         journal.session = session
         journal.sleep = SleepEntry(previouslyDisabled: state.sleepDisabled)
+        journal.bootSession = deps.bootSession.isEmpty ? nil : deps.bootSession
+        journal.ownerUID = owner
+        // An uninstall that stopped halfway removed the files: they are
+        // written again from now on (start is refused during the uninstall).
+        filesRemoved = false
         do {
             try deps.journalStore.save(journal)
         } catch {
             journal.session = nil
             journal.sleep = nil
+            journal.bootSession = nil
+            journal.ownerUID = nil
             throw .journal(error.localizedDescription)
         }
 
@@ -314,7 +382,7 @@ public actor SessionEngine {
                 throw .power(error.localizedDescription)
             }
         }
-        unreadableReads = 0
+        unreadableSince = nil
         deps.log.info("session \(session.id) started by \(origin.rawValue), ends \(session.endsAt)\(watching.isEmpty ? "" : ", following \(watching.map(\.pid))")")
         return await evaluateLocked()
     }
@@ -344,6 +412,10 @@ public actor SessionEngine {
         // A timed session an agent joined: its own planned end moves too.
         if let keep = session.keepUntil {
             session.keepUntil = min(max(keep, now).addingTimeInterval(seconds), session.endsAt)
+        } else if session.isAgentMode {
+            // Agents only: "+1 h" keeps the Mac awake at least that long,
+            // even if they finish sooner.
+            session.keepUntil = min(now.addingTimeInterval(seconds), session.endsAt)
         }
         journal.session = session
         do {
@@ -454,7 +526,7 @@ public actor SessionEngine {
         await endIfExpired()
         let now = deps.clock.now()
         guard var session = journal.session else {
-            return try await startLocked(duration: duration, origin: origin, watching: [process])
+            return try await startLocked(duration: duration, origin: origin, watching: [process], owner: requesterUID)
         }
         let previous = session
         session.watching.removeAll { $0.pid == process.pid }
@@ -706,12 +778,14 @@ public actor SessionEngine {
         guard let session = journal.session else { return }
         let now = deps.clock.now()
         journal.session = nil
+        journal.bootSession = nil
+        journal.ownerUID = nil
         journal.lastEnd = SessionEndRecord(sessionID: session.id, startedAt: session.startedAt, endedAt: now, reason: reason, failures: [])
         persist()
         let failures = await undoAll()
         journal.lastEnd?.failures = failures
         persist()
-        lowPowerAlreadyOn = false
+        lowPowerLeftAlone = false
         deps.log.info("session \(session.id) ended (\(reason.rawValue))\(failures.isEmpty ? "" : ", undo incomplete: \(failures)")")
     }
 
@@ -750,7 +824,7 @@ public actor SessionEngine {
 
     private func applyLowPower(wanted: Bool) async {
         if !wanted {
-            lowPowerAlreadyOn = false
+            lowPowerLeftAlone = false
             lowPowerFailedAt = nil
             guard let entry = journal.lowPower else { return }
             do {
@@ -763,19 +837,23 @@ public actor SessionEngine {
             }
             return
         }
-        guard journal.lowPower == nil, !lowPowerAlreadyOn, !filesRemoved, !uninstalling else { return }
+        guard journal.lowPower == nil, !lowPowerLeftAlone, !uninstalling else { return }
         if let failed = lowPowerFailedAt, deps.clock.now().timeIntervalSince(failed) < Self.lowPowerRetryDelay { return }
         let state: PowerSettingsState
         do {
             state = try await deps.power.readState()
         } catch {
             deps.log.error("low power: cannot read pmset: \(error.localizedDescription)")
+            lowPowerFailedAt = deps.clock.now()
             return
         }
         // This Mac does not report a plain lowpowermode: left alone.
-        guard let onAC = state.lowPowerOnAC else { return }
+        guard let onAC = state.lowPowerOnAC else {
+            lowPowerLeftAlone = true
+            return
+        }
         if onAC, state.lowPowerOnBattery ?? true {
-            lowPowerAlreadyOn = true
+            lowPowerLeftAlone = true
             return
         }
         let entry = LowPowerEntry(previousOnBattery: state.lowPowerOnBattery, previousOnAC: onAC)
@@ -858,7 +936,8 @@ public actor SessionEngine {
 
     /// Saves the journal where a failure must not stop an undo in progress.
     private func persist() {
-        guard !filesRemoved else { return }
+        // While an uninstall is under way the files stay deleted.
+        guard !(filesRemoved && uninstalling) else { return }
         do {
             try deps.journalStore.save(journal)
         } catch {

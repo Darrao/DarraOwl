@@ -25,7 +25,7 @@ public enum CLICommand: Equatable, Sendable {
             case let .unknown(s): "commande inconnue : \(s)"
             case .missingCommand: "indique la commande à lancer, par exemple : darraowl run 3h -- claude"
             case let .missingDuration(verb): "indique une durée, par exemple : darraowl \(verb) 2h"
-            case let .badDuration(s): "durée illisible : \(s) (exemples : 45m, 2h, 1h30, 1j)"
+            case let .badDuration(s): "durée illisible : \(s) (exemples : 45m, 2h, 1h30)"
             case let .extraArguments(s): "argument en trop : \(s)"
             }
         }
@@ -111,7 +111,8 @@ public enum CLICommand: Equatable, Sendable {
       darraowl stop                         arrête la session
       darraowl status                       état de la session (par défaut)
 
-    Durées : 45m, 90, 2h, 1h30, 1j (24 h au plus).
+    Durées : 45m, 90, 2h, 1h30, 1j. Au plus la durée maximale des
+    Réglages de DarraOwl (12 h par défaut).
     Exemples :
       darraowl run 3h -- claude
       darraowl run -- npm test

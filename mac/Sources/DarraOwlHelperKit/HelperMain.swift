@@ -21,7 +21,8 @@ public enum HelperMain {
             clock: SystemClock(),
             journalStore: JSONFileStore<Journal>(directory: stateDirectory, fileName: "journal.json"),
             settingsStore: JSONFileStore<PowerSettings>(directory: stateDirectory, fileName: "settings.json"),
-            log: log
+            log: log,
+            bootSession: SysctlProcessControl.bootSession
         ))
         let ticker = Ticker()
         log.info("helper \(build) starting")
@@ -57,12 +58,11 @@ public enum HelperMain {
             while true {
                 let delay = await engine.nextCheckDelay()
                 await ticker.wait(seconds: delay)
-                let status = await engine.evaluate()
+                _ = await engine.evaluate()
                 // An update replaced our binary: the app can no longer verify
                 // this process, so step aside as soon as nothing is held and
                 // let launchd (KeepAlive) start the new one.
-                if let binary, binary.wasReplaced(),
-                   status.session == nil, !status.sleepHeld, !status.lowPowerHeld, status.frozen.isEmpty {
+                if let binary, binary.wasReplaced(), await engine.shutDownIfIdle() {
                     log.info("binary replaced by an update, restarting")
                     exit(0)
                 }

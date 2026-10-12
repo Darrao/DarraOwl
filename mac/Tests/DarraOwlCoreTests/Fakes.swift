@@ -25,6 +25,7 @@ final class FakePower: PowerControlling, Sendable {
         var failRead = false
         /// Each pmset call takes this long, so concurrent requests overlap.
         var delay: Duration = .zero
+        var reads = 0
     }
 
     let log: EventLog
@@ -36,6 +37,7 @@ final class FakePower: PowerControlling, Sendable {
     }
 
     var current: PowerSettingsState { state.withLock { $0.settings } }
+    var reads: Int { state.withLock { $0.reads } }
     func update(_ body: (inout State) -> Void) { state.withLock { body(&$0) } }
 
     private func pause() async {
@@ -46,6 +48,7 @@ final class FakePower: PowerControlling, Sendable {
     func readState() async throws -> PowerSettingsState {
         await pause()
         return try state.withLock {
+            $0.reads += 1
             if $0.failRead { throw FakeError(message: "read failed") }
             return $0.settings
         }
@@ -206,7 +209,8 @@ struct Harness {
     init(
         power settingsState: PowerSettingsState = .init(sleepDisabled: false, lowPowerOnBattery: false, lowPowerOnAC: false),
         journal initial: Journal? = nil,
-        settings initialSettings: PowerSettings? = nil
+        settings initialSettings: PowerSettings? = nil,
+        bootSession: String = FakeProcesses.boot
     ) {
         power = FakePower(log: events, settings: settingsState)
         processes = FakeProcesses(log: events)
@@ -219,7 +223,8 @@ struct Harness {
             clock: clock,
             journalStore: journal,
             settingsStore: settings,
-            log: SilentLog()
+            log: SilentLog(),
+            bootSession: bootSession
         ))
     }
 }

@@ -11,7 +11,7 @@ public enum HelperConstants {
     /// The CLI of phase 5 talks to the helper too.
     public static let cliIdentifier = "com.darrao.darraowl.mac.cli"
     /// Bumped when the request or response shape changes.
-    public static let protocolVersion = 3
+    public static let protocolVersion = 4
 }
 
 /// The XPC surface. Requests and responses travel as JSON so the Objective-C
@@ -47,6 +47,9 @@ public enum HelperRequest: Codable, Equatable, Sendable {
     case watch(WatchedProcess, seconds: TimeInterval?, origin: SessionOrigin)
     /// The CLI's command finished.
     case release(pid: Int32)
+    /// An external display is on or off: with one, a closed lid is a Mac
+    /// on a desk, and Low Power Mode is not switched on for it.
+    case displays(external: Bool)
 }
 
 public struct HelperResponse: Codable, Equatable, Sendable {

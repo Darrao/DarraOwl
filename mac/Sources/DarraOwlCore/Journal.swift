@@ -17,6 +17,10 @@ public struct Journal: Codable, Equatable, Sendable {
     /// put them back (they belong to the user's session).
     public var user = UserChanges()
     public var lastEnd: SessionEndRecord?
+    /// The boot the session started in (`kern.bootsessionuuid`).
+    public var bootSession: String?
+    /// The user who started the session.
+    public var ownerUID: UInt32?
 
     public init() {}
 
@@ -24,7 +28,7 @@ public struct Journal: Codable, Equatable, Sendable {
     public var isClean: Bool { sleep == nil && lowPower == nil && frozen.isEmpty }
 
     private enum CodingKeys: String, CodingKey {
-        case version, session, sleep, lowPower, frozen, user, lastEnd
+        case version, session, sleep, lowPower, frozen, user, lastEnd, bootSession, ownerUID
     }
 
     /// A journal written by an earlier build lacks the newer keys.
@@ -37,6 +41,8 @@ public struct Journal: Codable, Equatable, Sendable {
         frozen = try c.decodeIfPresent([FrozenProcess].self, forKey: .frozen) ?? []
         user = try c.decodeIfPresent(UserChanges.self, forKey: .user) ?? UserChanges()
         lastEnd = try c.decodeIfPresent(SessionEndRecord.self, forKey: .lastEnd)
+        bootSession = try c.decodeIfPresent(String.self, forKey: .bootSession)
+        ownerUID = try c.decodeIfPresent(UInt32.self, forKey: .ownerUID)
     }
 }
 

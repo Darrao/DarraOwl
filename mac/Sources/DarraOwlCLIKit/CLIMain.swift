@@ -3,6 +3,7 @@ import DarraOwlCore
 import DarraOwlShared
 import DarraOwlXPC
 import Foundation
+import Synchronization
 
 /// `darraowl`, the command line client of the helper. Signed with the
 /// identifier the helper accepts (`com.darrao.darraowl.mac.cli`).
@@ -56,7 +57,7 @@ public enum CLIMain {
     static func run(_ arguments: [String], seconds: TimeInterval?, client: HelperClient) async -> Int32 {
         let pid = getpid()
         guard let start = ProcessStart.of(pid) else {
-            say("darraowl : impossible de lire l'heure de démarrage de ce process.")
+            say("darraowl : impossible de lire l'heure de démarrage de ce processus.")
             return 1
         }
         let name = URL(fileURLWithPath: arguments[0]).lastPathComponent
@@ -143,31 +144,37 @@ enum Spawn {
         var started: Bool
     }
 
-    nonisolated(unsafe) private static var child: pid_t = 0
+    /// The running command, read by the signal handlers on another thread.
+    private static let child = Atomic<Int32>(0)
     /// A signal that came before the child existed, passed on once it does.
-    nonisolated(unsafe) private static var pending: Int32 = 0
+    private static let pending = Atomic<Int32>(0)
     nonisolated(unsafe) private static var sources: [DispatchSourceSignal] = []
     nonisolated(unsafe) private static var inherited: [Int32: Bool] = [:]
 
     static func runAndWait(_ arguments: [String]) -> Outcome {
-        // Ctrl-C and Ctrl-\\ go to the whole foreground group: the command
-        // decides, and darraowl waits for it to end. A disposition inherited
-        // as "ignored" (a background job) stays ignored for the command.
+        // A disposition inherited as "ignored" stays ignored for the command:
+        // a background job keeps ignoring Ctrl-C, and `nohup darraowl run …`
+        // keeps the command alive when the terminal closes.
         var keepIgnored = sigset_t()
         sigemptyset(&keepIgnored)
-        for sig in [SIGINT, SIGQUIT] {
+        for sig in [SIGINT, SIGQUIT, SIGTERM, SIGHUP] {
             let previous = signal(sig, SIG_IGN)
             // SIG_IGN is the handler value 1.
             let wasIgnored = previous.map { unsafeBitCast($0, to: Int.self) == 1 } ?? false
             inherited[sig] = wasIgnored
             if wasIgnored { sigaddset(&keepIgnored, sig) }
         }
-        // A kill or a closed terminal is passed on to the command.
-        for sig in [SIGTERM, SIGHUP] {
-            signal(sig, SIG_IGN)
+        // Ctrl-C and Ctrl-\\ go to the whole foreground group: the command
+        // decides, and darraowl waits for it to end. A kill or a closed
+        // terminal is passed on to the command.
+        for sig in [SIGTERM, SIGHUP] where inherited[sig] != true {
             let source = DispatchSource.makeSignalSource(signal: sig, queue: .global())
             source.setEventHandler {
-                if child > 0 { kill(child, sig) } else { pending = sig }
+                // Stored first, then the child read: whichever side comes
+                // second sends it (twice at worst, which is harmless).
+                pending.store(sig, ordering: .sequentiallyConsistent)
+                let pid = child.load(ordering: .sequentiallyConsistent)
+                if pid > 0 { kill(pid, sig) }
             }
             source.resume()
             sources.append(source)
@@ -196,14 +203,15 @@ enum Spawn {
             CLIMain.say("darraowl : impossible de lancer \(arguments[0]) : \(String(cString: strerror(rc))).")
             return Outcome(code: rc == ENOENT ? 127 : 126, signal: nil, started: false)
         }
-        child = pid
-        if pending != 0 { kill(pid, pending) }
+        child.store(pid, ordering: .sequentiallyConsistent)
+        let early = pending.exchange(0, ordering: .sequentiallyConsistent)
+        if early != 0 { kill(pid, early) }
 
         var status: Int32 = 0
         while waitpid(pid, &status, 0) == -1 {
             guard errno == EINTR else { return Outcome(code: 1, signal: nil, started: true) }
         }
-        child = 0
+        child.store(0, ordering: .sequentiallyConsistent)
         let low = status & 0x7f
         if low == 0 { return Outcome(code: (status >> 8) & 0xff, signal: nil, started: true) }
         return Outcome(code: 128 + low, signal: low, started: true)

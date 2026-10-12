@@ -80,10 +80,15 @@ public final class HelperService: NSObject, HelperXPCProtocol, Sendable {
         }
         // Reading is open to any client; changing anything is for the user
         // at the screen (or root): another account on this Mac cannot stop,
-        // extend or reconfigure the owner's session.
-        if request != .status, clientUID != 0, let console = Self.consoleUID(), clientUID != console {
-            log.error("refused \(String(describing: request).prefix(40)) from uid \(clientUID), console is \(console)")
-            return HelperResponse(helperBuild: build, status: await engine.status(), error: "Réservé à l'utilisateur connecté à l'écran du Mac.")
+        // extend or reconfigure the owner's session. At the login window
+        // nobody is at the screen: only the session's owner may act.
+        if request != .status, clientUID != 0 {
+            let console = Self.consoleUID()
+            let allowed = if let console { clientUID == console } else { await engine.sessionOwner() == clientUID }
+            if !allowed {
+                log.error("refused \(String(describing: request).prefix(40)) from uid \(clientUID), console is \(console.map(String.init) ?? "loginwindow")")
+                return HelperResponse(helperBuild: build, status: await engine.status(), error: "Réservé à l'utilisateur connecté à l'écran du Mac.")
+            }
         }
         do {
             let status: EngineStatus
@@ -91,7 +96,7 @@ public final class HelperService: NSObject, HelperXPCProtocol, Sendable {
             case .status:
                 status = await engine.status()
             case let .start(seconds, origin):
-                status = try await engine.start(duration: seconds, origin: origin)
+                status = try await engine.start(duration: seconds, origin: origin, requesterUID: clientUID)
             case let .extend(seconds):
                 status = try await engine.extend(by: seconds)
             case let .stop(reason):
@@ -119,9 +124,14 @@ public final class HelperService: NSObject, HelperXPCProtocol, Sendable {
                 status = try await engine.watch(process, seconds: seconds, origin: allowed.contains(origin) ? origin : .agent, requesterUID: clientUID)
             case let .release(pid):
                 status = await engine.release(pid: pid)
+            case let .displays(external):
+                status = await engine.setExternalDisplay(external)
             case .restartIfIdle:
+                // Checked and claimed in one turn: nothing can start between
+                // the check and the exit.
+                let idle = await engine.shutDownIfIdle()
                 status = await engine.status()
-                if status.session == nil, !status.sleepHeld, !status.lowPowerHeld, status.frozen.isEmpty {
+                if idle {
                     log.info("restarting for update")
                     Task {
                         try? await Task.sleep(for: .milliseconds(300))

@@ -5,12 +5,14 @@ public enum HelperClientError: Error, LocalizedError, Sendable {
     case unsignedBuild
     case noProxy
     case badReply
+    case timedOut
 
     public var errorDescription: String? {
         switch self {
         case .unsignedBuild: "Cette version de DarraOwl n'est pas signée : le composant système refuse de lui répondre."
         case .noProxy: "Composant système injoignable."
         case .badReply: "Réponse illisible du composant système."
+        case .timedOut: "Le composant système ne répond pas."
         }
     }
 }
@@ -23,7 +25,12 @@ public final class HelperClient {
 
     public init() {}
 
-    public func send(_ request: HelperRequest) async throws -> HelperResponse {
+    /// Every pmset call the helper makes is bounded, so a request that takes
+    /// longer than `timeout` is stuck: the caller is told rather than left
+    /// waiting (a quit, a logout, a terminal).
+    public static let defaultTimeout: TimeInterval = 120
+
+    public func send(_ request: HelperRequest, timeout: TimeInterval = HelperClient.defaultTimeout) async throws -> HelperResponse {
         let connection = try currentConnection()
         let data = try HelperCoding.encode(request)
         return try await withCheckedThrowingContinuation { continuation in
@@ -41,6 +48,9 @@ public final class HelperClient {
             guard let proxy else {
                 finish(.failure(HelperClientError.noProxy))
                 return
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                finish(.failure(HelperClientError.timedOut))
             }
             proxy.handle(data) { @Sendable reply in
                 do {

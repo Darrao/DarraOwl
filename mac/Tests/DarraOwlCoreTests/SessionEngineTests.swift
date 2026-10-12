@@ -180,13 +180,15 @@ import Testing
         #expect(status.lastEnd?.reason == .thermalCritical)
     }
 
-    @Test func secondUnreadableBatteryReadEndsSession() async throws {
+    @Test func lastingUnreadableBatteryEndsSession() async throws {
         let h = Harness()
         _ = await h.engine.reconcile()
         _ = try await h.engine.start(duration: 3600, origin: .menuBar)
         h.source.set(PowerSnapshot(battery: .unreadable, onExternalPower: false, thermal: .nominal))
 
         #expect(await h.engine.evaluate().session != nil, "one miss is tolerated")
+        #expect(await h.engine.evaluate().session != nil, "however soon the next check comes")
+        h.clock.advance(SessionEngine.unreadableGrace)
         let status = await h.engine.evaluate()
         #expect(status.lastEnd?.reason == .batteryUnreadable)
     }

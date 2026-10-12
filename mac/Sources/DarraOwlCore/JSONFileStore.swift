@@ -119,13 +119,23 @@ public struct JSONFileStore<Value: Codable & Sendable>: ValueStoring {
         return target.path
     }
 
+    /// Deletes the file, its set-aside copies and any temporary file left by
+    /// an interrupted write, then the directory once nothing else is in it.
     public func remove() throws(StoreError) {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: url.path) else { return }
+        let dir = url.deletingLastPathComponent()
+        let name = url.lastPathComponent
         do {
-            try fm.removeItem(at: url)
+            if fm.fileExists(atPath: url.path) { try fm.removeItem(at: url) }
+            let entries = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
+            for entry in entries where entry.hasPrefix("\(name).unreadable-") || (entry.hasPrefix(".\(name).") && entry.hasSuffix(".tmp")) {
+                try fm.removeItem(at: dir.appending(path: entry))
+            }
+            if let left = try? fm.contentsOfDirectory(atPath: dir.path), left.isEmpty {
+                try fm.removeItem(at: dir)
+            }
         } catch {
-            throw .writeFailed("suppression de \(url.lastPathComponent): \(error.localizedDescription)")
+            throw .writeFailed("suppression de \(name): \(error.localizedDescription)")
         }
     }
 

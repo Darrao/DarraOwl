@@ -93,6 +93,20 @@ public struct Session: Codable, Equatable, Sendable, Identifiable {
         }
     }
 
+    /// "tant que claude · DarraOwl tourne", "tant que claude et npm tournent".
+    public var whileWatchingText: String? {
+        watchingText.map { "tant que \($0) \(watchingVerb)" }
+    }
+
+    /// The same, to start a line: "Tant que claude tourne".
+    public var whileWatchingLine: String? {
+        whileWatchingText.map(Self.capitalizingFirst)
+    }
+
+    public static func capitalizingFirst(_ s: String) -> String {
+        s.prefix(1).uppercased() + s.dropFirst()
+    }
+
     public func remaining(at now: Date) -> TimeInterval {
         max(0, endsAt.timeIntervalSince(now))
     }
@@ -115,6 +129,7 @@ public enum SessionEndReason: String, Codable, Sendable {
     case journalUnreadable
     case sleepRequested
     case agentFinished
+    case macRestarted
 
     /// The label inside a sentence: "heure de fin atteinte", but
     /// "DarraOwl a été quitté".
@@ -138,6 +153,7 @@ public enum SessionEndReason: String, Codable, Sendable {
         case .journalUnreadable: "Journal illisible"
         case .sleepRequested: "Mise en veille demandée"
         case .agentFinished: "L'agent a terminé"
+        case .macRestarted: "Le Mac a redémarré"
         }
     }
 }

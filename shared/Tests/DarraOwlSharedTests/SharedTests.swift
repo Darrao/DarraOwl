@@ -174,6 +174,7 @@ import Testing
         #expect(!WatchLink.allowed(.stopAgent(pid: 42)))
         #expect(WatchLink.allowed(.extendSession(minutes: 60)))
         #expect(WatchLink.allowed(.lockScreen))
+        #expect(!WatchLink.allowed(.forgetThisDevice), "the watch never unpairs the iPhone")
     }
 
     @Test func messagesSurviveTheWire() throws {
@@ -181,5 +182,24 @@ import Testing
         #expect(try WatchLink.decode(WatchLink.Request.self, from: WatchLink.encode(request)) == request)
         let reply = WatchLink.Reply(ok: true, message: "fait", snapshot: .init(state: nil, macName: "Mac", presence: "En ligne", online: true, at: Date(timeIntervalSince1970: 0)))
         #expect(try WatchLink.decode(WatchLink.Reply.self, from: WatchLink.encode(reply)) == reply)
+    }
+}
+
+@Suite struct EndpointsTests {
+    @Test func onlyPlainPrivateAddressesArePlausible() {
+        #expect(Endpoints(port: 52525, local: ["192.168.1.20", "10.0.0.2", "172.20.10.3"], tailscale: "100.101.1.2").isPlausible)
+        #expect(!Endpoints(port: 52525, local: ["010.0.0.1"], tailscale: nil).isPlausible, "leading zero: octal to some parsers")
+        #expect(!Endpoints(port: 52525, local: ["192.168.01.20"], tailscale: nil).isPlausible)
+        #expect(Endpoints(port: 52525, local: ["10.0.0.0"], tailscale: nil).isPlausible)
+        #expect(!Endpoints(port: 52525, local: ["8.8.8.8"], tailscale: nil).isPlausible)
+    }
+
+    @Test func aSessionSaysTourneOrTournent() {
+        let one = WatchedProcess(pid: 2, name: "claude", project: "site", startSeconds: 1, startMicros: 0)
+        let two = WatchedProcess(pid: 3, name: "npm", project: nil, startSeconds: 1, startMicros: 0)
+        let t = Date(timeIntervalSince1970: 0)
+        #expect(Session(startedAt: t, endsAt: t, origin: .cli, watching: [one]).whileWatchingText == "tant que claude · site tourne")
+        #expect(Session(startedAt: t, endsAt: t, origin: .cli, watching: [one, two]).whileWatchingText == "tant que claude et npm tournent")
+        #expect(Session(startedAt: t, endsAt: t, origin: .cli).whileWatchingText == nil)
     }
 }

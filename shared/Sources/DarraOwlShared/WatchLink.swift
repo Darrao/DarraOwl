@@ -34,17 +34,21 @@ public enum WatchLink {
         public var ok: Bool
         public var message: String?
         public var snapshot: Snapshot?
+        /// The request left, the Mac has not answered yet (through iCloud).
+        public var pending: Bool?
 
-        public init(ok: Bool, message: String?, snapshot: Snapshot?) {
+        public init(ok: Bool, message: String?, snapshot: Snapshot?, pending: Bool? = nil) {
             self.ok = ok
             self.message = message
             self.snapshot = snapshot
+            self.pending = pending
         }
     }
 
-    /// Commands the watch may ask for: everything that does not need Face ID.
+    /// Commands the watch may ask for: everything that does not need Face
+    /// ID, except unpairing the iPhone.
     public static func allowed(_ kind: CommandKind) -> Bool {
-        !kind.isSensitive
+        !kind.isSensitive && kind != .forgetThisDevice
     }
 
     public static let needsPhone = "Depuis l'iPhone uniquement : cette commande demande Face ID."

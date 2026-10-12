@@ -126,4 +126,21 @@ import Testing
         #expect(FileManager.default.fileExists(atPath: moved!))
         #expect(try store.load() == nil)
     }
+
+    /// Uninstall: nothing of the helper's is left behind, not even the folder.
+    @Test func removeTakesSetAsideCopiesLeftoversAndTheEmptyFolder() throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        let journal = JSONFileStore<Journal>(directory: dir, fileName: "journal.json")
+        let settings = JSONFileStore<PowerSettings>(directory: dir, fileName: "settings.json")
+        try journal.save(Journal())
+        try settings.save(.default)
+        try Data("{".utf8).write(to: dir.appending(path: "journal.json.unreadable-2026-10-12T01-00-00Z"))
+        try Data("{".utf8).write(to: dir.appending(path: ".journal.json.ABC.tmp"))
+
+        try journal.remove()
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["settings.json"])
+        try settings.remove()
+        #expect(!FileManager.default.fileExists(atPath: dir.path))
+    }
 }

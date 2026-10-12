@@ -21,7 +21,8 @@ public struct FloorDecision: Equatable, Sendable {
 public enum FloorRules {
     public static let unreadableReadsBeforeEnd = 2
 
-    public static func decide(power: PowerSnapshot, unreadableReads: Int, settings: PowerSettings) -> FloorDecision {
+    /// `docked`: an external display is on, the closed lid is a Mac on a desk.
+    public static func decide(power: PowerSnapshot, unreadableReads: Int, settings: PowerSettings, docked: Bool = false) -> FloorDecision {
         if power.thermal == .critical {
             return FloorDecision(endReason: .thermalCritical)
         }
@@ -35,7 +36,7 @@ public enum FloorRules {
             break
         }
         var wants = power.thermal == .serious
-        if settings.lid.lowPower, power.lidClosed == true {
+        if settings.lid.lowPower, power.lidClosed == true, !docked {
             wants = true
         }
         if case let .percent(p) = power.battery, onBattery, p < settings.lowPowerFloor {

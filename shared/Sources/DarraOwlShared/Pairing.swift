@@ -123,13 +123,17 @@ public struct PairingResponse: Codable, Equatable, Sendable {
     /// Where the paired-devices listener is: the invite only has the
     /// pairing listener's port. Optional: older Macs do not send it.
     public var endpoints: Endpoints?
+    /// When the Mac paired this device, by the Mac's clock: its states
+    /// carry the same clock (optional: older Macs do not send it).
+    public var pairedAt: Date?
 
-    public init(accepted: Bool, macID: UUID, macName: String, message: String?, endpoints: Endpoints? = nil) {
+    public init(accepted: Bool, macID: UUID, macName: String, message: String?, endpoints: Endpoints? = nil, pairedAt: Date? = nil) {
         self.accepted = accepted
         self.macID = macID
         self.macName = macName
         self.message = message
         self.endpoints = endpoints
+        self.pairedAt = pairedAt
     }
 }
 
