@@ -112,9 +112,12 @@ final class PhoneRuntime {
                 // A timed session still running: its new end is known, with
                 // the Mac's cap on a session's length.
                 if let baseline, baseline > firedAt, liveActivity.currentIsTimed {
-                    let maxDuration = model.state?.settings.maxSessionDuration ?? Policy.absoluteMaxSessionDuration
+                    // Started from the lock screen with nothing loaded: the
+                    // cap last seen.
+                    let maxDuration = model.state?.settings.maxSessionDuration
+                        ?? SharedStore.load()?.maxSessionDuration ?? Policy.defaultMaxSessionDuration
                     let target = Session.extendedEnd(baseline, by: CommandKind.seconds(minutes), now: firedAt, maxDuration: maxDuration)
-                    localChange = LocalChange(expectedEnd: target, until: expires)
+                    localChange = LocalChange(expectedEnd: target, baseline: baseline, until: expires)
                     liveActivity.extendLocally(from: baseline, to: target)
                 }
             case .stopSession:
@@ -185,7 +188,8 @@ final class PhoneRuntime {
             charging: state.powerSnapshot?.onExternalPower ?? false,
             agentsRunning: state.agents.count,
             agentsWaiting: state.agents.filter(\.waitingForApproval).count,
-            updatedAt: state.updatedAt
+            updatedAt: state.updatedAt,
+            maxSessionDuration: state.settings.maxSessionDuration
         )
         SharedStore.save(snapshot)
         if let change = localChange, !change.isShown(by: state), Date() < change.until {
@@ -302,6 +306,9 @@ final class LiveActivityController {
 struct LocalChange {
     /// The end the session should reach; nil: it should be over.
     var expectedEnd: Date?
+    /// The end shown before "+1 h": a later one is the Mac's answer, even
+    /// if the guess was off.
+    var baseline: Date? = nil
     /// Past this the command has expired: the Mac's state is right again.
     var until: Date
 
@@ -310,6 +317,7 @@ struct LocalChange {
     func isShown(by state: MacState) -> Bool {
         guard state.power == .awake, let session = state.session else { return true }
         guard let expectedEnd else { return false }
+        if let baseline, session.endsAt > baseline.addingTimeInterval(5) { return true }
         return session.endsAt >= expectedEnd.addingTimeInterval(-5)
     }
 }

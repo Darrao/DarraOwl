@@ -31,6 +31,9 @@ struct WidgetSnapshot: Codable, Equatable {
     var agentsRunning: Int
     var agentsWaiting: Int
     var updatedAt: Date
+    /// The Mac's cap on a session, for "+1 h" from the lock screen when the
+    /// app starts with nothing loaded.
+    var maxSessionDuration: TimeInterval? = nil
 
     static let placeholder = WidgetSnapshot(macName: "Mac", presence: "En ligne", online: true,
                                             sessionEndsAt: Date().addingTimeInterval(5400), battery: 82, charging: false,
