@@ -109,11 +109,14 @@ final class PhoneRuntime {
         if !isDemo {
             switch kind {
             case let .extendSession(minutes):
-                // A timed session still running: its new end is known.
+                // A timed session still running: its new end is known, with
+                // the Mac's cap on a session's length.
                 if let baseline, baseline > firedAt, liveActivity.currentIsTimed {
-                    localChange = LocalChange(expectedEnd: baseline.addingTimeInterval(CommandKind.seconds(minutes)), until: expires)
+                    let maxDuration = model.state?.settings.maxSessionDuration ?? Policy.absoluteMaxSessionDuration
+                    let target = Session.extendedEnd(baseline, by: CommandKind.seconds(minutes), now: firedAt, maxDuration: maxDuration)
+                    localChange = LocalChange(expectedEnd: target, until: expires)
+                    liveActivity.extendLocally(from: baseline, to: target)
                 }
-                liveActivity.extendLocally(from: baseline, by: CommandKind.seconds(minutes))
             case .stopSession:
                 localChange = LocalChange(expectedEnd: nil, until: expires)
                 liveActivity.end()
@@ -123,7 +126,9 @@ final class PhoneRuntime {
         }
         let waitsForAnswer = localChange != nil
         Task {
-            for wait in [4.0, 6.0, 10.0, 20.0] {
+            // The last read comes after the command expired: the Mac's state
+            // then replaces whatever the lock screen shows.
+            for wait in [4.0, 6.0, 10.0, 20.0, 35.0] {
                 try? await Task.sleep(for: .seconds(wait))
                 await model.refreshFromCloud()
                 if !waitsForAnswer || localChange == nil { break }
@@ -265,10 +270,9 @@ final class LiveActivityController {
     /// before sending, never twice (the Mac's own state may already be
     /// there), and only for a session that had not ended (a timed one: an
     /// agent's end is not known here).
-    func extendLocally(from baseline: Date?, by seconds: TimeInterval) {
-        guard let current, let baseline, baseline > Date() else { return }
+    func extendLocally(from baseline: Date, to target: Date) {
+        guard let current, baseline > Date() else { return }
         let id = current.id
-        let target = baseline.addingTimeInterval(seconds)
         Task.detached {
             for activity in Activity<DarraOwlActivityAttributes>.activities where activity.id == id && activity.content.state.following == nil {
                 var state = activity.content.state

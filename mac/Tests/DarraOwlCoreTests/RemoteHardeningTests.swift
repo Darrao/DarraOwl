@@ -153,7 +153,12 @@ import Testing
         #expect(await rig.hub.publishIfDue(counting(12_000, battery: 79), endpoints: nil), "a real change")
         rig.clock.advance(RemoteHub.heartbeat)
         #expect(await rig.hub.publishIfDue(counting(80_000, battery: 79), endpoints: nil), "the heartbeat")
-        #expect(rig.cloud.published.map { $0.network?.sessionBytes } == [1_000, 12_000, 80_000])
+        // The session ended: no byte count any more, which the phone must see.
+        rig.clock.advance(5)
+        var ended = counting(0, battery: 79)
+        ended.network?.sessionBytes = nil
+        #expect(await rig.hub.publishIfDue(ended, endpoints: nil), "a counter going away is a change")
+        #expect(rig.cloud.published.map { $0.network?.sessionBytes } == [1_000, 12_000, 80_000, nil])
     }
 
     /// After a phone command through iCloud, the next one is read within
@@ -168,6 +173,16 @@ import Testing
         #expect(rig.hub.cloudPollInterval(sessionRunning: false) == RemoteHub.fastPoll)
         rig.clock.advance(RemoteHub.fastPollWindow + 1)
         #expect(rig.hub.cloudPollInterval(sessionRunning: false) == RemoteHub.idlePoll)
+    }
+
+    /// The clock set back an hour after a command: no hour of fast polling.
+    @Test func aClockSetBackDoesNotStretchTheFastPolling() async throws {
+        let rig = HubRig().paired()
+        let cmd = try rig.phone.sign(.extendSession(minutes: 60), mac: rig.macID, at: rig.clock.now())
+        rig.cloud.inbox = CloudInbox(commands: [("c1", cmd)])
+        await rig.hub.pollCloud(macName: "MacBook")
+        rig.clock.advance(-3600)
+        #expect(rig.hub.cloudPollInterval(sessionRunning: true) == RemoteHub.sessionPoll)
     }
 
     /// A command whose push never came is still read before it expires,

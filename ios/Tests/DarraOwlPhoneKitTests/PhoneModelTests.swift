@@ -84,7 +84,11 @@ final class FakeCloudLink: CloudLink {
 
     func accountProblem() async -> String? { problem }
     func fetchState(macID: UUID) async throws -> (state: MacState, endpoints: Endpoints?)? { state }
-    func send(_ command: SignedCommand, macID: UUID) async throws { sent.append(command) }
+    var onSend: (() -> Void)?
+    func send(_ command: SignedCommand, macID: UUID) async throws {
+        sent.append(command)
+        onSend?()
+    }
     func result(for commandID: UUID) async throws -> CommandResult? {
         onPoll?()
         polls += 1
@@ -187,6 +191,22 @@ struct PhoneRig {
         await rig.model.send(.stopSession)
         #expect(shown == .sending("Arrêter la session · par iCloud"))
         #expect(rig.model.outcome == .done("Arrêter la session : fait."))
+    }
+
+    /// The Mac unpaired this phone while the command was written to iCloud:
+    /// nothing is left spinning for a Mac that is gone.
+    @Test func noSpinnerIsLeftWhenTheMacGoesDuringASend() async throws {
+        let rig = PhoneRig()
+        var mac = rig.pairedMac
+        mac.macPairedAt = rig.clock.now.addingTimeInterval(-60)
+        rig.store.mac = mac
+        await rig.model.start()
+        var dropped = rig.state()
+        dropped.pairedDevices = []
+        rig.cloud.onSend = { rig.direct.onState?(dropped) }
+        await rig.model.send(.stopSession)
+        #expect(rig.model.mac == nil)
+        #expect(rig.model.outcome == nil)
     }
 
     @Test func noDirectAnswerFallsBackToCloudWithTheSameCommand() async throws {

@@ -464,7 +464,8 @@ public final class RemoteHub {
 
     /// Seconds between two reads of iCloud, see `fastPoll`.
     public func cloudPollInterval(sessionRunning: Bool) -> Int {
-        if let last = lastCloudRequest, clock.now().timeIntervalSince(last) < Self.fastPollWindow { return Self.fastPoll }
+        // A clock set back does not stretch the window.
+        if let last = lastCloudRequest, (0..<Self.fastPollWindow).contains(clock.now().timeIntervalSince(last)) { return Self.fastPoll }
         return sessionRunning ? Self.sessionPoll : Self.idlePoll
     }
 
@@ -585,18 +586,19 @@ public final class RemoteHub {
     /// (`ignoringCounters`), figures that move all the time are no change
     /// either: the bytes of the session, the battery's time estimate, the
     /// containers' processor and memory. They go with the next real change
-    /// or the heartbeat, instead of a write every few seconds.
+    /// or the heartbeat, instead of a write every few seconds. One that
+    /// appears or goes away is a change.
     public static func sameContent(_ a: MacState, _ b: MacState, ignoringCounters: Bool = false) -> Bool {
         var a = a, b = b
         a.updatedAt = .distantPast
         b.updatedAt = .distantPast
         if ignoringCounters {
             func strip(_ s: inout MacState) {
-                s.network?.sessionBytes = nil
-                s.powerSnapshot?.minutesToEmpty = nil
+                if s.network?.sessionBytes != nil { s.network?.sessionBytes = 0 }
+                if s.powerSnapshot?.minutesToEmpty != nil { s.powerSnapshot?.minutesToEmpty = 0 }
                 for i in s.containers.indices {
-                    s.containers[i].cpuPercent = nil
-                    s.containers[i].memoryBytes = nil
+                    if s.containers[i].cpuPercent != nil { s.containers[i].cpuPercent = 0 }
+                    if s.containers[i].memoryBytes != nil { s.containers[i].memoryBytes = 0 }
                 }
             }
             strip(&a)

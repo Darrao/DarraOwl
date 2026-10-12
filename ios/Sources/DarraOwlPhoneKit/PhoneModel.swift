@@ -395,6 +395,7 @@ public final class PhoneModel {
         if result == nil {
             do {
                 try await deps.cloud.send(signed, macID: mac.macID)
+                guard linkGeneration == generation else { return }
                 // Apple can hold the push to the Mac some 10 s: shown, so the
                 // wait is not taken for a hang.
                 show(.sending("\(kind.label) · par iCloud"))

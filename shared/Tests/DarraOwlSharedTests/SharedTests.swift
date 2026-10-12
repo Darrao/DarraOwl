@@ -203,3 +203,22 @@ import Testing
         #expect(Session(startedAt: t, endsAt: t, origin: .cli).whileWatchingText == nil)
     }
 }
+
+/// "+1 h" as the Mac applies it, which the phone shows before the answer.
+@Suite struct ExtendedEndTests {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    @Test func addsToTheEndUnderTheCap() {
+        let end = now.addingTimeInterval(1800)
+        #expect(Session.extendedEnd(end, by: 3600, now: now, maxDuration: 8 * 3600) == end.addingTimeInterval(3600))
+    }
+
+    @Test func neverPastTheLongestSession() {
+        let end = now.addingTimeInterval(6600)
+        #expect(Session.extendedEnd(end, by: 3600, now: now, maxDuration: 7200) == now.addingTimeInterval(7200))
+    }
+
+    @Test func countsFromNowOnceEnded() {
+        #expect(Session.extendedEnd(now.addingTimeInterval(-60), by: 1800, now: now, maxDuration: 7200) == now.addingTimeInterval(1800))
+    }
+}

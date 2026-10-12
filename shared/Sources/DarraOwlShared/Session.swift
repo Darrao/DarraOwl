@@ -78,6 +78,13 @@ public struct Session: Codable, Equatable, Sendable, Identifiable {
 
     public var isAgentMode: Bool { !watching.isEmpty }
 
+    /// The end "+N" gives a session that ends at `end`: counted from now if
+    /// it already ended, never more than `maxDuration` from now. The Mac
+    /// applies it; the phone uses it to show the new end at once.
+    public static func extendedEnd(_ end: Date, by seconds: TimeInterval, now: Date, maxDuration: TimeInterval) -> Date {
+        min(max(end, now).addingTimeInterval(seconds), now.addingTimeInterval(maxDuration))
+    }
+
     /// "tourne" or "tournent", to follow `watchingText`.
     public var watchingVerb: String {
         watching.count > 1 ? "tournent" : "tourne"

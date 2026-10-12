@@ -411,7 +411,7 @@ public actor SessionEngine {
         }
         let previous = session.endsAt
         let previousKeep = session.keepUntil
-        session.endsAt = min(max(session.endsAt, now).addingTimeInterval(seconds), now.addingTimeInterval(settings.maxSessionDuration))
+        session.endsAt = Session.extendedEnd(session.endsAt, by: seconds, now: now, maxDuration: settings.maxSessionDuration)
         // A timed session an agent joined: its own planned end moves too.
         if let keep = session.keepUntil {
             session.keepUntil = min(max(keep, now).addingTimeInterval(seconds), session.endsAt)

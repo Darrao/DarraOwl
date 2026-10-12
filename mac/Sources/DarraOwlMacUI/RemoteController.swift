@@ -96,6 +96,11 @@ public final class RemoteController: CommandTarget {
         hub.afterCommand = { [weak self] in
             guard let self, self.macPower != .goingToSleep, !self.stopDeferred else { return }
             await self.publish(force: true)
+            // Queued behind a publish on its way: the result waits for it,
+            // 3 s at most, so the phone reading the state after it sees this one.
+            for _ in 0..<30 where self.hub?.isPublishing == true {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
         }
         hub.onResult = { [weak self] result in
             self?.lastResult = result
