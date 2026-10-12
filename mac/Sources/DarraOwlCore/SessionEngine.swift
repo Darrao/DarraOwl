@@ -97,11 +97,19 @@ public actor SessionEngine {
     public static let activePollInterval: TimeInterval = 10
     static let maxNotices = 5
     public static let maxWatched = 16
+    /// A lid state counts once it held this long: a lid closed slowly or a
+    /// laptop moved while closing makes the sensor bounce for a few seconds.
+    public static let lidSettle: TimeInterval = 2
 
     private let deps: Dependencies
     private var journal = Journal()
     private var settings = PowerSettings.default
     private var lastPower: PowerSnapshot?
+    /// Last raw lid reading and when it started.
+    private var lidRaw: (closed: Bool?, since: Date)?
+    /// The lid state the rules and the status use.
+    private var lidSettled: Bool?
+    private var lidKnown = false
     private var unreadableReads = 0
     private var pendingUndo: [String] = []
     private var notices: [String] = []
@@ -146,7 +154,8 @@ public actor SessionEngine {
     /// Periodic and event-driven check: end time, battery, heat, retries.
     public func evaluate() async -> EngineStatus {
         let now = deps.clock.now()
-        let snapshot = deps.source.read()
+        var snapshot = deps.source.read()
+        snapshot.lidClosed = settledLid(snapshot.lidClosed, now: now)
         lastPower = snapshot
         if case .unreadable = snapshot.battery { unreadableReads += 1 } else { unreadableReads = 0 }
 
@@ -179,8 +188,13 @@ public actor SessionEngine {
     /// Seconds until the next `evaluate()` is due.
     public func nextCheckDelay() -> TimeInterval {
         if let session = journal.session {
-            let remaining = session.remaining(at: deps.clock.now())
-            return min(Self.activePollInterval, max(0.2, remaining))
+            let now = deps.clock.now()
+            var delay = min(Self.activePollInterval, max(0.2, session.remaining(at: now)))
+            // A lid change waiting to settle is looked at as soon as it may.
+            if let raw = lidRaw, raw.closed != lidSettled {
+                delay = min(delay, max(0.2, Self.lidSettle - now.timeIntervalSince(raw.since) + 0.1))
+            }
+            return delay
         }
         return journal.isClean ? Self.idlePollInterval : Self.activePollInterval
     }
@@ -201,7 +215,8 @@ public actor SessionEngine {
         guard duration >= Policy.minimumSessionDuration, duration <= settings.maxSessionDuration else {
             throw .invalidDuration(min: Policy.minimumSessionDuration, max: settings.maxSessionDuration)
         }
-        let snapshot = deps.source.read()
+        var snapshot = deps.source.read()
+        snapshot.lidClosed = settledLid(snapshot.lidClosed, now: deps.clock.now())
         lastPower = snapshot
         if let reason = FloorRules.startRefusal(power: snapshot, settings: settings) {
             throw .refused(reason)
@@ -496,6 +511,19 @@ public actor SessionEngine {
     }
 
     // MARK: Private
+
+    /// The first reading counts at once; a change counts once it held
+    /// `lidSettle` seconds.
+    private func settledLid(_ raw: Bool?, now: Date) -> Bool? {
+        if lidRaw == nil || lidRaw?.closed != raw { lidRaw = (raw, now) }
+        if !lidKnown {
+            lidKnown = true
+            lidSettled = raw
+        } else if let r = lidRaw, now.timeIntervalSince(r.since) >= Self.lidSettle {
+            lidSettled = r.closed
+        }
+        return lidSettled
+    }
 
     static func matches(_ p: WatchedProcess, _ state: ProcessState) -> Bool {
         state.identity.startSeconds == p.startSeconds && state.identity.startMicros == p.startMicros

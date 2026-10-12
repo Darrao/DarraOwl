@@ -201,15 +201,50 @@ import Testing
         #expect(!FloorRules.decide(power: power, unreadableReads: 0, settings: off).wantsLowPower)
     }
 
+    func lid(_ closed: Bool) -> PowerSnapshot {
+        PowerSnapshot(battery: .percent(90), onExternalPower: true, thermal: .nominal, lidClosed: closed)
+    }
+
     @Test func openingTheLidRestoresLowPower() async throws {
         let h = Harness()
+        h.source.set(lid(false))
         _ = await h.engine.reconcile()
         _ = try await h.engine.start(duration: 3600, origin: .menuBar)
-        h.source.set(PowerSnapshot(battery: .percent(90), onExternalPower: true, thermal: .nominal, lidClosed: true))
+        h.source.set(lid(true))
+        #expect(await !h.engine.evaluate().lowPowerHeld, "not settled yet")
+        h.clock.advance(SessionEngine.lidSettle)
         #expect(await h.engine.evaluate().lowPowerHeld)
-        h.source.set(PowerSnapshot(battery: .percent(90), onExternalPower: true, thermal: .nominal, lidClosed: false))
+        h.source.set(lid(false))
+        _ = await h.engine.evaluate()
+        h.clock.advance(SessionEngine.lidSettle)
         #expect(await !h.engine.evaluate().lowPowerHeld)
         #expect(!h.power.current.lowPowerOnAC)
+    }
+
+    /// The night of 2026-10-12: closed, open, closed, open, closed in 8 s.
+    @Test func aBouncingLidIsIgnoredUntilItSettles() async throws {
+        let h = Harness()
+        h.source.set(lid(false))
+        _ = await h.engine.reconcile()
+        _ = try await h.engine.start(duration: 3600, origin: .menuBar)
+        h.events.clear()
+
+        for (closed, after) in [(true, 1.3), (false, 2.4), (true, 3.2), (false, 1.2)] as [(Bool, TimeInterval)] {
+            h.source.set(lid(closed))
+            let status = await h.engine.evaluate()
+            #expect(status.power?.lidClosed == false, "the open lid still counts")
+            #expect(!status.lowPowerHeld)
+            h.clock.advance(after)
+        }
+        #expect(!h.events.all.contains { $0.hasPrefix("pmset lowpowermode") || $0.contains("lowpower") }, "\(h.events.all)")
+
+        h.source.set(lid(true))
+        _ = await h.engine.evaluate()
+        #expect(await h.engine.nextCheckDelay() <= SessionEngine.lidSettle + 0.1)
+        h.clock.advance(SessionEngine.lidSettle)
+        let settled = await h.engine.evaluate()
+        #expect(settled.power?.lidClosed == true)
+        #expect(settled.lowPowerHeld)
     }
 }
 
