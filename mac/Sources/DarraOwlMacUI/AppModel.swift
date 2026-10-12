@@ -32,6 +32,8 @@ public final class AppModel {
     }))
     /// Option: each declared activity also moves the pointer a pixel.
     static let mouseNudgeKey = "presenceMouseNudge"
+    /// The display was turned off from the phone and has not woken since.
+    static let displayOffFromPhoneKey = "displayOffFromPhone"
     public private(set) var mouseNudge = UserDefaults.standard.bool(forKey: AppModel.mouseNudgeKey)
     /// macOS lets DarraOwl move the pointer (Accessibility).
     public var mouseNudgeAllowed: Bool { MouseNudge.allowed }
@@ -136,8 +138,12 @@ public final class AppModel {
             Task { await self.lid.darkenAgain(saved: status.userChanges, settings: status.settings.lid) }
         }
         // Relaunched by an update while the display was off from the phone:
-        // presence does not light it.
-        if CGDisplayIsAsleep(CGMainDisplayID()) != 0 { presence.setQuiet(true) }
+        // presence does not light it. Asleep on its own, it may.
+        if UserDefaults.standard.bool(forKey: Self.displayOffFromPhoneKey), CGDisplayIsAsleep(CGMainDisplayID()) != 0 {
+            presence.setQuiet(true)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.displayOffFromPhoneKey)
+        }
         // "Sans limite" survives a relaunch, so the Mac stays active after a
         // restart; a timed presence does not.
         if UserDefaults.standard.bool(forKey: Self.presenceIndefiniteKey) {
@@ -145,7 +151,10 @@ public final class AppModel {
         }
         // A display put to sleep from the phone stays dark for presence until it wakes.
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.presence.setQuiet(false) }
+            MainActor.assumeIsolated {
+                self?.presence.setQuiet(false)
+                UserDefaults.standard.removeObject(forKey: Self.displayOffFromPhoneKey)
+            }
         }
         // A display plugged or unplugged with the lid closed changes what a
         // closed lid means.
@@ -268,8 +277,24 @@ public final class AppModel {
 
     // MARK: Remote
 
+    /// An update is replacing the app: its quit would end whatever starts
+    /// now, so nothing starts until the new copy runs.
+    var updateInstalling: Bool {
+        if case .installing = updater.phase { true } else { false }
+    }
+
+    static let updatingMessage = "Mise à jour de DarraOwl en cours : réessaie dans quelques secondes."
+
+    private static func startsSomething(_ request: HelperRequest) -> Bool {
+        switch request {
+        case .start, .extend, .watch: true
+        default: false
+        }
+    }
+
     /// For the remote controller: a helper request whose refusal throws.
     func sendHelper(_ request: HelperRequest) async throws -> EngineStatus {
+        if updateInstalling, Self.startsSomething(request) { throw HelperRefusal(message: Self.updatingMessage) }
         let response = try await client.send(request)
         // A refusal goes back to the phone; the menu does not show it.
         apply(response, showingError: false)
@@ -403,6 +428,7 @@ public final class AppModel {
     /// up until someone wakes it.
     func displayOffFromPhone() {
         presence.setQuiet(true)
+        UserDefaults.standard.set(true, forKey: Self.displayOffFromPhoneKey)
         PublicDisplaySleep().requestSleep()
     }
 
@@ -419,9 +445,17 @@ public final class AppModel {
     /// `duration` nil: no end time.
     public func startPresence(duration: TimeInterval?) {
         let now = Date()
+        // A timed presence does not survive the relaunch an update is doing.
+        if duration != nil, updateInstalling {
+            lastError = Self.updatingMessage
+            return
+        }
         // Turned off from the phone earlier but lit again since (the request
         // can be deferred right after a wake): no longer quiet.
-        if presence.quiet, CGDisplayIsAsleep(CGMainDisplayID()) == 0 { presence.setQuiet(false, now: now) }
+        if presence.quiet, CGDisplayIsAsleep(CGMainDisplayID()) == 0 {
+            presence.setQuiet(false, now: now)
+            UserDefaults.standard.removeObject(forKey: Self.displayOffFromPhoneKey)
+        }
         do {
             try presence.start(until: duration.map { now.addingTimeInterval($0) }, now: now)
             UserDefaults.standard.set(duration == nil, forKey: Self.presenceIndefiniteKey)
@@ -531,6 +565,10 @@ public final class AppModel {
 
     private func perform(_ request: HelperRequest) {
         guard !busy else { return }
+        if updateInstalling, Self.startsSomething(request) {
+            lastError = Self.updatingMessage
+            return
+        }
         busy = true
         lastError = nil
         Task {

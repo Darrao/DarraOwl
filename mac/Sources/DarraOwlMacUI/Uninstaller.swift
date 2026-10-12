@@ -127,7 +127,7 @@ enum Uninstaller {
         }
         // A reinstall starts afresh: opened at login again, no presence
         // switched back on by itself.
-        for key in [AppModel.firstLaunchKey, AppModel.presenceIndefiniteKey, AppModel.presenceWhileClosedKey, AppModel.mouseNudgeKey, MouseNudge.askedKey,
+        for key in [AppModel.firstLaunchKey, AppModel.presenceIndefiniteKey, AppModel.presenceWhileClosedKey, AppModel.mouseNudgeKey, MouseNudge.askedKey, AppModel.displayOffFromPhoneKey,
                     AppModel.lidClosedKey, FirstLaunch.key, Updater.automaticKey, Updater.lastCheckKey] {
             UserDefaults.standard.removeObject(forKey: key)
         }
