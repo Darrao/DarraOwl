@@ -1,5 +1,6 @@
 import DarraOwlShared
 import Foundation
+import Synchronization
 import UIKit
 import WatchConnectivity
 
@@ -47,46 +48,64 @@ final class WatchBridge: NSObject, WCSessionDelegate {
 
     private func handle(_ request: WatchLink.Request) async -> WatchLink.Reply {
         let runtime = PhoneRuntime.shared
-        // Woken in the background by the watch: keep running until the answer.
-        let task = UIApplication.shared.beginBackgroundTask(withName: "DarraOwl watch")
-        defer { if task != .invalid { UIApplication.shared.endBackgroundTask(task) } }
+        // Woken in the background by the watch: time to answer, and for a
+        // command, to finish sending it (ended from the sending task).
+        let background = BackgroundTime("DarraOwl watch")
         await runtime.start()
-        guard !runtime.isDemo else {
-            return WatchLink.Reply(ok: false, message: "L'iPhone montre la démonstration : il ne pilote aucun Mac.", snapshot: nil)
-        }
         switch request {
         case .refresh:
-            await runtime.model.tick()
-            return WatchLink.Reply(ok: true, message: nil, snapshot: runtime.watchSnapshot())
+            if !runtime.isDemo { await runtime.model.tick() }
+            background.end()
+            let paired = runtime.model.mac != nil
+            return WatchLink.Reply(ok: paired, message: paired ? nil : "Aucun Mac appairé sur l'iPhone.", snapshot: runtime.watchSnapshot())
         case let .command(kind):
             guard WatchLink.allowed(kind) else {
+                background.end()
                 return WatchLink.Reply(ok: false, message: WatchLink.needsPhone, snapshot: runtime.watchSnapshot())
             }
             guard runtime.model.mac != nil else {
-                return WatchLink.Reply(ok: false, message: "Aucun Mac appairé sur l'iPhone.", snapshot: nil)
+                background.end()
+                return WatchLink.Reply(ok: false, message: "Aucun Mac appairé sur l'iPhone.", snapshot: runtime.watchSnapshot())
             }
             guard !runtime.model.isBusy else {
+                background.end()
                 return WatchLink.Reply(ok: false, message: "L'iPhone envoie déjà une commande, réessaie.", snapshot: runtime.watchSnapshot())
+            }
+            // A direct link that died while the app was suspended is dropped
+            // first: its 10 s wait would pass the watch's budget.
+            if !runtime.isDemo { await runtime.model.tick() }
+            let model = runtime.model
+            let sending = Task {
+                await model.send(kind)
+                background.end()
             }
             // Through iCloud the Mac can take a minute: the watch gets an
             // answer within 8 s, and the new state follows by itself.
-            let sending = Task { await runtime.model.send(kind) }
-            let finished = await withTaskGroup(of: Bool.self) { group in
-                group.addTask { await sending.value; return true }
-                group.addTask { try? await Task.sleep(for: Self.replyWithin); return false }
-                let first = await group.next() ?? false
-                group.cancelAll()
-                return first
+            guard await Self.finishes(sending, within: Self.replyWithin) else {
+                return WatchLink.Reply(ok: true, message: "Demande envoyée, le Mac répond par iCloud.", snapshot: runtime.watchSnapshot(), pending: true)
             }
-            guard finished else {
-                return WatchLink.Reply(ok: true, message: "Demande envoyée, le Mac répond par iCloud.", snapshot: runtime.watchSnapshot())
-            }
-            let (ok, message): (Bool, String?) = switch runtime.model.outcome {
+            let (ok, message): (Bool, String?) = switch model.outcome {
             case let .done(text): (true, text)
             case let .failed(text): (false, text)
             case .sending, .none: (false, "Pas de réponse du Mac.")
             }
             return WatchLink.Reply(ok: ok, message: message, snapshot: runtime.watchSnapshot())
+        }
+    }
+
+    /// True when `task` ended in time. It is not cancelled otherwise: the
+    /// command goes on, only the wait stops.
+    private static func finishes(_ task: Task<Void, Never>, within limit: Duration) async -> Bool {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let once = OnceFlag()
+            Task {
+                await task.value
+                if once.claim() { continuation.resume(returning: true) }
+            }
+            Task {
+                try? await Task.sleep(for: limit)
+                if once.claim() { continuation.resume(returning: false) }
+            }
         }
     }
 
@@ -121,4 +140,34 @@ final class WatchBridge: NSObject, WCSessionDelegate {
 /// WatchConnectivity's reply block, called once from the main actor.
 private struct ReplySender: @unchecked Sendable {
     let send: ([String: Any]) -> Void
+}
+
+/// Background time from UIKit, ended once, or by iOS when it runs out.
+@MainActor
+final class BackgroundTime {
+    private var id: UIBackgroundTaskIdentifier = .invalid
+
+    init(_ name: String) {
+        id = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+            MainActor.assumeIsolated { self?.end() }
+        }
+    }
+
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
+    }
+}
+
+/// Claimed once, from any thread.
+final class OnceFlag: Sendable {
+    private let done = Mutex(false)
+
+    func claim() -> Bool {
+        done.withLock { done in
+            defer { done = true }
+            return !done
+        }
+    }
 }

@@ -164,7 +164,7 @@ struct PhoneRig {
 
         #expect(rig.direct.sent.count == 1)
         #expect(rig.cloud.sent.isEmpty)
-        #expect(rig.model.outcome == .done("Prolonger de 1 h : fait."))
+        #expect(rig.model.outcome == .done("Prolonger d'1 h : fait."))
     }
 
     @Test func cloudWhenNoDirectPath() async throws {
@@ -266,13 +266,54 @@ struct PhoneRig {
         #expect(rig.cloud.subscribed == 1)
     }
 
-    @Test func notificationButtonsSendCommands() async throws {
+    func sentKinds(_ rig: PhoneRig) throws -> [CommandKind] {
+        try rig.cloud.sent.map { try LinkCoding.decoder().decode(CommandEnvelope.self, from: $0.payload).kind }
+    }
+
+    /// Launched for the button, nothing known yet: "Session bientôt finie"
+    /// is extended, never answered with a session that already runs.
+    @Test func notificationButtonsOnAColdLaunch() async throws {
+        let rig = PhoneRig()
+        rig.store.mac = rig.pairedMac
+        await rig.model.handleNotificationAction(MacEvent.extendAction, eventMacID: rig.macID, eventKind: .endingSoon)
+        await rig.model.handleNotificationAction(MacEvent.stopAction, eventMacID: rig.macID, eventKind: .endingSoon)
+        #expect(try sentKinds(rig) == [.extendSession(minutes: 60), .stopSession])
+    }
+
+    /// "Session terminée": "+1 h" gives a new hour, "Arrêter" has nothing to stop.
+    @Test func notificationButtonsAfterTheEnd() async throws {
+        let rig = PhoneRig()
+        rig.store.mac = rig.pairedMac
+        await rig.model.handleNotificationAction(MacEvent.extendAction, eventMacID: rig.macID, eventKind: .ended)
+        await rig.model.handleNotificationAction(MacEvent.stopAction, eventMacID: rig.macID, eventKind: .ended)
+        #expect(try sentKinds(rig) == [.startSession(minutes: 60)])
+    }
+
+    /// A fresh state without a session: "+1 h" starts one.
+    @Test func notificationButtonWithAFreshStateWithoutSession() async throws {
+        let rig = PhoneRig()
+        rig.cloud.state = (rig.state(), nil)
+        _ = await rig.paired()
+        await rig.model.handleNotificationAction(MacEvent.extendAction, eventMacID: rig.macID, eventKind: .agentDone)
+        #expect(try sentKinds(rig) == [.startSession(minutes: 60)])
+    }
+
+    @Test func anotherMacsNotificationDoesNothing() async throws {
         let rig = await PhoneRig().paired()
-        await rig.model.handleNotificationAction(MacEvent.extendAction)
-        await rig.model.handleNotificationAction(MacEvent.stopAction)
-        let kinds = try rig.cloud.sent.map { try LinkCoding.decoder().decode(CommandEnvelope.self, from: $0.payload).kind }
-        // No session known: "+1 h" starts an hour instead of failing silently.
-        #expect(kinds == [.startSession(minutes: 60), .stopSession])
+        await rig.model.handleNotificationAction(MacEvent.stopAction, eventMacID: UUID(), eventKind: .endingSoon)
+        #expect(rig.cloud.sent.isEmpty)
+    }
+
+    /// A push woke the app in the background: the state is read even though
+    /// the model was never started.
+    @Test func aPushOnAColdLaunchReadsTheState() async {
+        let rig = PhoneRig()
+        rig.store.mac = rig.pairedMac
+        rig.cloud.state = (rig.state(), nil)
+        var mirrored: MacState?
+        rig.model.onStateChange = { mirrored = $0 }
+        await rig.model.refreshFromCloud()
+        #expect(mirrored?.macName == "MacBook")
     }
 
     /// The demonstration answers inside send(): the answer must not be lost
@@ -292,7 +333,7 @@ struct PhoneRig {
     @Test func pairingAgainAfterUnpairingUsesTheNewKeys() async throws {
         let rig = await PhoneRig().paired()
         let before = try rig.store.identity().deviceID
-        rig.model.unpair()
+        await rig.model.unpair()
         #expect(rig.cloud.unsubscribed == 0 || rig.cloud.unsubscribed == 1)
         rig.pairing.response = PairingResponse(accepted: true, macID: rig.macID, macName: "MacBook", message: nil)
         await rig.model.pair(url: try rig.invite().url())
@@ -393,6 +434,20 @@ struct PhoneRig {
         #expect(rig.model.pairingError == "Code invalide.")
     }
 
+    @Test func noAnswerWithoutICloudOnThePhoneSaysSo() async throws {
+        let rig = PhoneRig()
+        rig.cloud.problem = "Aucun compte iCloud sur cet iPhone."
+        await rig.model.start()
+        await rig.model.pair(url: try rig.invite().url())
+        #expect(rig.model.mac == nil)
+        #expect(rig.model.pairingError?.contains("iCloud n'est pas disponible sur cet iPhone") == true)
+
+        let withCloud = PhoneRig()
+        await withCloud.model.start()
+        await withCloud.model.pair(url: try withCloud.invite().url())
+        #expect(withCloud.model.pairingError?.contains("même réseau") == true)
+    }
+
     @Test func expiredCodeIsRefusedLocally() async throws {
         let rig = PhoneRig()
         let url = try rig.invite().url()
@@ -418,8 +473,99 @@ struct PhoneRig {
 
     @Test func unpairForgetsTheMac() async {
         let rig = await PhoneRig().paired()
-        rig.model.unpair()
+        await rig.model.unpair()
         #expect(rig.store.mac == nil && rig.model.mac == nil)
+    }
+
+    /// Unpairing here tells the Mac, which forgets this phone's keys.
+    @Test func unpairingTellsTheMac() async throws {
+        let rig = await PhoneRig().paired()
+        await rig.model.unpair()
+        let kinds = try rig.cloud.sent.map { try LinkCoding.decoder().decode(CommandEnvelope.self, from: $0.payload).kind }
+        #expect(kinds == [.forgetThisDevice])
+        #expect(rig.cloud.unsubscribed == 1)
+    }
+
+    /// The notifications' subscription is shared by the account's phones:
+    /// another phone still paired keeps it.
+    @Test func anotherPairedPhoneKeepsTheNotifications() async throws {
+        let rig = PhoneRig()
+        rig.direct.connectTo = .local
+        _ = await rig.paired()
+        let me = try rig.store.identity().deviceID
+        var state = rig.state()
+        state.pairedDevices = [me, UUID()]
+        rig.direct.onState?(state)
+        await rig.model.unpair()
+        #expect(rig.cloud.unsubscribed == 0)
+    }
+
+    /// Unpaired on the Mac: its next state does not list this phone, which
+    /// then forgets that Mac and says why.
+    @Test func unpairedOnTheMacTheStateSaysSo() async throws {
+        let rig = PhoneRig()
+        rig.direct.connectTo = .local
+        var mac = rig.pairedMac
+        mac.macPairedAt = rig.clock.now.addingTimeInterval(-60)
+        rig.store.mac = mac
+        await rig.model.start()
+        let me = try rig.store.identity().deviceID
+        var listed = rig.state()
+        listed.pairedDevices = [me]
+        rig.direct.onState?(listed)
+        #expect(rig.model.mac != nil)
+
+        var dropped = rig.state(at: rig.clock.now.addingTimeInterval(1))
+        dropped.pairedDevices = []
+        rig.direct.onState?(dropped)
+        #expect(rig.model.mac == nil)
+        #expect(rig.store.mac == nil)
+        #expect(rig.model.unpairNotice?.contains("a désappairé cet iPhone") == true)
+    }
+
+    /// A state published before this pairing (an old iCloud copy) proves nothing.
+    @Test func aStateFromBeforeThePairingNeverUnpairs() async throws {
+        let rig = PhoneRig()
+        var mac = rig.pairedMac
+        mac.macPairedAt = rig.clock.now
+        rig.store.mac = mac
+        var old = rig.state(at: rig.clock.now.addingTimeInterval(-30))
+        old.pairedDevices = []
+        rig.cloud.state = (old, nil)
+        await rig.model.start()
+        #expect(rig.model.mac != nil)
+    }
+
+    /// Unpaired while a command waited for the Mac: it is not sent through
+    /// iCloud to the Mac just left.
+    @Test func aCommandOnItsWayStopsWhenUnpaired() async throws {
+        let fresh = PhoneRig()
+        fresh.direct.connectTo = .local
+        fresh.direct.reply = nil
+        let rig = await fresh.paired()
+        let sending = Task { await rig.model.send(.stopSession) }
+        await Task.yield()
+        await rig.model.unpair()
+        await sending.value
+        let kinds = try rig.cloud.sent.map { try LinkCoding.decoder().decode(CommandEnvelope.self, from: $0.payload).kind }
+        #expect(!kinds.contains(.stopSession))
+        #expect(!rig.model.isBusy)
+    }
+
+    /// The Mac's clock went back: its live states still show.
+    @Test func directStatesShowEvenWhenTheMacsClockWentBack() async throws {
+        let fresh = PhoneRig()
+        fresh.direct.connectTo = .local
+        let rig = await fresh.paired()
+        rig.direct.onState?(rig.state(at: rig.clock.now.addingTimeInterval(3600)))
+        rig.direct.onState?(rig.state(power: .goingToSleep, at: rig.clock.now))
+        #expect(rig.model.state?.power == .goingToSleep)
+    }
+
+    @Test func aBrokenLinkIsCheckedBeforeAskingToConfirmIt() throws {
+        let rig = PhoneRig()
+        #expect(rig.model.linkProblem(try rig.invite().url()) == nil)
+        #expect(rig.model.linkProblem(URL(string: "darraowl://pair?d=garbage")!) == "Ce code n'est pas un code DarraOwl.")
     }
 }
 

@@ -1,3 +1,4 @@
+import CloudKit
 import DarraOwlPhoneKit
 import DarraOwlShared
 import UIKit
@@ -30,7 +31,17 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let action = response.actionIdentifier
-        await AppDelegate.model?.handleNotificationAction(action)
+        let (macID, kind) = Self.eventFields(response.notification.request.content.userInfo)
+        await AppDelegate.model?.handleNotificationAction(action, eventMacID: macID, eventKind: kind)
+    }
+
+    /// Which Mac and which kind of event a notification is about, from the
+    /// fields CloudKit adds to it (nil for a notification of an older setup).
+    nonisolated static func eventFields(_ userInfo: [AnyHashable: Any]) -> (UUID?, MacEvent.Kind?) {
+        guard let note = CKNotification(fromRemoteNotificationDictionary: userInfo) as? CKQueryNotification,
+              let fields = note.recordFields
+        else { return (nil, nil) }
+        return ((fields["macID"] as? String).flatMap(UUID.init(uuidString:)), (fields["kind"] as? String).flatMap(MacEvent.Kind.init(rawValue:)))
     }
 
     /// Silent part of an event push: refresh what the app shows, from

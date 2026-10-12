@@ -97,7 +97,7 @@ struct MacComplicationView: View {
             }
             if let session {
                 Text(timerInterval: entry.date...session.end, countsDown: true).font(.body.monospacedDigit())
-                Text(entry.snapshot?.following.map { "tant que \($0) tourne" } ?? "éveillé")
+                Text(entry.snapshot?.following ?? "éveillé")
                     .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             } else {
                 Text("Veille normale").font(.body)

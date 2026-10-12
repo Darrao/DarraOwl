@@ -3,11 +3,21 @@ import DarraOwlShared
 import Foundation
 
 /// Why a Face ID signature failed.
-public enum BiometricError: Error, Equatable, Sendable {
+public enum BiometricError: Error, Equatable, Sendable, LocalizedError {
     /// The user cancelled or Face ID did not match.
     case refused
     /// Face ID was re-enrolled: the Secure Enclave key no longer works.
     case keyInvalidated
+    /// No face or finger enrolled: the key that needs one cannot be made.
+    case notEnrolled
+
+    public var errorDescription: String? {
+        switch self {
+        case .refused: "Face ID refusé."
+        case .keyInvalidated: "Face ID a changé sur cet iPhone : sa clé n'est plus valable."
+        case .notEnrolled: "Face ID (ou Touch ID) n'est pas configuré sur cet iPhone : active-le dans Réglages, puis réessaie. Les commandes sensibles le demandent."
+        }
+    }
 }
 
 /// Signs with the key that needs Face ID. Live: a Secure Enclave P-256 key
@@ -75,13 +85,18 @@ public struct PairedMac: Codable, Equatable, Sendable {
     /// Last known addresses (from the invite, then from iCloud).
     public var endpoints: Endpoints?
     public var pairedAt: Date
+    /// When the Mac paired this phone, by the Mac's clock: a state it
+    /// published later that does not list this phone means it was unpaired
+    /// there (nil: an older Mac, or a pairing from before this was kept).
+    public var macPairedAt: Date?
 
-    public init(macID: UUID, macName: String, agreementKey: Data, endpoints: Endpoints?, pairedAt: Date) {
+    public init(macID: UUID, macName: String, agreementKey: Data, endpoints: Endpoints?, pairedAt: Date, macPairedAt: Date? = nil) {
         self.macID = macID
         self.macName = macName
         self.agreementKey = agreementKey
         self.endpoints = endpoints
         self.pairedAt = pairedAt
+        self.macPairedAt = macPairedAt
     }
 }
 

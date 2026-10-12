@@ -22,6 +22,11 @@ struct RootView: View {
         } message: { _ in
             Text(linkMessage)
         }
+        .alert("Lien d'appairage refusé", isPresented: Binding(get: { runtime.linkError != nil }, set: { if !$0 { runtime.linkError = nil } })) {
+            Button("OK", role: .cancel) { runtime.linkError = nil }
+        } message: {
+            Text(runtime.linkError ?? "")
+        }
     }
 
     private var linkTitle: String {
@@ -95,6 +100,9 @@ struct OnboardingView: View {
                     if let error = model.pairingError {
                         Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
                     }
+                    if let notice = model.unpairNotice {
+                        Label(notice, systemImage: "info.circle").foregroundStyle(.secondary)
+                    }
                 }
 
                 Text("Le code ne sert qu'une fois et expire au bout de 5 minutes. Les clés restent dans le trousseau de cet iPhone. Aucun serveur du développeur : seulement ton Mac, cet iPhone et ton iCloud.")
@@ -106,11 +114,10 @@ struct OnboardingView: View {
             .padding(.bottom, 40)
         }
         .sheet(isPresented: $scanning) {
-            QRScanner { url in
+            ScannerSheet(close: { scanning = false }) { url in
                 scanning = false
                 Task { await model.pair(url: url) }
             }
-            .ignoresSafeArea()
         }
     }
 
@@ -134,22 +141,81 @@ struct OnboardingView: View {
     }
 }
 
+/// The scanner, or why the camera cannot be used, always with a way out.
+struct ScannerSheet: View {
+    let close: () -> Void
+    let onFound: (URL) -> Void
+    @State private var access = AVCaptureDevice.authorizationStatus(for: .video)
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                switch access {
+                case .authorized:
+                    QRScanner(onFound: onFound).ignoresSafeArea()
+                case .notDetermined:
+                    ProgressView()
+                        .task { access = await AVCaptureDevice.requestAccess(for: .video) ? .authorized : .denied }
+                default:
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("La caméra n'est pas autorisée pour DarraOwl.").font(.headline)
+                        Text("Autorise-la dans Réglages, ou ferme et utilise « Coller le lien du code ».")
+                            .foregroundStyle(.secondary)
+                        Button("Ouvrir Réglages") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                        }
+                        .buttonStyle(.glass)
+                    }
+                    .padding(24)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Fermer", action: close) }
+            }
+        }
+    }
+}
+
 /// VisionKit scanner limited to QR codes; returns the first darraowl:// link.
+/// Shown once the camera is allowed.
 struct QRScanner: UIViewControllerRepresentable {
     let onFound: (URL) -> Void
 
-    func makeUIViewController(context: Context) -> DataScannerViewController {
-        let vc = DataScannerViewController(recognizedDataTypes: [.barcode(symbologies: [.qr])], isHighlightingEnabled: true)
-        vc.delegate = context.coordinator
-        // Started once the camera is allowed: on the first use, starting
-        // before the answer fails and is never retried.
-        Task { @MainActor in
-            if await AVCaptureDevice.requestAccess(for: .video) { try? vc.startScanning() }
-        }
-        return vc
+    func makeUIViewController(context: Context) -> ScannerHost {
+        let scanner = DataScannerViewController(recognizedDataTypes: [.barcode(symbologies: [.qr])], isHighlightingEnabled: true)
+        scanner.delegate = context.coordinator
+        return ScannerHost(scanner: scanner)
     }
 
-    func updateUIViewController(_ vc: DataScannerViewController, context: Context) {}
+    func updateUIViewController(_ vc: ScannerHost, context: Context) {}
+
+    /// Holds the scanner and starts it once on screen: started before, it
+    /// can fail and is not retried.
+    final class ScannerHost: UIViewController {
+        let scanner: DataScannerViewController
+
+        init(scanner: DataScannerViewController) {
+            self.scanner = scanner
+            super.init(nibName: nil, bundle: nil)
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            addChild(scanner)
+            scanner.view.frame = view.bounds
+            scanner.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            view.addSubview(scanner.view)
+            scanner.didMove(toParent: self)
+        }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            try? scanner.startScanning()
+        }
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator(onFound: onFound) }
 
@@ -199,9 +265,23 @@ struct MacView: View {
                         if !state.agents.isEmpty { agentsBlock(state) }
                         if state.presence != nil { controlsBlock(state) }
                         macBlock(state)
-                        if !state.containers.isEmpty || state.dockerPaused || state.dockerRunning == true { dockerBlock(state) }
+                        // Docker open but idle: only worth a block when it can be paused.
+                        if !state.containers.isEmpty || state.dockerPaused || (state.dockerRunning == true && state.session != nil) { dockerBlock(state) }
                     }
                     if let outcome = model.outcome { outcomeLine(outcome) }
+                    // A link to another Mac, confirmed from here.
+                    if model.isPairing {
+                        HStack {
+                            ProgressView()
+                            Text("Appairage en cours…")
+                            Spacer()
+                            Button("Annuler") { model.cancelPairing() }
+                        }
+                        .foregroundStyle(.secondary)
+                    }
+                    if let error = model.pairingError {
+                        Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+                    }
                     footerActions
                 }
                 .padding(.horizontal, 20)
@@ -268,8 +348,8 @@ struct MacView: View {
                     Text(timerInterval: Date()...max(Date(), session.endsAt), countsDown: true)
                         .font(.system(size: 64, weight: .thin).monospacedDigit())
                         .lineLimit(1).minimumScaleFactor(0.6)
-                    if let watching = session.watchingText {
-                        Text("Tant que \(watching) tourne").font(.body.weight(.medium))
+                    if let watching = session.whileWatchingLine {
+                        Text(watching).font(.body.weight(.medium))
                         Text("Au plus tard à \(DurationText.clock(session.endsAt))\(keepText(session))").foregroundStyle(.secondary)
                     } else {
                         Text("Fin à \(DurationText.clock(session.endsAt))").foregroundStyle(.secondary)
@@ -387,7 +467,7 @@ struct MacView: View {
             }
             Button("Annuler", role: .cancel) {}
         } message: { _ in
-            Text("Comme un Ctrl-C dans son terminal : la tâche en cours s'interrompt. Demande Face ID.")
+            Text("Un Ctrl-C dans son terminal, puis l'arrêt s'il tourne encore 3 s après : l'agent se ferme. Demande Face ID.")
         }
     }
 
@@ -513,10 +593,10 @@ struct MacView: View {
                 .confirmationDialog("Désappairer cet iPhone ?", isPresented: $confirmUnpair, titleVisibility: .visible) {
                     Button("Désappairer", role: .destructive) {
                         // In the demonstration there is nothing to unpair: back to the start.
-                        if demo { leaveDemo() } else { model.unpair() }
+                        if demo { leaveDemo() } else { Task { await model.unpair() } }
                     }
                 } message: {
-                    Text("Sur le Mac, retire aussi cet iPhone dans DarraOwl > iPhone… pour couper son accès.")
+                    Text("Le Mac est prévenu et oublie cet iPhone. S'il est éteint, retire aussi cet iPhone dans DarraOwl > iPhone… sur le Mac.")
                 }
         }
     }

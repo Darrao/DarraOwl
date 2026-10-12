@@ -37,14 +37,18 @@ struct DarraOwlLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(spacing: 8) {
                         if let following = context.state.following {
-                            Text("Tant que \(following) tourne").font(.caption).lineLimit(1)
+                            Text(following.prefix(1).uppercased() + following.dropFirst()).font(.caption).lineLimit(1)
                         }
                         AgentsLine(running: context.state.agentsRunning, waiting: context.state.agentsWaiting)
-                        HStack {
-                            Button(intent: ExtendSessionIntent()) { Label("+1 h", systemImage: "plus") }
-                                .buttonStyle(.bordered).tint(.white)
-                            Button(intent: StopSessionIntent()) { Label("Arrêter", systemImage: "stop.fill") }
-                                .buttonStyle(.bordered).tint(.red)
+                        // Past its end time the session may be over: no
+                        // button that would act on a guess.
+                        if !context.isStale {
+                            HStack {
+                                Button(intent: ExtendSessionIntent()) { Label("+1 h", systemImage: "plus") }
+                                    .buttonStyle(.bordered).tint(.white)
+                                Button(intent: StopSessionIntent()) { Label("Arrêter", systemImage: "stop.fill") }
+                                    .buttonStyle(.bordered).tint(.red)
+                            }
                         }
                     }
                 }
@@ -69,7 +73,7 @@ struct LockScreenActivityView: View {
         HStack(alignment: .center, spacing: 14) {
             OwlShape(awake: true).stroke(lineWidth: 2).frame(width: 34, height: 34)
             VStack(alignment: .leading, spacing: 2) {
-                Text(context.state.following.map { "\(context.attributes.macName) · tant que \($0) tourne" } ?? context.attributes.macName)
+                Text(context.state.following.map { "\(context.attributes.macName) · \($0)" } ?? context.attributes.macName)
                     .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 if context.isStale {
                     Text("Heure de fin passée").font(.title3)
@@ -86,9 +90,11 @@ struct LockScreenActivityView: View {
                 .foregroundStyle(.secondary)
             }
             Spacer()
-            VStack(spacing: 8) {
-                Button(intent: ExtendSessionIntent()) { Text("+1 h") }.buttonStyle(.bordered).tint(.white)
-                Button(intent: StopSessionIntent()) { Image(systemName: "stop.fill") }.buttonStyle(.bordered).tint(.red)
+            if !context.isStale {
+                VStack(spacing: 8) {
+                    Button(intent: ExtendSessionIntent()) { Text("+1 h") }.buttonStyle(.bordered).tint(.white)
+                    Button(intent: StopSessionIntent()) { Image(systemName: "stop.fill") }.buttonStyle(.bordered).tint(.red)
+                }
             }
         }
         .padding(16)
@@ -156,16 +162,19 @@ struct StatusProvider: TimelineProvider {
         completion(StatusEntry(date: Date(), snapshot: context.isPreview ? .placeholder : SharedStore.load()))
     }
 
-    /// One entry now and one at the session's end, so the countdown gives
-    /// way to "Veille normale" on time without a reload. The app reloads the
-    /// timeline on every change.
+    /// One entry now, one when "En ligne" gets too old to be said, and one
+    /// at the session's end, so the countdown gives way to "Veille normale"
+    /// on time without a reload. The app reloads the timeline on every change.
     func getTimeline(in context: Context, completion: @escaping (Timeline<StatusEntry>) -> Void) {
         let now = Date()
         let snapshot = SharedStore.load()
-        var entries = [StatusEntry(date: now, snapshot: snapshot)]
-        if let end = snapshot?.sessionEndsAt, end > now {
-            entries.append(StatusEntry(date: end, snapshot: snapshot))
+        var dates = [now]
+        if let snapshot {
+            let aged = snapshot.updatedAt.addingTimeInterval(MacStatusWidgetView.freshFor)
+            if aged > now { dates.append(aged) }
         }
+        if let end = snapshot?.sessionEndsAt, end > now { dates.append(end) }
+        let entries = dates.sorted().map { StatusEntry(date: $0, snapshot: snapshot) }
         completion(Timeline(entries: entries, policy: .after(now.addingTimeInterval(1800))))
     }
 }
@@ -220,9 +229,16 @@ struct MacStatusWidgetView: View {
         }
     }
 
+    /// How long the presence and the dot are said as they were.
+    static let freshFor: TimeInterval = 300
+
+    private func fresh(_ s: WidgetSnapshot) -> Bool {
+        entry.date.timeIntervalSince(s.updatedAt) < Self.freshFor
+    }
+
     /// "En ligne…" only while it is recent: an old one says when it was true.
     private func presence(_ s: WidgetSnapshot) -> String {
-        entry.date.timeIntervalSince(s.updatedAt) < 300 ? s.presence : "Vu à \(s.updatedAt.formatted(date: .omitted, time: .shortened))"
+        fresh(s) ? s.presence : "Vu à \(s.updatedAt.formatted(date: .omitted, time: .shortened))"
     }
 
     private func full(_ s: WidgetSnapshot) -> some View {
@@ -231,7 +247,7 @@ struct MacStatusWidgetView: View {
                 OwlShape(awake: s.sessionEndsAt.map { $0 > entry.date } ?? false).stroke(lineWidth: 1.6).frame(width: 22, height: 22)
                 Text(s.macName).font(.caption).lineLimit(1)
                 Spacer()
-                Circle().fill(s.online ? Color.green : Color.gray).frame(width: 7, height: 7)
+                Circle().fill(s.online && fresh(s) ? Color.green : Color.gray).frame(width: 7, height: 7)
             }
             Spacer(minLength: 0)
             if let end = s.sessionEndsAt, end > entry.date {

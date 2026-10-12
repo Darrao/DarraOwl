@@ -7,7 +7,7 @@ struct ComplicationSnapshot: Codable, Equatable {
     var online: Bool
     var sessionStartedAt: Date?
     var sessionEndsAt: Date?
-    /// Agent mode: "claude · DarraOwl".
+    /// Agent mode: "tant que claude · DarraOwl tourne".
     var following: String?
     var battery: Int?
     var charging: Bool

@@ -14,7 +14,13 @@ struct DarraOwlPhoneApp: App {
             RootView(runtime: runtime)
                 // A link can come from anywhere: it is shown and confirmed
                 // before any pairing (see RootView).
-                .onOpenURL { url in runtime.pendingLink = url }
+                .onOpenURL { url in
+                    if let problem = runtime.model.linkProblem(url) {
+                        runtime.linkError = problem
+                    } else {
+                        runtime.pendingLink = url
+                    }
+                }
                 .task { await PhoneRuntime.shared.start() }
                 .onChange(of: model.mac != nil) { _, paired in
                     if paired, !runtime.isDemo { Task { await NotificationPermission.request() } }

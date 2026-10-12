@@ -14,6 +14,10 @@ import DarraOwlShared
 struct ExtendSessionIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Prolonger la session d'une heure"
     static let description = IntentDescription("Garde l'ordinateur éveillé une heure de plus.")
+    #if WIDGET_EXTENSION
+    /// Shortcuts lists the app's copy only.
+    static let isDiscoverable = false
+    #endif
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
@@ -31,6 +35,10 @@ struct StopSessionIntent: LiveActivityIntent {
     static let description = IntentDescription("L'ordinateur retrouve sa veille normale.")
     /// Like the notification's button: not from a locked iPhone.
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
+    #if WIDGET_EXTENSION
+    /// Shortcuts lists the app's copy only.
+    static let isDiscoverable = false
+    #endif
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {

@@ -11,6 +11,13 @@ public struct SecureEnclaveSigner: BiometricSigner {
     public let publicKey: Data
 
     public static func create() throws -> SecureEnclaveSigner {
+        // Bound to the enrolled faces: none enrolled, no key (said plainly
+        // rather than as a Keychain code).
+        var unavailable: NSError?
+        if !LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &unavailable),
+           let code = unavailable?.code, code == LAError.biometryNotEnrolled.rawValue || code == LAError.biometryNotAvailable.rawValue {
+            throw BiometricError.notEnrolled
+        }
         var error: Unmanaged<CFError>?
         guard let access = SecAccessControlCreateWithFlags(
             nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, [.privateKeyUsage, .biometryCurrentSet], &error

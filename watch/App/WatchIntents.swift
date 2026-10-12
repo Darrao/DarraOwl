@@ -10,8 +10,11 @@ struct ExtendSessionIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let ok = await WatchModel.shared.send(.extendSession(minutes: 60))
-        return .result(dialog: IntentDialog(stringLiteral: ok ? "Le Mac reste éveillé une heure de plus." : WatchModel.shared.message ?? "Le Mac n'est pas joignable."))
+        let model = WatchModel.shared
+        let ok = await model.send(.extendSession(minutes: 60))
+        let text = !ok ? model.message ?? "Le Mac n'est pas joignable."
+            : model.lastPending ? "Demande envoyée : une heure de plus." : "Le Mac reste éveillé une heure de plus."
+        return .result(dialog: IntentDialog(stringLiteral: text))
     }
 }
 
@@ -21,8 +24,11 @@ struct StopSessionIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let ok = await WatchModel.shared.send(.stopSession)
-        return .result(dialog: IntentDialog(stringLiteral: ok ? "Session arrêtée." : WatchModel.shared.message ?? "Le Mac n'est pas joignable."))
+        let model = WatchModel.shared
+        let ok = await model.send(.stopSession)
+        let text = !ok ? model.message ?? "Le Mac n'est pas joignable."
+            : model.lastPending ? "Demande envoyée : la session s'arrête." : "Session arrêtée."
+        return .result(dialog: IntentDialog(stringLiteral: text))
     }
 }
 
@@ -35,8 +41,11 @@ struct StartSessionIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let ok = await WatchModel.shared.send(.startSession(minutes: hours * 60))
-        return .result(dialog: IntentDialog(stringLiteral: ok ? "Le Mac reste éveillé \(hours) h." : WatchModel.shared.message ?? "Le Mac n'est pas joignable."))
+        let model = WatchModel.shared
+        let ok = await model.send(.startSession(minutes: hours * 60))
+        let text = !ok ? model.message ?? "Le Mac n'est pas joignable."
+            : model.lastPending ? "Demande envoyée : \(hours) h d'éveil." : "Le Mac reste éveillé \(hours) h."
+        return .result(dialog: IntentDialog(stringLiteral: text))
     }
 }
 
@@ -48,13 +57,20 @@ struct SessionStatusIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let model = WatchModel.shared
         await model.refresh()
-        guard let state = model.state else {
+        guard let state = model.state, let snapshot = model.snapshot else {
             return .result(dialog: "Je ne trouve pas le Mac pour le moment.")
         }
-        var text = state.session.map { session in
-            session.watchingText.map { "\(state.macName) reste éveillé tant que \($0) tourne." }
+        // Old news is said as such, never as the present.
+        if !snapshot.online || Date().timeIntervalSince(snapshot.at) > 180 {
+            return .result(dialog: IntentDialog(stringLiteral: "Pas de nouvelles de \(state.macName) depuis \(DurationText.clock(min(snapshot.at, state.updatedAt)))."))
+        }
+        var text: String
+        if let session = state.session, session.endsAt > Date() {
+            text = session.whileWatchingText.map { "\(state.macName) reste éveillé \($0)." }
                 ?? "\(state.macName) reste éveillé jusqu'à \(DurationText.clock(session.endsAt))."
-        } ?? "\(state.macName) n'a pas de session en cours."
+        } else {
+            text = "\(state.macName) n'a pas de session en cours."
+        }
         if let percent = state.powerSnapshot?.battery.percent { text += " Batterie à \(percent) %." }
         return .result(dialog: IntentDialog(stringLiteral: text))
     }

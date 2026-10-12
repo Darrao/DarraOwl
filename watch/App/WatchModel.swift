@@ -15,6 +15,8 @@ final class WatchModel: NSObject, WCSessionDelegate {
     /// Last command's answer, shown under the buttons for a few seconds.
     private(set) var message: String?
     private(set) var failed = false
+    /// The last command left but the Mac had not answered yet (through iCloud).
+    private(set) var lastPending = false
     @ObservationIgnored private var messageToken = 0
     let demo = CommandLine.arguments.contains("-DarraOwlDemo")
     @ObservationIgnored private var started = false
@@ -37,6 +39,7 @@ final class WatchModel: NSObject, WCSessionDelegate {
         start()
         guard !demo, let reply = await request(.refresh) else { return }
         if let snapshot = reply.snapshot { apply(snapshot) }
+        if !reply.ok, let text = reply.message { show(text, failed: true) }
     }
 
     /// Returns true when the Mac ran it (or the request left, when the Mac
@@ -50,6 +53,7 @@ final class WatchModel: NSObject, WCSessionDelegate {
         }
         busy = true
         defer { busy = false }
+        lastPending = false
         show("\(kind.label)…", failed: false, keep: true)
         if demo {
             snapshot = WatchDemo.apply(kind, to: snapshot)
@@ -61,6 +65,7 @@ final class WatchModel: NSObject, WCSessionDelegate {
             return false
         }
         if let snapshot = reply.snapshot { apply(snapshot) }
+        lastPending = reply.pending == true
         show(reply.message, failed: !reply.ok)
         return reply.ok
     }
@@ -79,9 +84,14 @@ final class WatchModel: NSObject, WCSessionDelegate {
     }
 
     /// Background delivery from the iPhone (watchOS wakes the app for it).
+    /// What is pending is only known once the session is active.
     func drainPending() async {
         start()
-        for _ in 0..<20 where WCSession.isSupported() && WCSession.default.hasContentPending {
+        guard WCSession.isSupported() else { return }
+        for _ in 0..<20 where WCSession.default.activationState != .activated {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        for _ in 0..<20 where WCSession.default.hasContentPending {
             try? await Task.sleep(for: .milliseconds(250))
         }
     }
@@ -108,6 +118,9 @@ final class WatchModel: NSObject, WCSessionDelegate {
     }
 
     private func apply(_ snapshot: WatchLink.Snapshot) {
+        // A queued older delivery (a complication update) never replaces a
+        // newer state.
+        if let current = self.snapshot, snapshot.at < current.at { return }
         self.snapshot = snapshot
         let session = snapshot.state?.session
         ComplicationStore.save(ComplicationSnapshot(
@@ -115,7 +128,7 @@ final class WatchModel: NSObject, WCSessionDelegate {
             online: snapshot.online,
             sessionStartedAt: session?.startedAt,
             sessionEndsAt: session?.endsAt,
-            following: session?.watchingText,
+            following: session?.whileWatchingText,
             battery: snapshot.state?.powerSnapshot?.battery.percent,
             charging: snapshot.state?.powerSnapshot?.onExternalPower ?? false,
             updatedAt: snapshot.at

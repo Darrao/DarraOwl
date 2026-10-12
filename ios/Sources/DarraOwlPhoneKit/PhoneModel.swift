@@ -71,6 +71,9 @@ public final class PhoneModel {
     public private(set) var cloudProblem: String?
     public private(set) var outcome: Outcome?
     public private(set) var pairingError: String?
+    /// Why the phone is no longer paired, when it did not ask (the Mac
+    /// unpaired it).
+    public private(set) var unpairNotice: String?
     public private(set) var isPairing = false
     /// A command is on its way: the screen disables its controls.
     public private(set) var isBusy = false
@@ -89,6 +92,9 @@ public final class PhoneModel {
     @ObservationIgnored private var lastAccountCheck: Date?
     @ObservationIgnored private var outcomeAt: Date?
     @ObservationIgnored private var pairingCancelled = false
+    /// Bumped whenever the link to the Mac is reset (unpairing, another
+    /// Mac): a command on its way for the old one stops there.
+    @ObservationIgnored private var linkGeneration = 0
 
     public init(_ deps: Dependencies) {
         self.deps = deps
@@ -97,7 +103,13 @@ public final class PhoneModel {
         deps.direct.onPathChange = { [weak self] path in
             guard let self else { return }
             self.directPath = path
-            if path != nil { self.lastDirectState = self.deps.now() }
+            if path != nil {
+                self.lastDirectState = self.deps.now()
+            } else {
+                // The link died: no answer will come that way, iCloud next.
+                for (_, waiter) in self.waiters { waiter.resume(returning: nil) }
+                self.waiters = [:]
+            }
         }
     }
 
@@ -114,14 +126,32 @@ public final class PhoneModel {
     }
 
     /// A button on a notification: "Prolonger d'1 h" (or start an hour when
-    /// the session already ended) or "Arrêter la session".
-    public func handleNotificationAction(_ id: String) async {
+    /// the session already ended) or "Arrêter la session". `eventMacID` and
+    /// `eventKind`: what the notification was about, when known; another
+    /// Mac's notification does nothing here. Sent both ways without waiting
+    /// for the answer: an action gets a few seconds in the background, and
+    /// the app may have been launched for it.
+    public func handleNotificationAction(_ id: String, eventMacID: UUID? = nil, eventKind: MacEvent.Kind? = nil) async {
         if mac == nil { mac = deps.store.pairedMac() }
+        guard let mac, eventMacID.map({ $0 == mac.macID }) ?? true else { return }
         switch id {
         case MacEvent.extendAction:
-            await send(state?.session == nil ? .startSession(minutes: 60) : .extendSession(minutes: 60))
+            // Read first: a session still running is extended, an ended one
+            // gives a new hour.
+            if state == nil { await fetchCloudState() }
+            let noSession: Bool
+            if eventKind == .ended {
+                noSession = true
+            } else if let state, deps.now().timeIntervalSince(state.updatedAt) <= MacPresence.staleAfter {
+                noSession = state.session == nil
+            } else {
+                noSession = false
+            }
+            await fire(noSession ? .startSession(minutes: 60) : .extendSession(minutes: 60))
         case MacEvent.stopAction:
-            await send(.stopSession)
+            // "Session terminée": nothing left to stop.
+            guard eventKind != .ended else { return }
+            await fire(.stopSession)
         default:
             break
         }
@@ -155,7 +185,9 @@ public final class PhoneModel {
     }
 
     /// A push said something changed: read iCloud now, whatever the link.
+    /// The app may have been launched for it, in the background.
     public func refreshFromCloud() async {
+        if mac == nil { mac = deps.store.pairedMac() }
         now = deps.now()
         await fetchCloudState()
     }
@@ -176,29 +208,23 @@ public final class PhoneModel {
     public func pair(url: URL) async {
         guard !isPairing else { return }
         pairingError = nil
-        let invite: PairingInvite
-        do {
-            invite = try PairingInvite(url: url)
-        } catch {
-            pairingError = "Ce code n'est pas un code DarraOwl."
-            return
-        }
-        guard deps.now() <= invite.expiresAt else {
-            pairingError = "Ce code a expiré. Affiche-en un nouveau sur le Mac."
-            return
-        }
         // A link can come from anywhere: only a normal invite pointing at
         // private addresses is followed.
-        if let why = invite.implausibility(now: deps.now()) {
+        if let why = linkProblem(url) {
             pairingError = why
             return
         }
+        guard let invite = try? PairingInvite(url: url) else { return }
         isPairing = true
         pairingCancelled = false
+        unpairNotice = nil
         defer { isPairing = false }
         let identity: PhoneIdentity
         do {
             identity = try loadIdentity()
+        } catch let error as BiometricError {
+            pairingError = error.localizedDescription
+            return
         } catch {
             pairingError = "Trousseau : \(error.localizedDescription)"
             return
@@ -214,7 +240,9 @@ public final class PhoneModel {
         }
         guard !pairingCancelled else { return }
         guard let response else {
-            pairingError = "Le Mac ne répond pas. Vérifie qu'il est allumé et connecté à iCloud."
+            pairingError = cloudProblem == nil
+                ? "Le Mac ne répond pas. Vérifie qu'il est allumé, sur le même réseau que cet iPhone ou connecté au même compte iCloud."
+                : "Le Mac ne répond pas sur ce réseau, et iCloud n'est pas disponible sur cet iPhone. Mets-les sur le même Wi-Fi, ou connecte cet iPhone à iCloud."
             return
         }
         guard response.accepted else {
@@ -230,19 +258,36 @@ public final class PhoneModel {
         }
         if let e = endpoints, !e.isPlausible { endpoints = nil }
         let paired = PairedMac(macID: invite.macID, macName: response.macName.isEmpty ? invite.macName : response.macName,
-                               agreementKey: invite.macAgreementKey, endpoints: endpoints, pairedAt: deps.now())
+                               agreementKey: invite.macAgreementKey, endpoints: endpoints, pairedAt: deps.now(),
+                               macPairedAt: response.pairedAt)
+        // Another Mac than before: the old one is asked to forget this
+        // phone (best effort), and nothing of it stays on screen.
+        let replacing = mac.map { $0.macID != paired.macID } ?? false
+        if replacing { _ = await fire(.forgetThisDevice) }
         do {
             try deps.store.save(paired)
         } catch {
             pairingError = "Trousseau : \(error.localizedDescription)"
             return
         }
-        // Another Mac than before: nothing of the old one stays on screen.
-        if mac?.macID != paired.macID { resetLink() }
+        if replacing {
+            resetLink()
+            onUnpair?()
+        } else if mac == nil {
+            resetLink()
+        }
         mac = paired
         lastConnectAttempt = nil
         try? await deps.cloud.subscribeToEvents()
         await tick()
+    }
+
+    /// Why this link cannot pair, or nil: checked before asking the user
+    /// to confirm a link opened from another app.
+    public func linkProblem(_ url: URL) -> String? {
+        guard let invite = try? PairingInvite(url: url) else { return "Ce code n'est pas un code DarraOwl." }
+        guard deps.now() <= invite.expiresAt else { return "Ce code a expiré. Affiche-en un nouveau sur le Mac." }
+        return invite.implausibility(now: deps.now())
     }
 
     /// "Annuler" while pairing waits for the Mac.
@@ -259,22 +304,33 @@ public final class PhoneModel {
         return nil
     }
 
-    /// Forgets the Mac and this phone's keys. Unpairing on the Mac cuts it
-    /// off there.
-    public func unpair() {
+    /// Forgets the Mac and this phone's keys, after asking the Mac to forget
+    /// this phone too (both ways, without waiting: it works offline).
+    public func unpair() async {
+        _ = await fire(.forgetThisDevice)
+        if forget(notice: nil) { try? await deps.cloud.unsubscribeFromEvents() }
+    }
+
+    /// Drops the Mac and the keys. Returns whether the notifications go too:
+    /// their subscription is shared by every phone of the iCloud account,
+    /// so it goes only when no other phone is paired with this Mac.
+    private func forget(notice: String?) -> Bool {
+        let me = identity?.deviceID ?? (try? deps.store.identity())?.deviceID
+        let others = state?.pairedDevices.map { ids in ids.filter { $0 != me } }
         resetLink()
         try? deps.store.forgetMac()
         // The keys were deleted with it: the next pairing makes new ones.
         identity = nil
         mac = nil
         pairingError = nil
-        let cloud = deps.cloud
-        Task { try? await cloud.unsubscribeFromEvents() }
+        unpairNotice = notice
         onUnpair?()
+        return others?.isEmpty ?? true
     }
 
     /// Drops everything about the current Mac's connection and state.
     private func resetLink() {
+        linkGeneration += 1
         deps.direct.disconnect()
         state = nil
         directPath = nil
@@ -300,6 +356,7 @@ public final class PhoneModel {
         guard !isBusy else { return }
         isBusy = true
         defer { isBusy = false }
+        let generation = linkGeneration
         show(.sending(kind.label))
         let signed: SignedCommand
         let envelope: CommandEnvelope
@@ -320,18 +377,20 @@ public final class PhoneModel {
         if directPath != nil {
             result = await waitDirect(envelope.id) { try deps.direct.send(signed) }
         }
+        // Unpaired, or another Mac, meanwhile: the command stops here.
+        guard linkGeneration == generation else { return }
         // No direct answer: the same signed command through iCloud. The Mac
         // runs a command once and answers a copy with the real result.
         if result == nil {
             do {
                 try await deps.cloud.send(signed, macID: mac.macID)
-                result = await waitCloud(envelope.id, until: envelope.expiresAt)
+                result = await waitCloud(envelope.id, until: envelope.expiresAt, generation: generation)
             } catch {
                 show(.failed("Envoi impossible : \(error.localizedDescription)"))
                 return
             }
         }
-        guard self.mac?.macID == mac.macID else { return }
+        guard linkGeneration == generation, self.mac?.macID == mac.macID else { return }
         guard let result else {
             show(.failed("Pas de réponse du Mac avant l'expiration de la commande."))
             return
@@ -394,10 +453,21 @@ public final class PhoneModel {
     }
 
     private func receive(_ state: MacState, direct: Bool) {
-        guard state.macID == mac?.macID else { return }
+        guard let mac, state.macID == mac.macID else { return }
         if direct { lastDirectState = deps.now() }
-        // An older iCloud copy must not replace a newer direct state.
-        if let current = self.state, state.updatedAt < current.updatedAt { return }
+        // An older iCloud copy must not replace a newer state. A direct state
+        // is live: always taken, even when the Mac's clock went back.
+        if !direct, let current = self.state, state.updatedAt < current.updatedAt { return }
+        // Unpaired on the Mac: a state it published after pairing this phone
+        // no longer lists it. Nothing of that Mac stays here.
+        if let ids = state.pairedDevices, let since = mac.macPairedAt, state.updatedAt > since,
+           let me = (try? loadIdentity())?.deviceID, !ids.contains(me) {
+            if forget(notice: "« \(mac.macName) » a désappairé cet iPhone.") {
+                let cloud = deps.cloud
+                Task { try? await cloud.unsubscribeFromEvents() }
+            }
+            return
+        }
         self.state = state
         now = deps.now()
         onStateChange?(state)
@@ -426,8 +496,8 @@ public final class PhoneModel {
         }
     }
 
-    private func waitCloud(_ id: UUID, until expiry: Date) async -> CommandResult? {
-        while deps.now() <= expiry.addingTimeInterval(10) {
+    private func waitCloud(_ id: UUID, until expiry: Date, generation: Int) async -> CommandResult? {
+        while deps.now() <= expiry.addingTimeInterval(10), linkGeneration == generation {
             await deps.sleeper.sleep(seconds: Self.cloudPollInterval)
             if let result = try? await deps.cloud.result(for: id) { return result }
         }

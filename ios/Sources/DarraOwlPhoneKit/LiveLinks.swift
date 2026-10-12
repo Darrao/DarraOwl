@@ -335,6 +335,9 @@ public final class CloudKitPhoneLink: CloudLink {
         info.alertLocalizationArgs = ["body"]
         info.soundName = "default"
         info.category = MacEvent.sessionCategory
+        // Read when a button is tapped: another Mac's notification, or one
+        // with nothing to stop, does nothing.
+        info.desiredKeys = ["macID", "kind"]
         info.shouldSendContentAvailable = true
         subscription.notificationInfo = info
         _ = try await database.modifySubscriptions(saving: [subscription], deleting: [])

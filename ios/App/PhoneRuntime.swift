@@ -17,6 +17,8 @@ final class PhoneRuntime {
     private(set) var isDemo = DemoMode.isOn
     /// A darraowl:// link opened from outside, waiting for confirmation.
     var pendingLink: URL?
+    /// Why a link opened from outside cannot pair.
+    var linkError: String?
 
     /// Pairs with a link the user confirmed: out of the demonstration first,
     /// so the real Mac is the one saved.
@@ -61,20 +63,35 @@ final class PhoneRuntime {
     func enterDemo() {
         isDemo = true
         model = PhoneModel(DemoMode.dependencies(forcePaired: true))
-        Task { await model.start() }
+        Task {
+            await model.start()
+            // The watch shows the demonstration too (App Review).
+            if let snapshot = watchSnapshot() { WatchBridge.shared.push(snapshot) }
+        }
     }
 
     func leaveDemo() {
         isDemo = false
         model = PhoneModel(Self.liveDependencies())
         wire()
-        Task { await model.start() }
+        Task {
+            await model.start()
+            if let snapshot = watchSnapshot() { WatchBridge.shared.push(snapshot) }
+        }
     }
 
     /// Siri and Live Activity buttons: sign and send, do not wait. No full
     /// start first: an intent has a few seconds only.
     func fire(_ kind: CommandKind) async -> Bool {
         let sent = await model.fire(kind)
+        if sent, !isDemo {
+            // Shown at once; the Mac's own state confirms a moment later.
+            switch kind {
+            case let .extendSession(minutes): liveActivity.extendLocally(by: CommandKind.seconds(minutes))
+            case .stopSession: liveActivity.end()
+            default: break
+            }
+        }
         // The Mac's new state shows up on the Live Activity a moment later.
         if sent {
             Task {
@@ -137,9 +154,15 @@ final class PhoneRuntime {
         if let watch = watchSnapshot() { WatchBridge.shared.push(watch) }
     }
 
-    /// What the Apple Watch shows. Nil before pairing and in the demonstration.
+    /// What the Apple Watch shows: the paired Mac, the demonstration, or
+    /// that no Mac is paired.
     func watchSnapshot() -> WatchLink.Snapshot? {
-        guard !isDemo, let mac = model.mac else { return nil }
+        if isDemo {
+            return WatchLink.Snapshot(state: model.state, macName: model.mac?.macName, presence: "Démonstration", online: true, at: Date())
+        }
+        guard let mac = model.mac else {
+            return WatchLink.Snapshot(state: nil, macName: nil, presence: "Aucun Mac appairé sur l'iPhone.", online: false, at: Date())
+        }
         let online = { if case .online = model.presence { return true } else { return false } }()
         return WatchLink.Snapshot(state: model.state, macName: mac.macName, presence: presenceText, online: online, at: Date())
     }
@@ -178,7 +201,7 @@ final class LiveActivityController {
             agentsRunning: state.agents.count,
             agentsWaiting: state.agents.filter(\.waitingForApproval).count,
             online: online,
-            following: session.watchingText
+            following: session.whileWatchingText
         )
         let activityContent = ActivityContent(state: content, staleDate: session.endsAt)
         // A stale one (past its old end time) is updated too: it is still on screen.
@@ -192,6 +215,20 @@ final class LiveActivityController {
             }
         } else if ActivityAuthorizationInfo().areActivitiesEnabled, UIApplication.shared.applicationState == .active {
             current = try? Activity.request(attributes: DarraOwlActivityAttributes(macName: state.macName), content: activityContent)
+        }
+    }
+
+    /// "+1 h" left from the Live Activity or Siri: its new end shows at once
+    /// (a timed session only; an agent's end is not known here).
+    func extendLocally(by seconds: TimeInterval) {
+        guard let current else { return }
+        let id = current.id
+        Task.detached {
+            for activity in Activity<DarraOwlActivityAttributes>.activities where activity.id == id && activity.content.state.following == nil {
+                var state = activity.content.state
+                state.endsAt = max(state.endsAt, Date()).addingTimeInterval(seconds)
+                await activity.update(ActivityContent(state: state, staleDate: state.endsAt))
+            }
         }
     }
 

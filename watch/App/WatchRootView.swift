@@ -33,6 +33,15 @@ struct WatchRootView: View {
         }
     }
 
+    /// What the iPhone said, unless it said it long ago: then when.
+    private var presenceText: String {
+        guard let snapshot = model.snapshot else { return "Recherche de l'iPhone…" }
+        if snapshot.state != nil, Date().timeIntervalSince(snapshot.at) > 180 {
+            return "Dernières nouvelles à \(DurationText.clock(snapshot.at))"
+        }
+        return snapshot.presence
+    }
+
     // MARK: Sections
 
     private var header: some View {
@@ -40,7 +49,7 @@ struct WatchRootView: View {
             OwlShape(awake: model.state?.session != nil).stroke(lineWidth: 1.6).frame(width: 22, height: 22)
             VStack(alignment: .leading, spacing: 0) {
                 Text(model.snapshot?.macName ?? "Mac").font(.headline).lineLimit(1)
-                Text(model.snapshot?.presence ?? "Recherche de l'iPhone…").font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                Text(presenceText).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
             }
         }
     }
@@ -52,7 +61,7 @@ struct WatchRootView: View {
                 Text(timerInterval: Date()...max(Date(), session.endsAt), countsDown: true)
                     .font(.system(size: 34, weight: .light, design: .rounded).monospacedDigit())
                     .lineLimit(1).minimumScaleFactor(0.6)
-                Text(session.watchingText.map { "tant que \($0) tourne" } ?? "jusqu'à \(DurationText.clock(session.endsAt))")
+                Text(session.whileWatchingText ?? "jusqu'à \(DurationText.clock(session.endsAt))")
                     .font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
             HStack {
