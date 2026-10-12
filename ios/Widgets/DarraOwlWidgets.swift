@@ -22,29 +22,25 @@ struct DarraOwlLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 6) {
-                        OwlShape(awake: true).stroke(lineWidth: 1.6).frame(width: 22, height: 22)
-                        Text(context.attributes.macName).font(.caption).lineLimit(1)
-                    }
+                    OwlShape(awake: true).stroke(lineWidth: 1.6).frame(width: 22, height: 22)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     BatteryLabel(percent: context.state.battery, charging: context.state.charging)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     Countdown(endsAt: context.state.endsAt)
-                        .font(.system(size: 34, weight: .light).monospacedDigit())
+                        .font(.system(size: 30, weight: .light).monospacedDigit())
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    VStack(spacing: 8) {
-                        if let following = context.state.following {
-                            Text(following.prefix(1).uppercased() + following.dropFirst()).font(.caption).lineLimit(1)
-                        }
-                        AgentsLine(running: context.state.agentsRunning, waiting: context.state.agentsWaiting)
+                    // The expanded island is 160 pt tall at most: one line,
+                    // then the buttons.
+                    VStack(spacing: 6) {
+                        IslandLine(state: context.state)
                         // Past its end time the session may be over: no
                         // button that would act on a guess.
                         if !context.isStale {
                             HStack {
-                                Button(intent: ExtendSessionIntent()) { Label("+1 h", systemImage: "plus") }
+                                Button(intent: ExtendSessionIntent()) { Text("+1 h") }
                                     .buttonStyle(.bordered).tint(.white)
                                 Button(intent: StopSessionIntent()) { Label("Arrêter", systemImage: "stop.fill") }
                                     .buttonStyle(.bordered).tint(.red)
@@ -55,9 +51,11 @@ struct DarraOwlLiveActivity: Widget {
             } compactLeading: {
                 OwlShape(awake: true).stroke(lineWidth: 1.4).frame(width: 18, height: 18)
             } compactTrailing: {
+                // Wide enough for "23:59:59": a session following an agent
+                // can last up to 24 h.
                 Countdown(endsAt: context.state.endsAt)
                     .font(.caption.monospacedDigit())
-                    .frame(maxWidth: 52)
+                    .frame(maxWidth: 64)
             } minimal: {
                 OwlShape(awake: true).stroke(lineWidth: 1.4).frame(width: 16, height: 16)
             }
@@ -102,6 +100,21 @@ struct LockScreenActivityView: View {
     }
 }
 
+/// The one line the expanded island has room for: an agent waiting for
+/// approval first, then the agent followed, then the agents at work.
+struct IslandLine: View {
+    let state: DarraOwlActivityAttributes.ContentState
+
+    var body: some View {
+        if let following = state.following, state.agentsWaiting == 0 {
+            Text(following.prefix(1).uppercased() + following.dropFirst())
+                .font(.caption).lineLimit(1).truncationMode(.middle)
+        } else {
+            AgentsLine(running: state.agentsRunning, waiting: state.agentsWaiting)
+        }
+    }
+}
+
 struct Countdown: View {
     let endsAt: Date
 
@@ -116,9 +129,14 @@ struct BatteryLabel: View {
     let charging: Bool
 
     var body: some View {
+        // Not a Label: a narrow place (the island's corner) shows only its icon.
         if let percent {
-            Label("\(percent) %", systemImage: charging ? "battery.100.bolt" : batterySymbol(percent))
-                .font(.caption)
+            HStack(spacing: 3) {
+                Image(systemName: charging ? "battery.100.bolt" : batterySymbol(percent))
+                Text("\(percent) %")
+            }
+            .font(.caption)
+            .fixedSize()
         }
     }
 
