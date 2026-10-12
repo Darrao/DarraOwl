@@ -122,7 +122,7 @@ final class PhoneRuntime {
                 }
             case .stopSession:
                 localChange = LocalChange(kind: .stopped, until: expires)
-                liveActivity.end()
+                liveActivity.end(sessionOver: true)
             default:
                 break
             }
@@ -237,10 +237,10 @@ final class LiveActivityController {
     func update(state: MacState, online: Bool) {
         // A Mac going to sleep, or past its end time, has no session to show.
         guard let session = state.session, state.power == .awake, session.endsAt > Date() else {
-            end()
+            end(sessionOver: true)
             return
         }
-        let content = DarraOwlActivityAttributes.ContentState(
+        var content = DarraOwlActivityAttributes.ContentState(
             endsAt: session.endsAt,
             battery: state.powerSnapshot?.battery.percent,
             charging: state.powerSnapshot?.onExternalPower ?? false,
@@ -250,6 +250,10 @@ final class LiveActivityController {
             online: online,
             following: session.whileWatchingText
         )
+        // A new state: the owl blinks.
+        if let shown = current?.content.state {
+            content.revision = (shown.revision ?? 0) + (content.sameAs(shown) ? 0 : 1)
+        }
         let activityContent = ActivityContent(state: content, staleDate: session.endsAt)
         // A stale one (past its old end time) is updated too: it is still on screen.
         if let current, current.activityState == .active || current.activityState == .stale {
@@ -282,21 +286,31 @@ final class LiveActivityController {
                 var state = activity.content.state
                 guard state.endsAt < target else { continue }
                 state.endsAt = target
+                state.revision = (state.revision ?? 0) + 1
                 await activity.update(ActivityContent(state: state, staleDate: target))
             }
         }
     }
 
-    /// Ends the activities there are now, at once: one left on screen would
-    /// keep counting down to an end time that no longer holds. Ids are taken
-    /// now, so an activity requested right after is not ended by mistake.
-    func end() {
-        let ids = Set(Activity<DarraOwlActivityAttributes>.activities.map(\.id))
+    /// Ends the activities there are now. The session over: a last state
+    /// says so (no countdown to an end time that no longer holds), the owl
+    /// closes its eyes, and it goes after a minute. Otherwise (unpaired): at
+    /// once, nothing of that Mac stays. Ids are taken now, so an activity
+    /// requested right after is not ended by mistake; one already ended is
+    /// left to go.
+    func end(sessionOver: Bool = false) {
+        let ids = Set(Activity<DarraOwlActivityAttributes>.activities.filter { $0.activityState == .active || $0.activityState == .stale }.map(\.id))
         current = nil
         guard !ids.isEmpty else { return }
         Task.detached {
             for activity in Activity<DarraOwlActivityAttributes>.activities where ids.contains(activity.id) {
-                await activity.end(nil, dismissalPolicy: .immediate)
+                if sessionOver {
+                    var last = activity.content.state
+                    last.ended = true
+                    await activity.end(ActivityContent(state: last, staleDate: nil), dismissalPolicy: .after(Date().addingTimeInterval(60)))
+                } else {
+                    await activity.end(nil, dismissalPolicy: .immediate)
+                }
             }
         }
     }

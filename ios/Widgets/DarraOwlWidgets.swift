@@ -22,23 +22,27 @@ struct DarraOwlLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    OwlShape(awake: true).stroke(lineWidth: 1.6).frame(width: 22, height: 22)
+                    ActivityOwl(state: context.state, lineWidth: 1.6).frame(width: 22, height: 22)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     BatteryLabel(percent: context.state.battery, charging: context.state.charging)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Countdown(endsAt: context.state.endsAt)
-                        .font(.system(size: 30, weight: .light).monospacedDigit())
+                    if context.state.ended == true {
+                        Text("Session terminée").font(.title3)
+                    } else {
+                        Countdown(endsAt: context.state.endsAt)
+                            .font(.system(size: 30, weight: .light).monospacedDigit())
+                    }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     // The expanded island is 160 pt tall at most: one line,
                     // then the buttons.
                     VStack(spacing: 6) {
-                        IslandLine(state: context.state)
+                        if context.state.ended != true { IslandLine(state: context.state) }
                         // Past its end time the session may be over: no
                         // button that would act on a guess.
-                        if !context.isStale {
+                        if !context.isStale, context.state.ended != true {
                             HStack {
                                 Button(intent: ExtendSessionIntent()) { Text("+1 h") }
                                     .buttonStyle(.bordered).tint(.white)
@@ -49,15 +53,19 @@ struct DarraOwlLiveActivity: Widget {
                     }
                 }
             } compactLeading: {
-                OwlShape(awake: true).stroke(lineWidth: 1.4).frame(width: 18, height: 18)
+                ActivityOwl(state: context.state, lineWidth: 1.4).frame(width: 18, height: 18)
             } compactTrailing: {
-                // Wide enough for "23:59:59": a session following an agent
-                // can last up to 24 h.
-                Countdown(endsAt: context.state.endsAt)
-                    .font(.caption.monospacedDigit())
-                    .frame(maxWidth: 64)
+                if context.state.ended == true {
+                    Text("Fin").font(.caption)
+                } else {
+                    // Wide enough for "23:59:59": a session following an
+                    // agent can last up to 24 h.
+                    Countdown(endsAt: context.state.endsAt)
+                        .font(.caption.monospacedDigit())
+                        .frame(maxWidth: 64)
+                }
             } minimal: {
-                OwlShape(awake: true).stroke(lineWidth: 1.4).frame(width: 16, height: 16)
+                ActivityOwl(state: context.state, lineWidth: 1.4).frame(width: 16, height: 16)
             }
             .keylineTint(.white)
         }
@@ -69,26 +77,32 @@ struct LockScreenActivityView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
-            OwlShape(awake: true).stroke(lineWidth: 2).frame(width: 34, height: 34)
+            ActivityOwl(state: context.state, lineWidth: 2).frame(width: 34, height: 34)
             VStack(alignment: .leading, spacing: 2) {
                 Text(context.state.following.map { "\(context.attributes.macName) · \($0)" } ?? context.attributes.macName)
                     .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                if context.isStale {
+                if context.state.ended == true {
+                    Text("Session terminée").font(.title3)
+                    Text("Veille normale rétablie.").font(.caption)
+                } else if context.isStale {
                     Text("Heure de fin passée").font(.title3)
                     Text("Ouvre DarraOwl pour l'état du Mac.").font(.caption)
                 } else {
                     Countdown(endsAt: context.state.endsAt)
                         .font(.system(size: 30, weight: .light).monospacedDigit())
                 }
-                HStack(spacing: 10) {
-                    BatteryLabel(percent: context.state.battery, charging: context.state.charging)
-                    if context.state.lidClosed { Label("capot fermé", systemImage: "laptopcomputer").font(.caption) }
-                    AgentsLine(running: context.state.agentsRunning, waiting: context.state.agentsWaiting)
+                // Over: the battery and agents of then are no news.
+                if context.state.ended != true {
+                    HStack(spacing: 10) {
+                        BatteryLabel(percent: context.state.battery, charging: context.state.charging)
+                        if context.state.lidClosed { Label("capot fermé", systemImage: "laptopcomputer").font(.caption) }
+                        AgentsLine(running: context.state.agentsRunning, waiting: context.state.agentsWaiting)
+                    }
+                    .foregroundStyle(.secondary)
                 }
-                .foregroundStyle(.secondary)
             }
             Spacer()
-            if !context.isStale {
+            if !context.isStale, context.state.ended != true {
                 VStack(spacing: 8) {
                     Button(intent: ExtendSessionIntent()) { Text("+1 h") }.buttonStyle(.bordered).tint(.white)
                     Button(intent: StopSessionIntent()) { Image(systemName: "stop.fill") }.buttonStyle(.bordered).tint(.red)
@@ -97,6 +111,19 @@ struct LockScreenActivityView: View {
         }
         .padding(16)
         .foregroundStyle(.white)
+    }
+}
+
+/// The Live Activity's owl. iOS plays no animation in a loop there, only
+/// the change from one drawing to the next: the eyes blink with each new
+/// state (see `OwlEyes.swapLids`), and close when the session is over.
+struct ActivityOwl: View {
+    let state: DarraOwlActivityAttributes.ContentState
+    var lineWidth: CGFloat
+
+    var body: some View {
+        OwlShape(openness: state.ended == true ? 0 : 1, swapLids: (state.revision ?? 0) % 2 == 1)
+            .stroke(style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
     }
 }
 

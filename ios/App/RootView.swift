@@ -56,7 +56,7 @@ struct OnboardingView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 32) {
                 VStack(alignment: .leading, spacing: 12) {
-                    OwlShape(awake: true).stroke(lineWidth: 2.4).frame(width: 52, height: 52)
+                    BlinkingOwl(awake: true, lineWidth: 2.4).frame(width: 52, height: 52)
                     Text("DarraOwl").font(.largeTitle.bold())
                     Text("Garde ton Mac éveillé capot fermé, le temps qu'il faut, et suis-le d'ici.")
                         .font(.title3).foregroundStyle(.secondary)
@@ -322,7 +322,7 @@ struct MacView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            OwlShape(awake: model.state?.session != nil).stroke(lineWidth: 2.2).frame(width: 40, height: 40)
+            BlinkingOwl(awake: model.state?.session != nil, lineWidth: 2.2).frame(width: 40, height: 40)
             Text(model.mac?.macName ?? "Mac").font(.largeTitle.bold()).lineLimit(1).minimumScaleFactor(0.7)
             HStack(spacing: 8) {
                 Circle().fill(presenceColor).frame(width: 8, height: 8)

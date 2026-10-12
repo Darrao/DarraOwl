@@ -4,11 +4,17 @@ import SwiftUI
 
 struct MenuBarLabel: View {
     let model: AppModel
+    /// A frame of the owl waking up or falling asleep; nil: at rest.
+    @State private var frame: Double?
+    /// What the owl showed last, so the first look is not animated.
+    @State private var shown: Bool?
+
+    private var awake: Bool { model.session != nil || model.presenceActive }
 
     var body: some View {
         HStack(spacing: 4) {
             Image(nsImage: OwlIcon.image(
-                awake: model.session != nil || model.presenceActive,
+                openness: frame ?? (awake ? 1 : 0),
                 label: model.session != nil ? "DarraOwl, session en cours" : model.presenceActive ? "DarraOwl, toujours actif" : nil
             ))
             if let remaining = model.remaining {
@@ -16,6 +22,24 @@ struct MenuBarLabel: View {
                     .monospacedDigit()
             }
         }
+        .task(id: awake) { await animate(to: awake) }
+    }
+
+    /// Once per change, never in a loop: it wakes up with one blink, or
+    /// closes its eyes slowly. Still with Reduce Motion.
+    private func animate(to awake: Bool) async {
+        // Set at once: a change cut short by the next one leaves nothing behind.
+        let previous = shown
+        shown = awake
+        frame = nil
+        guard let previous, previous != awake, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let frames: [Double] = awake ? [0.4, 1, 1, 1, 1, 0.4, 0, 0.4, 1] : [0.7, 0.4, 0.15, 0]
+        for f in frames {
+            frame = f
+            try? await Task.sleep(for: .milliseconds(70))
+            guard !Task.isCancelled else { return }
+        }
+        frame = nil
     }
 }
 

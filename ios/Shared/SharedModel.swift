@@ -14,6 +14,18 @@ struct DarraOwlActivityAttributes: ActivityAttributes {
         var online: Bool
         /// Agent mode: "tant que claude · DarraOwl tourne".
         var following: String?
+        /// The last state: the session is over, the owl closes its eyes.
+        var ended: Bool? = nil
+        /// Counts the new states shown: the owl blinks each time it changes.
+        var revision: Int? = nil
+
+        /// Equal but for `revision`.
+        func sameAs(_ other: Self) -> Bool {
+            var a = self, b = other
+            a.revision = nil
+            b.revision = nil
+            return a == b
+        }
     }
 
     var macName: String

@@ -46,7 +46,7 @@ struct WatchRootView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            OwlShape(awake: model.state?.session != nil).stroke(lineWidth: 1.6).frame(width: 22, height: 22)
+            BlinkingOwl(awake: model.state?.session != nil, lineWidth: 1.6).frame(width: 22, height: 22)
             VStack(alignment: .leading, spacing: 0) {
                 Text(model.snapshot?.macName ?? "Mac").font(.headline).lineLimit(1)
                 Text(presenceText).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
