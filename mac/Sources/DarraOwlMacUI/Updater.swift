@@ -52,6 +52,8 @@ final class Updater {
     }
     @ObservationIgnored private var ready: (version: String, app: URL)?
     @ObservationIgnored private var working = false
+    /// The last checks before an install run: nothing may start meanwhile.
+    @ObservationIgnored private(set) var aboutToInstall = false
 
     var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
@@ -114,7 +116,11 @@ final class Updater {
     private func installIfAllowed(_ mayInstall: () async -> Bool) async {
         guard let update = ready, !working else { return }
         working = true
-        defer { working = false }
+        aboutToInstall = true
+        defer {
+            working = false
+            aboutToInstall = false
+        }
         guard await mayInstall(), ready?.app == update.app else { return }
         install(update)
     }

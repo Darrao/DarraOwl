@@ -117,11 +117,11 @@ final class PhoneRuntime {
                     let maxDuration = model.state?.settings.maxSessionDuration
                         ?? SharedStore.load()?.maxSessionDuration ?? Policy.defaultMaxSessionDuration
                     let target = Session.extendedEnd(baseline, by: CommandKind.seconds(minutes), now: firedAt, maxDuration: maxDuration)
-                    localChange = LocalChange(expectedEnd: target, baseline: baseline, until: expires)
+                    localChange = LocalChange(kind: .extended(baseline: baseline, seconds: CommandKind.seconds(minutes), firedAt: firedAt), until: expires)
                     liveActivity.extendLocally(from: baseline, to: target)
                 }
             case .stopSession:
-                localChange = LocalChange(expectedEnd: nil, until: expires)
+                localChange = LocalChange(kind: .stopped, until: expires)
                 liveActivity.end()
             default:
                 break
@@ -299,25 +299,5 @@ final class LiveActivityController {
                 await activity.end(nil, dismissalPolicy: .immediate)
             }
         }
-    }
-}
-
-/// A command's effect shown on the lock screen before the Mac's answer.
-struct LocalChange {
-    /// The end the session should reach; nil: it should be over.
-    var expectedEnd: Date?
-    /// The end shown before "+1 h": a later one is the Mac's answer, even
-    /// if the guess was off.
-    var baseline: Date? = nil
-    /// Past this the command has expired: the Mac's state is right again.
-    var until: Date
-
-    /// The state shows the change, or that nothing runs any more: then it
-    /// is the Mac's word again.
-    func isShown(by state: MacState) -> Bool {
-        guard state.power == .awake, let session = state.session else { return true }
-        guard let expectedEnd else { return false }
-        if let baseline, session.endsAt > baseline.addingTimeInterval(5) { return true }
-        return session.endsAt >= expectedEnd.addingTimeInterval(-5)
     }
 }

@@ -560,6 +560,7 @@ public final class RemoteController: CommandTarget {
     }
 
     public func startPresence(seconds: TimeInterval?) async throws {
+        if seconds != nil, model.updateInstalling { throw HelperRefusal(message: AppModel.updatingMessage) }
         model.startPresence(duration: seconds)
         if let error = model.lastError, !model.presenceActive { throw HelperRefusal(message: error) }
         publishSoon()

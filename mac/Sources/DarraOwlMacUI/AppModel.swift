@@ -138,11 +138,13 @@ public final class AppModel {
             Task { await self.lid.darkenAgain(saved: status.userChanges, settings: status.settings.lid) }
         }
         // Relaunched by an update while the display was off from the phone:
-        // presence does not light it. Asleep on its own, it may.
-        if UserDefaults.standard.bool(forKey: Self.displayOffFromPhoneKey), CGDisplayIsAsleep(CGMainDisplayID()) != 0 {
+        // presence does not light it. Asleep on its own, it may. Not known
+        // (a version before this flag): kept dark.
+        let offFromPhone = UserDefaults.standard.object(forKey: Self.displayOffFromPhoneKey) as? Bool ?? true
+        if offFromPhone, CGDisplayIsAsleep(CGMainDisplayID()) != 0 {
             presence.setQuiet(true)
         } else {
-            UserDefaults.standard.removeObject(forKey: Self.displayOffFromPhoneKey)
+            UserDefaults.standard.set(false, forKey: Self.displayOffFromPhoneKey)
         }
         // "Sans limite" survives a relaunch, so the Mac stays active after a
         // restart; a timed presence does not.
@@ -153,7 +155,7 @@ public final class AppModel {
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.presence.setQuiet(false)
-                UserDefaults.standard.removeObject(forKey: Self.displayOffFromPhoneKey)
+                UserDefaults.standard.set(false, forKey: Self.displayOffFromPhoneKey)
             }
         }
         // A display plugged or unplugged with the lid closed changes what a
@@ -280,8 +282,13 @@ public final class AppModel {
     /// An update is replacing the app: its quit would end whatever starts
     /// now, so nothing starts until the new copy runs.
     var updateInstalling: Bool {
-        if case .installing = updater.phase { true } else { false }
+        if updater.aboutToInstall { return true }
+        if case .installing = updater.phase { return true }
+        return false
     }
+
+    /// Starts sent to the helper and not answered yet: no update meanwhile.
+    @ObservationIgnored private var startsInFlight = 0
 
     static let updatingMessage = "Mise à jour de DarraOwl en cours : réessaie dans quelques secondes."
 
@@ -294,7 +301,12 @@ public final class AppModel {
 
     /// For the remote controller: a helper request whose refusal throws.
     func sendHelper(_ request: HelperRequest) async throws -> EngineStatus {
-        if updateInstalling, Self.startsSomething(request) { throw HelperRefusal(message: Self.updatingMessage) }
+        let starts = Self.startsSomething(request)
+        if starts {
+            if updateInstalling { throw HelperRefusal(message: Self.updatingMessage) }
+            startsInFlight += 1
+        }
+        defer { if starts { startsInFlight -= 1 } }
         let response = try await client.send(request)
         // A refusal goes back to the phone; the menu does not show it.
         apply(response, showingError: false)
@@ -454,7 +466,7 @@ public final class AppModel {
         // can be deferred right after a wake): no longer quiet.
         if presence.quiet, CGDisplayIsAsleep(CGMainDisplayID()) == 0 {
             presence.setQuiet(false, now: now)
-            UserDefaults.standard.removeObject(forKey: Self.displayOffFromPhoneKey)
+            UserDefaults.standard.set(false, forKey: Self.displayOffFromPhoneKey)
         }
         do {
             try presence.start(until: duration.map { now.addingTimeInterval($0) }, now: now)
@@ -476,7 +488,7 @@ public final class AppModel {
     /// pending, keeps this app running. `byHand`: "Installer" was clicked.
     func mayInstallUpdateNow(byHand: Bool) async -> Bool {
         let timedPresence = presenceActive && presenceUntil != nil
-        guard byHand ? !timedPresence : mayInstallUpdate else { return false }
+        guard byHand ? !timedPresence : mayInstallUpdate, startsInFlight == 0 else { return false }
         // No helper: no session can run.
         guard registration == .enabled else { return true }
         guard let status = try? await client.send(.status, timeout: 2).status else { return false }
@@ -565,14 +577,21 @@ public final class AppModel {
 
     private func perform(_ request: HelperRequest) {
         guard !busy else { return }
-        if updateInstalling, Self.startsSomething(request) {
-            lastError = Self.updatingMessage
-            return
+        let starts = Self.startsSomething(request)
+        if starts {
+            if updateInstalling {
+                lastError = Self.updatingMessage
+                return
+            }
+            startsInFlight += 1
         }
         busy = true
         lastError = nil
         Task {
-            defer { busy = false }
+            defer {
+                busy = false
+                if starts { startsInFlight -= 1 }
+            }
             do {
                 let response = try await client.send(request)
                 apply(response)
