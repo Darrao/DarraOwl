@@ -479,7 +479,17 @@ public final class AppModel {
     func displayOffFromPhone() {
         presence.setQuiet(true)
         UserDefaults.standard.set(true, forKey: Self.displayOffFromPhoneKey)
-        PublicDisplaySleep().requestSleep()
+        let sleeper = PublicDisplaySleep()
+        sleeper.requestSleep()
+        // powerd puts off a display sleep asked right after activity: asked
+        // again at 3 s and 35 s while it is still meant to be off.
+        Task { [weak self] in
+            for wait in [3, 32] {
+                try? await Task.sleep(for: .seconds(wait))
+                guard let self, self.presence.quiet, CGDisplayIsAsleep(CGMainDisplayID()) == 0 else { return }
+                sleeper.requestSleep()
+            }
+        }
     }
 
     /// The open-lid brightness, read only while the user is at the Mac: the

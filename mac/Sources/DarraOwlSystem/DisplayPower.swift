@@ -127,9 +127,14 @@ public final class DisplayServicesDimmer: DisplayDimming {
         _ = IORegistryEntrySetCFProperty(wrangler, "IORequestIdle" as CFString, kCFBooleanTrue)
     }
 
+    /// Lights the display as a touch would, then lets go at once: kept,
+    /// the declared activity never times out when the display is set never
+    /// to sleep, and nothing could turn the display off any more.
     public func wake() {
         var id: IOPMAssertionID = 0
-        _ = IOPMAssertionDeclareUserActivity("DarraOwl : capot ouvert" as CFString, kIOPMUserActiveLocal, &id)
+        if IOPMAssertionDeclareUserActivity("DarraOwl : capot ouvert" as CFString, kIOPMUserActiveLocal, &id) == kIOReturnSuccess, id != 0 {
+            IOPMAssertionRelease(id)
+        }
     }
 
     public func isAsleep() -> Bool {
