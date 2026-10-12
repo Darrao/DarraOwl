@@ -36,7 +36,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Pour scanner le code d'appairage affiché par le Mac.</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Pour confirmer les commandes sensibles : mise en veille du Mac, arrêt d'un conteneur.</string>
+	<string>Pour confirmer les commandes sensibles : mise en veille du Mac, arrêt d'un conteneur ou d'un agent.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Pour joindre ton Mac directement sur le même réseau, de façon chiffrée.</string>
 	<key>NSSupportsLiveActivities</key>

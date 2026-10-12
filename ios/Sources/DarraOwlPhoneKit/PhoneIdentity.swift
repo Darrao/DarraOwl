@@ -2,6 +2,14 @@ import CryptoKit
 import DarraOwlShared
 import Foundation
 
+/// Why a Face ID signature failed.
+public enum BiometricError: Error, Equatable, Sendable {
+    /// The user cancelled or Face ID did not match.
+    case refused
+    /// Face ID was re-enrolled: the Secure Enclave key no longer works.
+    case keyInvalidated
+}
+
 /// Signs with the key that needs Face ID. Live: a Secure Enclave P-256 key
 /// created with `.biometryCurrentSet`; each signature shows the Face ID
 /// prompt. Simulator and tests: a software key.

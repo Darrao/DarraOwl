@@ -49,6 +49,13 @@ enum SharedStore {
         }
     }
 
+    /// Unpaired: the widgets show the "open DarraOwl" placeholder again.
+    static func clear() {
+        guard let defaults = UserDefaults(suiteName: group), defaults.data(forKey: key) != nil else { return }
+        defaults.removeObject(forKey: key)
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
     static func load() -> WidgetSnapshot? {
         guard let data = UserDefaults(suiteName: group)?.data(forKey: key) else { return nil }
         return try? JSONDecoder().decode(WidgetSnapshot.self, from: data)

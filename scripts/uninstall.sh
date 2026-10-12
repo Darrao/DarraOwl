@@ -19,8 +19,8 @@ if [ -x "$APP/Contents/MacOS/DarraOwl" ]; then
   # Ends any session, restores the journal, removes the helper and login item.
   if ! "$APP/Contents/MacOS/DarraOwl" --uninstall; then
     echo
-    echo "Arrêt avant suppression : le composant système n'a pas tout rétabli."
-    echo "Il réessaie seul. Relance ce script dans une minute."
+    echo "Arrêt avant suppression : un point n'a pas pu être rétabli (voir ci-dessus)."
+    echo "Le composant système réessaie seul. Relance ce script dans une minute."
     exit 1
   fi
 else
@@ -28,18 +28,17 @@ else
 fi
 
 echo "==> Vérification de l'état du Mac"
-if pmset -g | awk '$1 == "SleepDisabled" { exit ($2 == "1") ? 0 : 1 }'; then
-  echo "La veille est encore désactivée. Pour la rétablir, lance toi-même :"
+# DarraOwl puts back the values it found: a "disablesleep 1" set before it
+# stays. This is only reported, with the command to change it.
+if pmset -g | awk '$1 == "SleepDisabled" { v = $2 } END { exit (v == "1") ? 0 : 1 }'; then
+  echo "La veille est désactivée sur ce Mac (disablesleep 1)."
+  echo "Si ce n'est pas un réglage à toi, rétablis-la en lançant toi-même :"
   echo "  sudo pmset -a disablesleep 0"
-  status=1
 else
   echo "Veille normale."
 fi
-if [ -e "/Library/Application Support/DarraOwl/journal.json" ]; then
-  echo "Le journal du composant système est encore présent :"
-  echo "  /Library/Application Support/DarraOwl/journal.json"
-  echo "Pour le lire : sudo cat \"/Library/Application Support/DarraOwl/journal.json\""
-  status=1
+if pmset -g custom | awk '$1 == "lowpowermode" && $2 == "1" { found = 1 } END { exit found ? 0 : 1 }'; then
+  echo "Le mode économie d'énergie est activé : s'il ne vient pas de toi, Réglages Système > Batterie."
 fi
 
 if [ "$status" -eq 0 ] && [ -d "$APP" ]; then

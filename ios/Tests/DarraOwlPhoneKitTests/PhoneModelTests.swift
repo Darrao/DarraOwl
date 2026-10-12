@@ -22,16 +22,23 @@ struct ClockSleeper: Sleeper {
 
 @MainActor
 final class FakePhoneStore: PhoneStore {
-    let id: PhoneIdentity
+    var id: PhoneIdentity
     var mac: PairedMac?
     init() {
-        id = PhoneIdentity(deviceID: UUID(), deviceName: "iPhone de test",
-                           agreementKey: .init(), signingKey: .init(), biometric: SoftwareBiometricSigner())
+        id = Self.newIdentity()
+    }
+    static func newIdentity() -> PhoneIdentity {
+        PhoneIdentity(deviceID: UUID(), deviceName: "iPhone de test",
+                      agreementKey: .init(), signingKey: .init(), biometric: SoftwareBiometricSigner())
     }
     func identity() throws -> PhoneIdentity { id }
     func pairedMac() -> PairedMac? { mac }
     func save(_ mac: PairedMac) throws { self.mac = mac }
-    func forgetMac() throws { mac = nil }
+    /// Like the Keychain store: the keys go too, the next ones are new.
+    func forgetMac() throws {
+        mac = nil
+        id = Self.newIdentity()
+    }
 }
 
 @MainActor
@@ -44,6 +51,9 @@ final class FakeDirect: DirectLink {
     var sent: [SignedCommand] = []
     var reply: CommandResult.Status? = .executed
     var connectTo: ConnectionPath?
+    /// Answers inside send(), as the demonstration does.
+    var answerAtOnce = false
+    var stateRequests = 0
 
     func connect(to mac: PairedMac, identity: PhoneIdentity) {
         connects += 1
@@ -55,9 +65,9 @@ final class FakeDirect: DirectLink {
         sent.append(command)
         guard let reply, let env = try? LinkCoding.decoder().decode(CommandEnvelope.self, from: command.payload) else { return }
         let result = CommandResult(commandID: env.id, status: reply, message: nil, at: Date())
-        Task { @MainActor in self.onResult?(result) }
+        if answerAtOnce { onResult?(result) } else { Task { @MainActor in self.onResult?(result) } }
     }
-    func requestState() {}
+    func requestState() { stateRequests += 1 }
 }
 
 @MainActor
@@ -86,14 +96,18 @@ final class FakeCloudLink: CloudLink {
     func pairingResponse(requestID: String) async throws -> PairingResponse? { pairingResponse }
     var subscribed = 0
     func subscribeToEvents() async throws { subscribed += 1 }
+    var unsubscribed = 0
+    func unsubscribeFromEvents() async throws { unsubscribed += 1 }
 }
 
 @MainActor
 final class FakePairingDirect: PairingDirect {
     var response: PairingResponse?
     var calls = 0
+    var lastRequest: PairingRequest?
     func pair(_ request: PairingRequest, invite: PairingInvite) async throws -> PairingResponse {
         calls += 1
+        lastRequest = request
         guard let response else { throw URLError(.cannotConnectToHost) }
         return response
     }
@@ -257,7 +271,118 @@ struct PhoneRig {
         await rig.model.handleNotificationAction(MacEvent.extendAction)
         await rig.model.handleNotificationAction(MacEvent.stopAction)
         let kinds = try rig.cloud.sent.map { try LinkCoding.decoder().decode(CommandEnvelope.self, from: $0.payload).kind }
-        #expect(kinds == [.extendSession(minutes: 60), .stopSession])
+        // No session known: "+1 h" starts an hour instead of failing silently.
+        #expect(kinds == [.startSession(minutes: 60), .stopSession])
+    }
+
+    /// The demonstration answers inside send(): the answer must not be lost
+    /// (every button spun for 70 s, then showed an error).
+    @Test func anAnswerThatComesAtOnceIsNotMissed() async throws {
+        let fresh = PhoneRig()
+        fresh.direct.connectTo = .local
+        fresh.direct.answerAtOnce = true
+        let rig = await fresh.paired()
+        await rig.model.send(.extendSession(minutes: 30))
+        #expect(rig.model.outcome == .done("Prolonger de 30 min : fait."))
+        #expect(rig.cloud.sent.isEmpty, "no iCloud fallback")
+    }
+
+    /// Unpair, pair again in the same run: the new keys are the ones sent,
+    /// so the phone still works after the next launch.
+    @Test func pairingAgainAfterUnpairingUsesTheNewKeys() async throws {
+        let rig = await PhoneRig().paired()
+        let before = try rig.store.identity().deviceID
+        rig.model.unpair()
+        #expect(rig.cloud.unsubscribed == 0 || rig.cloud.unsubscribed == 1)
+        rig.pairing.response = PairingResponse(accepted: true, macID: rig.macID, macName: "MacBook", message: nil)
+        await rig.model.pair(url: try rig.invite().url())
+        let sentID = rig.pairing.lastRequest?.deviceID
+        #expect(sentID == (try rig.store.identity().deviceID))
+        #expect(sentID != before)
+    }
+
+    @Test func aMacGoingToSleepShowsAsleepEvenWithTheLinkOpen() async throws {
+        let fresh = PhoneRig()
+        fresh.direct.connectTo = .local
+        let rig = await fresh.paired()
+        rig.direct.onState?(rig.state(power: .goingToSleep))
+        #expect(rig.model.presence == .asleep(since: rig.clock.now))
+    }
+
+    @Test func aSilentDirectLinkIsDroppedAndICloudTakesOver() async throws {
+        let fresh = PhoneRig()
+        fresh.direct.connectTo = .local
+        let rig = await fresh.paired()
+        #expect(rig.model.directPath == .local)
+        rig.direct.connectTo = nil
+        rig.clock.advance(PhoneModel.directSilence + 1)
+        rig.cloud.state = (rig.state(), nil)
+        await rig.model.tick()
+        #expect(rig.model.directPath == nil)
+        #expect(rig.model.presence == .online(.icloud))
+    }
+
+    @Test func anOlderICloudStateDoesNotReplaceANewerOne() async throws {
+        let fresh = PhoneRig()
+        fresh.direct.connectTo = .local
+        let rig = await fresh.paired()
+        rig.direct.onState?(rig.state(at: rig.clock.now))
+        rig.cloud.state = (rig.state(power: .asleep, at: rig.clock.now.addingTimeInterval(-300)), nil)
+        await rig.model.refreshFromCloud()
+        #expect(rig.model.state?.power == .awake)
+    }
+
+    @Test(arguments: [
+        Endpoints(port: 60000, local: ["8.8.8.8"], tailscale: nil),
+        Endpoints(port: 60000, local: ["evil.example.com"], tailscale: nil),
+        Endpoints(port: 60000, local: ["192.168.1.20"], tailscale: "1.2.3.4"),
+        Endpoints(port: 0, local: ["192.168.1.20"], tailscale: nil),
+    ])
+    func linksPointingOutsideAreRefused(endpoints: Endpoints) async throws {
+        let rig = PhoneRig()
+        rig.pairing.response = PairingResponse(accepted: true, macID: rig.macID, macName: "MacBook", message: nil)
+        await rig.model.pair(url: try rig.invite(endpoints: endpoints).url())
+        #expect(rig.model.mac == nil)
+        #expect(rig.pairing.calls == 0)
+        #expect(rig.model.pairingError != nil)
+    }
+
+    @Test func aLinkValidForYearsIsRefused() async throws {
+        let rig = PhoneRig()
+        var invite = rig.invite()
+        invite.expiresAt = rig.clock.now.addingTimeInterval(86_400 * 365)
+        await rig.model.pair(url: try invite.url())
+        #expect(rig.model.pairingError == "Ce code n'a pas une durée de validité normale.")
+    }
+
+    @Test func thePairingPortIsNotKeptAsTheMainOne() async throws {
+        let rig = PhoneRig()
+        rig.pairing.response = PairingResponse(accepted: true, macID: rig.macID, macName: "MacBook", message: nil)
+        await rig.model.pair(url: try rig.invite().url())
+        #expect(rig.model.mac?.endpoints?.port == LinkProtocol.defaultPort)
+        let withAnswer = PhoneRig()
+        withAnswer.pairing.response = PairingResponse(accepted: true, macID: withAnswer.macID, macName: "MacBook", message: nil,
+                                                      endpoints: Endpoints(port: 52600, local: ["192.168.1.20"], tailscale: nil))
+        await withAnswer.model.pair(url: try withAnswer.invite().url())
+        #expect(withAnswer.model.mac?.endpoints?.port == 52600)
+    }
+
+    @Test func aSuccessMessageGoesAfterAFewSeconds() async throws {
+        let rig = await PhoneRig().paired()
+        await rig.model.send(.stopSession)
+        #expect(rig.model.outcome != nil)
+        rig.clock.advance(PhoneModel.successShown + 1)
+        await rig.model.tick()
+        #expect(rig.model.outcome == nil)
+    }
+
+    @Test func fireSendsBothWays() async throws {
+        let fresh = PhoneRig()
+        fresh.direct.connectTo = .local
+        let rig = await fresh.paired()
+        #expect(await rig.model.fire(.extendSession(minutes: 60)))
+        #expect(rig.direct.sent.count == 1)
+        #expect(rig.cloud.sent.count == 1)
     }
 
     @Test func refusalIsShown() async throws {

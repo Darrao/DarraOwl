@@ -12,9 +12,10 @@ final class WatchModel: NSObject, WCSessionDelegate {
 
     private(set) var snapshot: WatchLink.Snapshot?
     private(set) var busy = false
-    /// Last command's answer, shown under the buttons.
+    /// Last command's answer, shown under the buttons for a few seconds.
     private(set) var message: String?
     private(set) var failed = false
+    @ObservationIgnored private var messageToken = 0
     let demo = CommandLine.arguments.contains("-DarraOwlDemo")
     @ObservationIgnored private var started = false
 
@@ -38,29 +39,51 @@ final class WatchModel: NSObject, WCSessionDelegate {
         if let snapshot = reply.snapshot { apply(snapshot) }
     }
 
-    /// Returns true when the Mac ran it.
+    /// Returns true when the Mac ran it (or the request left, when the Mac
+    /// answers through iCloud).
     @discardableResult
     func send(_ kind: CommandKind) async -> Bool {
         start()
-        guard !busy else { return false }
+        guard !busy else {
+            show("Une commande est déjà en cours.", failed: true)
+            return false
+        }
         busy = true
         defer { busy = false }
-        message = "\(kind.label)…"
-        failed = false
+        show("\(kind.label)…", failed: false, keep: true)
         if demo {
             snapshot = WatchDemo.apply(kind, to: snapshot)
-            message = "\(kind.label) : fait."
+            show("\(kind.label) : fait.", failed: false)
             return true
         }
         guard let reply = await request(.command(kind)) else {
-            failed = true
-            message = "iPhone injoignable."
+            show("iPhone injoignable.", failed: true)
             return false
         }
         if let snapshot = reply.snapshot { apply(snapshot) }
-        failed = !reply.ok
-        message = reply.message
+        show(reply.message, failed: !reply.ok)
         return reply.ok
+    }
+
+    /// A message goes after a few seconds (a failure stays longer).
+    private func show(_ text: String?, failed: Bool, keep: Bool = false) {
+        messageToken += 1
+        let token = messageToken
+        message = text
+        self.failed = failed
+        guard !keep, text != nil else { return }
+        Task {
+            try? await Task.sleep(for: .seconds(failed ? 10 : 5))
+            if self.messageToken == token { self.message = nil }
+        }
+    }
+
+    /// Background delivery from the iPhone (watchOS wakes the app for it).
+    func drainPending() async {
+        start()
+        for _ in 0..<20 where WCSession.isSupported() && WCSession.default.hasContentPending {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
     }
 
     private func request(_ request: WatchLink.Request) async -> WatchLink.Reply? {
@@ -72,10 +95,13 @@ final class WatchModel: NSObject, WCSessionDelegate {
         guard session.activationState == .activated, session.isReachable, let data = try? WatchLink.encode(request) else { return nil }
         return await withCheckedContinuation { continuation in
             let once = ResumeOnce(continuation)
-            session.sendMessage([WatchLink.key: data], replyHandler: { reply in
+            // @Sendable: WatchConnectivity calls these on its own queue. Left
+            // to inference they would be main-actor closures, and Swift 6
+            // stops the app when one runs elsewhere.
+            session.sendMessage([WatchLink.key: data], replyHandler: { @Sendable reply in
                 let decoded = (reply[WatchLink.key] as? Data).flatMap { try? WatchLink.decode(WatchLink.Reply.self, from: $0) }
                 once.resume(decoded)
-            }, errorHandler: { _ in
+            }, errorHandler: { @Sendable _ in
                 once.resume(nil)
             })
         }
@@ -110,6 +136,12 @@ final class WatchModel: NSObject, WCSessionDelegate {
 
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
         let context = Context(value: applicationContext)
+        Task { @MainActor in self.receive(context.value) }
+    }
+
+    /// The complication's update: the session started, moved or ended.
+    nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        let context = Context(value: userInfo)
         Task { @MainActor in self.receive(context.value) }
     }
 }

@@ -5,7 +5,11 @@ import DarraOwlShared
 #endif
 
 // Buttons on the Live Activity and the widget, and Siri phrases. They run in
-// the app's process (LiveActivityIntent), where the signing keys are.
+// the app's process (LiveActivityIntent), where the signing keys are. The
+// two buttons are compiled into the widget extension too (the Live Activity
+// needs their types); everything Siri offers lives in the app only, so Siri
+// never picks the extension's copy. The Mac's answer is not awaited: the
+// dialogs say the request left, not that it was done.
 
 struct ExtendSessionIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Prolonger la session d'une heure"
@@ -17,7 +21,7 @@ struct ExtendSessionIntent: LiveActivityIntent {
         return .result(dialog: "")
         #else
         let sent = await PhoneRuntime.shared.fire(.extendSession(minutes: 60))
-        return .result(dialog: sent ? "Le Mac reste éveillé une heure de plus." : "Le Mac n'est pas joignable.")
+        return .result(dialog: sent ? "Demande envoyée : une heure de plus." : "Le Mac n'est pas joignable.")
         #endif
     }
 }
@@ -25,6 +29,8 @@ struct ExtendSessionIntent: LiveActivityIntent {
 struct StopSessionIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Arrêter la session"
     static let description = IntentDescription("L'ordinateur retrouve sa veille normale.")
+    /// Like the notification's button: not from a locked iPhone.
+    static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
@@ -32,11 +38,12 @@ struct StopSessionIntent: LiveActivityIntent {
         return .result(dialog: "")
         #else
         let sent = await PhoneRuntime.shared.fire(.stopSession)
-        return .result(dialog: sent ? "Session arrêtée." : "Le Mac n'est pas joignable.")
+        return .result(dialog: sent ? "Demande envoyée : la session s'arrête." : "Le Mac n'est pas joignable.")
         #endif
     }
 }
 
+#if !WIDGET_EXTENSION
 struct StartSessionIntent: AppIntent {
     static let title: LocalizedStringResource = "Démarrer une session"
     static let description = IntentDescription("Garde l'ordinateur éveillé quelques heures.")
@@ -46,12 +53,8 @@ struct StartSessionIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        #if WIDGET_EXTENSION
-        return .result(dialog: "")
-        #else
         let sent = await PhoneRuntime.shared.fire(.startSession(minutes: hours * 60))
-        return .result(dialog: sent ? "Le Mac reste éveillé \(hours) h." : "Le Mac n'est pas joignable.")
-        #endif
+        return .result(dialog: sent ? "Demande envoyée : \(hours) h d'éveil." : "Le Mac n'est pas joignable.")
     }
 }
 
@@ -61,11 +64,7 @@ struct SessionStatusIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        #if WIDGET_EXTENSION
-        return .result(dialog: "")
-        #else
-        return .result(dialog: IntentDialog(stringLiteral: await PhoneRuntime.shared.spokenStatus()))
-        #endif
+        .result(dialog: IntentDialog(stringLiteral: await PhoneRuntime.shared.spokenStatus()))
     }
 }
 
@@ -89,3 +88,4 @@ struct DarraOwlShortcuts: AppShortcutsProvider {
         ], shortTitle: "État de la session", systemImageName: "laptopcomputer")
     }
 }
+#endif

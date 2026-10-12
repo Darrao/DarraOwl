@@ -28,9 +28,25 @@ public struct SecureEnclaveSigner: BiometricSigner {
 
     public func sign(_ payload: Data, reason: String) async throws -> Data {
         let context = LAContext()
-        try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)
-        let key = try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: dataRepresentation, authenticationContext: context)
-        return try key.signature(for: payload).derRepresentation
+        do {
+            try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)
+        } catch {
+            throw BiometricError.refused
+        }
+        // Face ID passed but the key fails: it was invalidated by a change of
+        // the enrolled faces.
+        do {
+            let key = try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: dataRepresentation, authenticationContext: context)
+            return try key.signature(for: payload).derRepresentation
+        } catch {
+            throw BiometricError.keyInvalidated
+        }
+    }
+}
+
+public struct UnreadableIdentity: Error, LocalizedError {
+    public var errorDescription: String? {
+        "les clés de cet iPhone sont illisibles. Désappaire-le, puis appaire-le à nouveau."
     }
 }
 
@@ -59,8 +75,12 @@ public final class KeychainPhoneStore: PhoneStore {
 
     public func identity() throws -> PhoneIdentity {
         if let cached { return cached }
-        if let data = try read(Self.identityService), let s = try? JSONDecoder().decode(Stored.self, from: data),
-           let identity = try? make(s) {
+        if let data = try read(Self.identityService) {
+            // Never replaced silently: new keys would unpair this iPhone from
+            // the Mac without a word.
+            guard let s = try? JSONDecoder().decode(Stored.self, from: data), let identity = try? make(s) else {
+                throw UnreadableIdentity()
+            }
             cached = identity
             return identity
         }

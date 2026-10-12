@@ -50,7 +50,9 @@ xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist "$OPTIONS"
 
 APP="$OUT/DarraOwl.app"
 codesign --verify --strict --deep "$APP"
-codesign -dv "$APP" 2>&1 | grep -q "Developer ID Application" || { echo "L'app n'est pas signée Developer ID." >&2; exit 1; }
+# -dvv: only then does codesign print the Authority lines.
+SIGNATURE="$(codesign -dvv "$APP" 2>&1)"
+grep -q "Authority=Developer ID Application" <<<"$SIGNATURE" || { echo "L'app n'est pas signée Developer ID." >&2; exit 1; }
 
 ZIP="$OUT/DarraOwl-$VERSION.zip"
 ditto -c -k --keepParent "$APP" "$ZIP"
@@ -59,7 +61,8 @@ xcrun notarytool submit "$ZIP" --keychain-profile DarraOwl --wait
 xcrun stapler staple "$APP"
 spctl --assess --type execute --verbose "$APP"
 rm -f "$ZIP" && ditto -c -k --keepParent "$APP" "$ZIP"
-shasum -a 256 "$ZIP" | tee "$ZIP.sha256"
+# Hashed from inside the folder, so `shasum -c` works for whoever downloads it.
+(cd "$OUT" && shasum -a 256 "DarraOwl-$VERSION.zip" | tee "DarraOwl-$VERSION.zip.sha256")
 
 if [ "$PUBLISH" -eq 1 ]; then
   gh release create "v$VERSION" "$ZIP" "$ZIP.sha256" --title "DarraOwl $VERSION" --notes "$(cat <<NOTES

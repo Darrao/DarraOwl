@@ -73,6 +73,7 @@ struct Quiet: EngineLogging {
     func sendPairing(_ request: PairingRequest) async throws -> String { throw URLError(.notConnectedToInternet) }
     func pairingResponse(requestID: String) async throws -> PairingResponse? { nil }
     func subscribeToEvents() async throws {}
+    func unsubscribeFromEvents() async throws {}
 }
 
 var failures = 0

@@ -12,12 +12,12 @@ struct DarraOwlPhoneApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(runtime: runtime)
-                .onOpenURL { url in
-                    Task { await model.pair(url: url) }
-                }
+                // A link can come from anywhere: it is shown and confirmed
+                // before any pairing (see RootView).
+                .onOpenURL { url in runtime.pendingLink = url }
                 .task { await PhoneRuntime.shared.start() }
                 .onChange(of: model.mac != nil) { _, paired in
-                    if paired, !DemoMode.isOn { Task { await NotificationPermission.request() } }
+                    if paired, !runtime.isDemo { Task { await NotificationPermission.request() } }
                 }
                 .task(id: phase) {
                     // Refresh while the app is on screen.

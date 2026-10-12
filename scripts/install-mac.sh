@@ -14,8 +14,15 @@ if [ -e /etc/sudoers.d/insomnia ] || [ -e "$HOME/Library/LaunchAgents/com.insomn
 fi
 
 # Replacing the app during a session would leave the running helper
-# unverifiable by the new app until the session ends.
-if pmset -g | awk '$1 == "SleepDisabled" { exit ($2 == "1") ? 0 : 1 }'; then
+# unverifiable by the new app until the session ends. The installed CLI
+# knows; without it, a disabled sleep is taken as a session.
+CLI="/Applications/DarraOwl.app/Contents/Helpers/darraowl"
+if [ -x "$CLI" ] && STATUS="$("$CLI" status 2>/dev/null)"; then
+  if grep -q "^Éveillé" <<<"$STATUS"; then
+    echo "Une session DarraOwl est en cours : arrête-la (menu ou darraowl stop), puis relance l'installation." >&2
+    exit 1
+  fi
+elif pmset -g | awk '$1 == "SleepDisabled" { v = $2 } END { exit (v == "1") ? 0 : 1 }'; then
   echo "La veille est désactivée : une session semble en cours." >&2
   echo "Arrête-la depuis le menu de DarraOwl, puis relance l'installation." >&2
   exit 1

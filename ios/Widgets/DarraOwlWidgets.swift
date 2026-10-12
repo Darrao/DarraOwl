@@ -71,8 +71,13 @@ struct LockScreenActivityView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(context.state.following.map { "\(context.attributes.macName) · tant que \($0) tourne" } ?? context.attributes.macName)
                     .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                Countdown(endsAt: context.state.endsAt)
-                    .font(.system(size: 30, weight: .light).monospacedDigit())
+                if context.isStale {
+                    Text("Heure de fin passée").font(.title3)
+                    Text("Ouvre DarraOwl pour l'état du Mac.").font(.caption)
+                } else {
+                    Countdown(endsAt: context.state.endsAt)
+                        .font(.system(size: 30, weight: .light).monospacedDigit())
+                }
                 HStack(spacing: 10) {
                     BatteryLabel(percent: context.state.battery, charging: context.state.charging)
                     if context.state.lidClosed { Label("capot fermé", systemImage: "laptopcomputer").font(.caption) }
@@ -128,7 +133,7 @@ struct AgentsLine: View {
 
     var body: some View {
         if waiting > 0 {
-            Label(waiting == 1 ? "Claude attend ta validation" : "\(waiting) agents attendent", systemImage: "hand.raised")
+            Label(waiting == 1 ? "Claude attend ta validation" : "\(waiting) agents attendent ta validation", systemImage: "hand.raised")
                 .font(.caption).foregroundStyle(.orange)
         } else if running > 0 {
             Label(running == 1 ? "1 agent au travail" : "\(running) agents au travail", systemImage: "terminal")
@@ -151,12 +156,17 @@ struct StatusProvider: TimelineProvider {
         completion(StatusEntry(date: Date(), snapshot: context.isPreview ? .placeholder : SharedStore.load()))
     }
 
+    /// One entry now and one at the session's end, so the countdown gives
+    /// way to "Veille normale" on time without a reload. The app reloads the
+    /// timeline on every change.
     func getTimeline(in context: Context, completion: @escaping (Timeline<StatusEntry>) -> Void) {
-        let entry = StatusEntry(date: Date(), snapshot: SharedStore.load())
-        // The app reloads the timeline on every change; refresh at the end of
-        // the session too, so the countdown does not linger.
-        let next = entry.snapshot?.sessionEndsAt.map { max($0, Date().addingTimeInterval(60)) } ?? Date().addingTimeInterval(1800)
-        completion(Timeline(entries: [entry], policy: .after(next)))
+        let now = Date()
+        let snapshot = SharedStore.load()
+        var entries = [StatusEntry(date: now, snapshot: snapshot)]
+        if let end = snapshot?.sessionEndsAt, end > now {
+            entries.append(StatusEntry(date: end, snapshot: snapshot))
+        }
+        completion(Timeline(entries: entries, policy: .after(now.addingTimeInterval(1800))))
     }
 }
 
@@ -182,7 +192,7 @@ struct MacStatusWidgetView: View {
             case .accessoryCircular:
                 ZStack {
                     AccessoryWidgetBackground()
-                    if let end = s.sessionEndsAt, end > Date() {
+                    if let end = s.sessionEndsAt, end > entry.date {
                         Countdown(endsAt: end).font(.caption2.monospacedDigit()).minimumScaleFactor(0.6)
                     } else {
                         OwlShape(awake: false).stroke(lineWidth: 1.4).padding(10)
@@ -191,10 +201,10 @@ struct MacStatusWidgetView: View {
             case .accessoryRectangular:
                 VStack(alignment: .leading, spacing: 1) {
                     Text(s.macName).font(.headline).lineLimit(1)
-                    if let end = s.sessionEndsAt, end > Date() {
+                    if let end = s.sessionEndsAt, end > entry.date {
                         HStack(spacing: 4) { Text("Éveillé"); Countdown(endsAt: end).monospacedDigit() }
                     } else {
-                        Text(s.presence).lineLimit(1)
+                        Text(presence(s)).lineLimit(1)
                     }
                     if let b = s.battery { Text("Batterie \(b) %") }
                 }
@@ -210,22 +220,27 @@ struct MacStatusWidgetView: View {
         }
     }
 
+    /// "En ligne…" only while it is recent: an old one says when it was true.
+    private func presence(_ s: WidgetSnapshot) -> String {
+        entry.date.timeIntervalSince(s.updatedAt) < 300 ? s.presence : "Vu à \(s.updatedAt.formatted(date: .omitted, time: .shortened))"
+    }
+
     private func full(_ s: WidgetSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                OwlShape(awake: s.sessionEndsAt.map { $0 > Date() } ?? false).stroke(lineWidth: 1.6).frame(width: 22, height: 22)
+                OwlShape(awake: s.sessionEndsAt.map { $0 > entry.date } ?? false).stroke(lineWidth: 1.6).frame(width: 22, height: 22)
                 Text(s.macName).font(.caption).lineLimit(1)
                 Spacer()
                 Circle().fill(s.online ? Color.green : Color.gray).frame(width: 7, height: 7)
             }
             Spacer(minLength: 0)
-            if let end = s.sessionEndsAt, end > Date() {
+            if let end = s.sessionEndsAt, end > entry.date {
                 Countdown(endsAt: end).font(.system(size: family == .systemSmall ? 28 : 34, weight: .light).monospacedDigit())
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text("Fin à \(end.formatted(date: .omitted, time: .shortened))").font(.caption2).foregroundStyle(.secondary)
             } else {
                 Text("Veille normale").font(.title3)
-                Text(s.presence).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                Text(presence(s)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
             HStack(spacing: 8) {
                 BatteryLabel(percent: s.battery, charging: s.charging)

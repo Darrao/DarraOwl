@@ -94,8 +94,13 @@ private final class DemoDirect: DirectLink {
         case let .setMuted(value): muted = value
         default: break
         }
-        onResult?(CommandResult(commandID: env.id, status: .executed, message: nil, at: Date()))
-        onState?(DemoMode.state(sessionEnd: end, watching: watching, presence: presence, muted: muted))
+        let result = CommandResult(commandID: env.id, status: .executed, message: nil, at: Date())
+        let state = DemoMode.state(sessionEnd: end, watching: watching, presence: presence, muted: muted)
+        // Like a real Mac: the answer comes a moment later, not inside send().
+        Task { @MainActor in
+            self.onResult?(result)
+            self.onState?(state)
+        }
     }
 
     func requestState() { onState?(DemoMode.state(sessionEnd: end, watching: watching, presence: presence, muted: muted)) }
@@ -110,6 +115,7 @@ private final class DemoCloud: CloudLink {
     func sendPairing(_ request: PairingRequest) async throws -> String { "" }
     func pairingResponse(requestID: String) async throws -> PairingResponse? { nil }
     func subscribeToEvents() async throws {}
+    func unsubscribeFromEvents() async throws {}
 }
 
 @MainActor

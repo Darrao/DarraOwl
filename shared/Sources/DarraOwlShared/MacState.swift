@@ -99,12 +99,14 @@ public struct MacState: Codable, Equatable, Sendable {
     public var presence: Presence?
     /// The default output is muted.
     public var muted: Bool?
+    /// Docker Desktop is open (nil: older Mac).
+    public var dockerRunning: Bool?
 
     public init(
         macID: UUID, macName: String, updatedAt: Date, power: Power, session: Session?,
         powerSnapshot: PowerSnapshot?, lowPowerActive: Bool, pausedApps: [String], network: Network?,
         agents: [Agent] = [], containers: [Container] = [], dockerPaused: Bool, settings: PowerSettings,
-        protocolVersion: Int = LinkProtocol.version, presence: Presence? = nil, muted: Bool? = nil
+        protocolVersion: Int = LinkProtocol.version, presence: Presence? = nil, muted: Bool? = nil, dockerRunning: Bool? = nil
     ) {
         self.macID = macID
         self.macName = macName
@@ -122,6 +124,7 @@ public struct MacState: Codable, Equatable, Sendable {
         self.protocolVersion = protocolVersion
         self.presence = presence
         self.muted = muted
+        self.dockerRunning = dockerRunning
     }
 }
 
@@ -161,9 +164,11 @@ public struct Endpoints: Codable, Equatable, Sendable {
         return bytes.count == 4 ? bytes : nil
     }
 
-    /// 10/8, 172.16/12, 192.168/16, 169.254/16.
+    /// 10/8, 172.16/12, 192.168/16, 169.254/16, and 127/8 (the phone
+    /// itself: harmless, and what the end-to-end check uses).
     static func isPrivate(_ b: [UInt8]) -> Bool {
-        b[0] == 10 || (b[0] == 172 && (16...31).contains(b[1])) || (b[0] == 192 && b[1] == 168) || (b[0] == 169 && b[1] == 254)
+        b[0] == 10 || (b[0] == 172 && (16...31).contains(b[1])) || (b[0] == 192 && b[1] == 168)
+            || (b[0] == 169 && b[1] == 254) || b[0] == 127
     }
 
     /// 100.64/10.

@@ -328,7 +328,8 @@ public final class RemoteController: CommandTarget {
             dockerPaused: status.frozen.contains { $0.bundleID == PausePolicy.dockerBundleID },
             settings: status.settings,
             presence: MacState.Presence(active: model.presenceActive, until: model.presenceUntil),
-            muted: (try? audio.readDefaultOutput())?.muted
+            muted: (try? audio.readDefaultOutput())?.muted,
+            dockerRunning: NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == PausePolicy.dockerBundleID }
         )
     }
 

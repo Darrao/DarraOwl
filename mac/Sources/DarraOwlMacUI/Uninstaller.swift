@@ -78,8 +78,8 @@ enum Uninstaller {
                 try ClaudeCodeSetup.remove()
                 print("Hooks de DarraOwl retirés de \(ClaudeCodeSetup.file.path) (copie : \(ClaudeCodeSetup.backup.lastPathComponent)).")
             } catch {
-                clean = false
-                print("Hooks de Claude Code : \(error.localizedDescription) Retire à la main les entrées 127.0.0.1:\(HookServer.port).")
+                // Not a reason to keep DarraOwl installed: said, with what to do.
+                print("Hooks de Claude Code non retirés (\(error.localizedDescription)). Dans \(ClaudeCodeSetup.file.path), retire les deux entrées \"http://127.0.0.1:\(String(HookServer.port))/hooks/claude\".")
             }
         }
         HookToken.remove()

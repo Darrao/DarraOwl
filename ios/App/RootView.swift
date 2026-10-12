@@ -1,17 +1,38 @@
+import AVFoundation
 import DarraOwlPhoneKit
 import DarraOwlShared
 import SwiftUI
 import VisionKit
 
 struct RootView: View {
-    let runtime: PhoneRuntime
+    @Bindable var runtime: PhoneRuntime
 
     var body: some View {
-        if runtime.model.mac == nil {
-            OnboardingView(model: runtime.model) { runtime.enterDemo() }
-        } else {
-            MacView(model: runtime.model, demo: runtime.isDemo) { runtime.leaveDemo() }
+        Group {
+            if runtime.model.mac == nil {
+                OnboardingView(model: runtime.model) { runtime.enterDemo() }
+            } else {
+                MacView(model: runtime.model, demo: runtime.isDemo) { runtime.leaveDemo() }
+            }
         }
+        .confirmationDialog(linkTitle, isPresented: Binding(get: { runtime.pendingLink != nil }, set: { if !$0 { runtime.pendingLink = nil } }),
+                            titleVisibility: .visible, presenting: runtime.pendingLink) { url in
+            Button("Appairer") { Task { await runtime.pairConfirmed(url) } }
+            Button("Annuler", role: .cancel) { runtime.pendingLink = nil }
+        } message: { _ in
+            Text(linkMessage)
+        }
+    }
+
+    private var linkTitle: String {
+        guard let url = runtime.pendingLink, let invite = try? PairingInvite(url: url) else { return "Appairer avec ce Mac ?" }
+        return "Appairer avec « \(invite.macName) » ?"
+    }
+
+    private var linkMessage: String {
+        let current = runtime.isDemo ? nil : runtime.model.mac?.macName
+        let replace = current.map { " Il remplacera « \($0) »." } ?? ""
+        return "Ce lien a été ouvert depuis une autre app. Ne l'accepte que si tu viens d'afficher ce code sur ton Mac.\(replace)"
     }
 }
 
@@ -63,14 +84,20 @@ struct OnboardingView: View {
                     .buttonStyle(.glass)
                     .controlSize(.large)
                     if model.isPairing {
-                        HStack { ProgressView(); Text("Appairage en cours…") }.foregroundStyle(.secondary)
+                        HStack {
+                            ProgressView()
+                            Text("Appairage en cours…")
+                            Spacer()
+                            Button("Annuler") { model.cancelPairing() }
+                        }
+                        .foregroundStyle(.secondary)
                     }
                     if let error = model.pairingError {
                         Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
                     }
                 }
 
-                Text("Le code ne sert qu'une fois et expire au bout de 5 minutes. Les clés restent dans le trousseau de cet iPhone, rien ne passe par un serveur tiers.")
+                Text("Le code ne sert qu'une fois et expire au bout de 5 minutes. Les clés restent dans le trousseau de cet iPhone. Aucun serveur du développeur : seulement ton Mac, cet iPhone et ton iCloud.")
                     .font(.footnote).foregroundStyle(.secondary)
                 Button("Pas encore de Mac prêt ? Voir une démonstration", action: showDemo)
                     .font(.footnote)
@@ -114,7 +141,11 @@ struct QRScanner: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> DataScannerViewController {
         let vc = DataScannerViewController(recognizedDataTypes: [.barcode(symbologies: [.qr])], isHighlightingEnabled: true)
         vc.delegate = context.coordinator
-        try? vc.startScanning()
+        // Started once the camera is allowed: on the first use, starting
+        // before the answer fails and is never retried.
+        Task { @MainActor in
+            if await AVCaptureDevice.requestAccess(for: .video) { try? vc.startScanning() }
+        }
         return vc
     }
 
@@ -168,7 +199,7 @@ struct MacView: View {
                         if !state.agents.isEmpty { agentsBlock(state) }
                         if state.presence != nil { controlsBlock(state) }
                         macBlock(state)
-                        if !state.containers.isEmpty || state.dockerPaused { dockerBlock(state) }
+                        if !state.containers.isEmpty || state.dockerPaused || state.dockerRunning == true { dockerBlock(state) }
                     }
                     if let outcome = model.outcome { outcomeLine(outcome) }
                     footerActions
@@ -181,7 +212,7 @@ struct MacView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel("Réglages")
-                        .disabled(model.state == nil || !online)
+                        .disabled(model.state == nil || !online || model.isBusy)
                 }
             }
             .sheet(isPresented: $showSettings) {
@@ -401,7 +432,7 @@ struct MacView: View {
                     controlButton("Pause des apps", symbol: "pause.fill") { await model.send(.pauseApps) }
                 }
             }
-            Text("Toujours actif : le Mac ne se met pas en veille et ton statut Teams reste « Disponible », capot ouvert. Pause des apps : Slack, WhatsApp, Discord, pendant une session.")
+            Text("Toujours actif : le Mac ne se met pas en veille et ton statut Teams reste « Disponible », capot ouvert. Pause des apps : celles choisies dans les réglages du Mac, pendant une session.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .disabled(model.isBusy || !online)
@@ -473,14 +504,17 @@ struct MacView: View {
             }
             .buttonStyle(.glass)
             .controlSize(.large)
-            .disabled(!online)
+            .disabled(!online || model.isBusy)
             Text("Arrête la session, rétablit tout, puis met le Mac en veille. Demande Face ID.")
                 .font(.caption).foregroundStyle(.secondary)
             Button("Désappairer cet iPhone", role: .destructive) { confirmUnpair = true }
                 .font(.footnote)
                 .padding(.top, 12)
                 .confirmationDialog("Désappairer cet iPhone ?", isPresented: $confirmUnpair, titleVisibility: .visible) {
-                    Button("Désappairer", role: .destructive) { model.unpair() }
+                    Button("Désappairer", role: .destructive) {
+                        // In the demonstration there is nothing to unpair: back to the start.
+                        if demo { leaveDemo() } else { model.unpair() }
+                    }
                 } message: {
                     Text("Sur le Mac, retire aussi cet iPhone dans DarraOwl > iPhone… pour couper son accès.")
                 }
@@ -590,15 +624,22 @@ struct SettingsSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Envoyer") {
                         let original = model.state?.settings
+                        var changes: [CommandKind] = []
+                        if settings.lid != original?.lid { changes.append(.updateLidSettings(settings.lid)) }
+                        if settings.alerts != original?.alerts { changes.append(.updateAlerts(settings.alerts)) }
+                        if settings.lowPowerFloor != original?.lowPowerFloor || settings.endFloor != original?.endFloor {
+                            changes.append(.updateBatteryFloors(lowPower: settings.lowPowerFloor, end: settings.endFloor))
+                        }
                         Task {
-                            if settings.lid != original?.lid { await model.send(.updateLidSettings(settings.lid)) }
-                            if settings.alerts != original?.alerts { await model.send(.updateAlerts(settings.alerts)) }
-                            if settings.lowPowerFloor != original?.lowPowerFloor || settings.endFloor != original?.endFloor {
-                                await model.send(.updateBatteryFloors(lowPower: settings.lowPowerFloor, end: settings.endFloor))
+                            // One after the other; the first failure stops the rest and stays on screen.
+                            for change in changes {
+                                await model.send(change)
+                                if case .failed? = model.outcome { break }
                             }
                         }
                         dismiss()
                     }
+                    .disabled(model.isBusy)
                 }
             }
         }

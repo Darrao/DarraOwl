@@ -18,14 +18,15 @@ d'audience, ni pistage.
 
 ## Ce qui passe par ta base iCloud privée
 
-Seulement si la connexion directe entre l'iPhone et le Mac n'est pas
-possible :
+Seulement quand un iPhone est appairé. L'état du Mac y est publié à chaque
+changement et au moins chaque minute, pour que l'iPhone le voie même loin du
+Mac ; les commandes y passent quand la connexion directe ne répond pas :
 
 - l'état du Mac : session en cours, batterie, température, type de réseau et
   data consommée, noms des agents de code en cours (claude, codex, gemini) et
-  de leurs dossiers de projet (ces noms peuvent être masqués dans les
-  réglages), conteneurs Docker en cours, et en mode agent le nom de la
-  commande suivie (jamais ses arguments) ;
+  de leurs dossiers de projet, noms des conteneurs Docker en cours (le masquage
+  des noms de projets, dans les réglages, les remplace aussi), et en mode agent
+  le nom de la commande suivie (jamais ses arguments) ;
 - les adresses réseau du Mac (locale, Tailscale), pour la connexion directe ;
 - les commandes envoyées par l'iPhone, signées, et leurs résultats ;
 - le titre et le texte des notifications (par exemple « Claude a fini », avec

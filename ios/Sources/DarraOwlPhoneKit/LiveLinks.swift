@@ -49,10 +49,16 @@ final class FramedConnection {
         connection.cancel()
     }
 
+    /// Called once. The handlers go with it: they capture this connection,
+    /// and keeping them would keep every finished attempt in memory.
     private func end() {
         guard !ended else { return }
         ended = true
-        onEnd?()
+        let handler = onEnd
+        onReady = nil
+        onMessage = nil
+        onEnd = nil
+        handler?()
     }
 
     private func receive() {
@@ -88,6 +94,8 @@ public final class NWDirectLink: DirectLink {
     private var active: FramedConnection?
     private var attempts: [FramedConnection] = []
     private var browser: NWBrowser?
+    /// Bonjour endpoints already tried during this connection attempt.
+    private var bonjourTried: Set<String> = []
     private var target: (mac: PairedMac, deviceID: UUID, key: SymmetricKey)?
 
     public init() {}
@@ -108,14 +116,18 @@ public final class NWDirectLink: DirectLink {
 
         guard let params = parameters() else { return }
         let b = NWBrowser(for: .bonjourWithTXTRecord(type: LinkProtocol.bonjourType, domain: nil), using: params)
+        // Every batch is looked at (the first one can be empty or hold another
+        // Mac), each endpoint tried once; the browser stops after 4 s or when
+        // a connection said hello.
+        bonjourTried = []
         b.browseResultsChangedHandler = { [weak self] results, _ in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.active == nil else { return }
                 for result in results {
-                    guard case let .bonjour(txt) = result.metadata, txt["mac"] == mac.macID.uuidString else { continue }
+                    guard case let .bonjour(txt) = result.metadata, txt["mac"] == mac.macID.uuidString,
+                          self.bonjourTried.insert("\(result.endpoint)").inserted else { continue }
                     self.attempt(result.endpoint, .local)
                 }
-                b.cancel()
             }
         }
         b.start(queue: .main)
@@ -131,7 +143,7 @@ public final class NWDirectLink: DirectLink {
             let mac = target.mac
             let hello = ClientMessage.hello(protocolVersion: LinkProtocol.version, deviceID: target.deviceID)
             let c = FramedConnection(endpoint: endpoint, path: path, parameters: params)
-            c.onReady = { try? c.send(hello) }
+            c.onReady = { [weak c] in try? c?.send(hello) }
             c.onMessage = { [weak self, weak c] message in
                 guard let self, let c else { return }
                 self.handle(message, from: c, macID: mac.macID)
@@ -304,6 +316,10 @@ public final class CloudKitPhoneLink: CloudLink {
         record.encryptedValues["payload"] = try LinkCoding.encoder().encode(request)
         _ = try await database.modifyRecords(saving: [record], deleting: [], savePolicy: .allKeys)
         return name
+    }
+
+    public func unsubscribeFromEvents() async throws {
+        _ = try await database.modifySubscriptions(saving: [], deleting: ["events"])
     }
 
     /// One query subscription on `Event` records in the DarraOwl zone. The

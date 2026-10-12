@@ -72,6 +72,7 @@ struct DarraOwlWatchShortcuts: AppShortcutsProvider {
         ], shortTitle: "Arrêter", systemImageName: "stop.circle")
         AppShortcut(intent: StartSessionIntent(), phrases: [
             "Démarre une session avec \(.applicationName)",
+            "\(.applicationName) garde l'ordinateur éveillé",
         ], shortTitle: "Garder éveillé", systemImageName: "moon.zzz")
         AppShortcut(intent: SessionStatusIntent(), phrases: [
             "État de la session avec \(.applicationName)",

@@ -15,12 +15,30 @@ final class PhoneRuntime {
     private(set) var model: PhoneModel
     /// Showing the demonstration Mac (App Review, curious users).
     private(set) var isDemo = DemoMode.isOn
+    /// A darraowl:// link opened from outside, waiting for confirmation.
+    var pendingLink: URL?
+
+    /// Pairs with a link the user confirmed: out of the demonstration first,
+    /// so the real Mac is the one saved.
+    func pairConfirmed(_ url: URL) async {
+        pendingLink = nil
+        if isDemo { leaveDemo() }
+        await model.pair(url: url)
+    }
     @ObservationIgnored private let liveActivity = LiveActivityController()
     @ObservationIgnored private var started = false
 
     private init() {
         model = PhoneModel(DemoMode.isOn ? DemoMode.dependencies() : Self.liveDependencies())
+        wire()
+    }
+
+    private func wire() {
         model.onStateChange = { [weak self] state in self?.mirror(state) }
+        model.onUnpair = { [weak self] in
+            guard let self, !self.isDemo else { return }
+            self.forget()
+        }
     }
 
     private static func liveDependencies() -> PhoneModel.Dependencies {
@@ -49,35 +67,54 @@ final class PhoneRuntime {
     func leaveDemo() {
         isDemo = false
         model = PhoneModel(Self.liveDependencies())
-        model.onStateChange = { [weak self] state in self?.mirror(state) }
+        wire()
         Task { await model.start() }
     }
 
-    /// Siri and Live Activity buttons: sign and send, do not wait.
+    /// Siri and Live Activity buttons: sign and send, do not wait. No full
+    /// start first: an intent has a few seconds only.
     func fire(_ kind: CommandKind) async -> Bool {
-        await start()
-        return await model.fire(kind)
+        let sent = await model.fire(kind)
+        // The Mac's new state shows up on the Live Activity a moment later.
+        if sent {
+            Task {
+                try? await Task.sleep(for: .seconds(4))
+                await model.refreshFromCloud()
+            }
+        }
+        return sent
     }
 
     func spokenStatus() async -> String {
         await start()
         await model.tick()
         guard let state = model.state else { return "Je ne trouve pas le Mac pour le moment." }
-        var text: String
         switch model.presence {
-        case .asleep: text = "\(state.macName) est en veille."
-        case let .lastSeen(date): text = "\(state.macName) n'a pas donné de nouvelles depuis \(DurationText.clock(date))."
-        default: text = "\(state.macName) est en ligne."
+        case .asleep:
+            return "\(state.macName) est en veille."
+        case let .lastSeen(date):
+            return "\(state.macName) n'a pas donné de nouvelles depuis \(DurationText.clock(date))."
+        default:
+            break
         }
-        if let session = state.session, let watching = session.watchingText {
-            text += " Il reste éveillé tant que \(watching) tourne, au plus jusqu'à \(DurationText.clock(session.endsAt))."
-        } else if let session = state.session {
+        var text = "\(state.macName) est en ligne."
+        if let session = state.session, session.endsAt > Date(), let watching = session.watchingText {
+            text += " Il reste éveillé tant que \(watching) \(session.watchingVerb), au plus jusqu'à \(DurationText.clock(session.endsAt))."
+        } else if let session = state.session, session.endsAt > Date() {
             text += " Il reste éveillé jusqu'à \(DurationText.clock(session.endsAt))."
         } else {
             text += " Aucune session en cours."
         }
         if case let .percent(p)? = state.powerSnapshot?.battery { text += " Batterie à \(p) %." }
         return text
+    }
+
+    /// Unpaired: nothing about the old Mac stays on the lock screen, the
+    /// widgets or the watch.
+    private func forget() {
+        liveActivity.end()
+        SharedStore.clear()
+        WatchBridge.shared.push(WatchLink.Snapshot(state: nil, macName: nil, presence: "Aucun Mac appairé sur l'iPhone.", online: false, at: Date()))
     }
 
     /// Live Activity and widgets follow every state the app receives,
@@ -128,7 +165,8 @@ final class LiveActivityController {
     }
 
     func update(state: MacState, online: Bool) {
-        guard let session = state.session else {
+        // A Mac going to sleep, or past its end time, has no session to show.
+        guard let session = state.session, state.power == .awake, session.endsAt > Date() else {
             end()
             return
         }
@@ -143,7 +181,8 @@ final class LiveActivityController {
             following: session.watchingText
         )
         let activityContent = ActivityContent(state: content, staleDate: session.endsAt)
-        if let current, current.activityState == .active {
+        // A stale one (past its old end time) is updated too: it is still on screen.
+        if let current, current.activityState == .active || current.activityState == .stale {
             // Looked up again inside the task: an Activity is not Sendable.
             let id = current.id
             Task.detached {
@@ -156,12 +195,16 @@ final class LiveActivityController {
         }
     }
 
-    private func end() {
-        guard current != nil || !Activity<DarraOwlActivityAttributes>.activities.isEmpty else { return }
+    /// Ends the activities there are now, at once: one left on screen would
+    /// keep counting down to an end time that no longer holds. Ids are taken
+    /// now, so an activity requested right after is not ended by mistake.
+    func end() {
+        let ids = Set(Activity<DarraOwlActivityAttributes>.activities.map(\.id))
         current = nil
+        guard !ids.isEmpty else { return }
         Task.detached {
-            for activity in Activity<DarraOwlActivityAttributes>.activities {
-                await activity.end(nil, dismissalPolicy: .default)
+            for activity in Activity<DarraOwlActivityAttributes>.activities where ids.contains(activity.id) {
+                await activity.end(nil, dismissalPolicy: .immediate)
             }
         }
     }

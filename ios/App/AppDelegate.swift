@@ -10,8 +10,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
-        let extend = UNNotificationAction(identifier: MacEvent.extendAction, title: "+1 h", options: [.authenticationRequired])
-        let stop = UNNotificationAction(identifier: MacEvent.stopAction, title: "Arrêter", options: [.authenticationRequired, .destructive])
+        let extend = UNNotificationAction(identifier: MacEvent.extendAction, title: "Prolonger d'1 h", options: [.authenticationRequired])
+        let stop = UNNotificationAction(identifier: MacEvent.stopAction, title: "Arrêter la session", options: [.authenticationRequired, .destructive])
         center.setNotificationCategories([
             UNNotificationCategory(identifier: MacEvent.sessionCategory, actions: [extend, stop], intentIdentifiers: []),
             UNNotificationCategory(identifier: MacEvent.infoCategory, actions: [], intentIdentifiers: []),
@@ -21,9 +21,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         return true
     }
 
-    /// Show the Mac's notifications even while the app is open.
+    /// Show the Mac's notifications even while the app is open, at once;
+    /// the screen catches up right after.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        await AppDelegate.model?.tick()
+        Task { @MainActor in await AppDelegate.model?.refreshFromCloud() }
         return [.banner, .sound]
     }
 
@@ -32,9 +33,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         await AppDelegate.model?.handleNotificationAction(action)
     }
 
-    /// Silent part of an event push: refresh what the app shows.
+    /// Silent part of an event push: refresh what the app shows, from
+    /// iCloud even when a direct link looks open (it may be dead).
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
-        await AppDelegate.model?.tick()
+        await AppDelegate.model?.refreshFromCloud()
         return .newData
     }
 }

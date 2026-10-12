@@ -110,6 +110,16 @@ Comment ça marche :
   laquelle elles ont été mesurées. Sur une autre version, l'écran et le
   clavier sont laissés tels quels, et les Réglages l'indiquent.
 
+Deux cas où rien n'est éteint ni mis en pause à la fermeture du capot :
+
+- **un écran externe est branché** : le Mac est sur un bureau, tu travailles
+  dessus ;
+- **un appel est en cours** (le micro est utilisé) : aucune app n'est mise en
+  pause, pour ne pas couper l'appel.
+
+Une app dans laquelle tourne un agent (Terminal, iTerm, VS Code…) n'est
+jamais mise en pause, même si elle est dans la liste.
+
 ## Toujours actif (mode présence)
 
 C'est le même principe que Caffeine ou Amphetamine. Choisis **Sans limite**,
@@ -148,7 +158,8 @@ session, qui a toujours une heure de fin.
   dans le journal et rétabli à la fin.
 - **Face ID** est demandé pour mettre en veille, arrêter un conteneur et
   arrêter un agent.
-- **Notifications**, avec les boutons +1 h et Arrêter : session bientôt finie,
+- **Notifications**, avec les boutons « Prolonger d'1 h » (qui relance une
+  heure si la session est déjà finie) et « Arrêter la session » : session bientôt finie,
   batterie qui ne tiendra pas, Mac qui chauffe, capot ouvert ou chargeur
   débranché, réseau revenu après une coupure, data au-delà du seuil, récap de
   fin de session.

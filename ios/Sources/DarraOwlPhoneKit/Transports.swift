@@ -43,6 +43,8 @@ public protocol CloudLink: AnyObject {
     func pairingResponse(requestID: String) async throws -> PairingResponse?
     /// Subscribes to the Mac's events: each one becomes a notification.
     func subscribeToEvents() async throws
+    /// After unpairing: no more notifications.
+    func unsubscribeFromEvents() async throws
 }
 
 /// The pairing listener of the invite on screen.
