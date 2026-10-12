@@ -32,7 +32,32 @@ refuse_during_session() {
 }
 
 refuse_during_session
-APP="$(scripts/build-mac.sh Release | tail -n 1)"
+# Signed Developer ID, like the releases: macOS records the helper's signature
+# when it is registered and refuses another one afterwards, so local builds
+# and releases must never differ there.
+source scripts/asc-auth.sh
+OUT="build/install"
+rm -rf "$OUT" && mkdir -p "$OUT"
+xcodegen generate --quiet
+xcodebuild -project DarraOwl.xcodeproj -scheme DarraOwlMac -configuration Release \
+  -destination 'generic/platform=macOS' -archivePath "$OUT/DarraOwl-mac.xcarchive" \
+  -allowProvisioningUpdates ${XCODE_AUTH[@]+"${XCODE_AUTH[@]}"} CURRENT_PROJECT_VERSION="$(date -u +%Y%m%d%H%M)" -quiet archive
+cat > "$OUT/ExportOptions.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>method</key><string>developer-id</string>
+	<key>teamID</key><string>S3YD258U2R</string>
+	<key>signingStyle</key><string>automatic</string>
+</dict>
+</plist>
+PLIST
+xcodebuild -exportArchive -archivePath "$OUT/DarraOwl-mac.xcarchive" -exportOptionsPlist "$OUT/ExportOptions.plist" \
+  -exportPath "$OUT" -allowProvisioningUpdates ${XCODE_AUTH[@]+"${XCODE_AUTH[@]}"} >/dev/null
+APP="$OUT/DarraOwl.app"
+codesign -dvv "$APP" 2>&1 | grep -q "Authority=Developer ID Application" || {
+  echo "Le build n'est pas signé Developer ID : rien n'a été installé." >&2; exit 1; }
 DEST="/Applications/DarraOwl.app"
 # The build takes minutes: a session may have started meanwhile.
 refuse_during_session
@@ -51,5 +76,8 @@ if [ -e "$DEST" ]; then
 fi
 mv "$STAGE" "$DEST"
 codesign --verify --strict --deep "$DEST"
+# The built copy goes: macOS could otherwise open it instead of this one.
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$APP" >/dev/null 2>&1 || true
+rm -rf "$OUT"
 echo "Installé : $DEST"
 open "$DEST"

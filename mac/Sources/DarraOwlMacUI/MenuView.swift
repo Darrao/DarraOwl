@@ -111,7 +111,7 @@ struct MenuView: View {
             case .enabled:
                 Text("Le composant système ne répond pas encore.")
                     .font(.caption).foregroundStyle(.secondary)
-                Button("Réessayer") { Task { await model.refresh() } }
+                Button("Réessayer") { Task { await model.retryHelper() } }
             }
         }
     }

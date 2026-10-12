@@ -184,6 +184,35 @@ public final class AppModel {
         }
     }
 
+    /// The helper registered but neither answering nor running: launchd
+    /// refuses a helper whose signature changed since it was registered (an
+    /// update between a local build and a release). Registering it again
+    /// records the new signature; once per launch, after 20 s of silence.
+    @ObservationIgnored private var helperSilentSince: Date?
+    @ObservationIgnored private var helperRegisteredAgain = false
+
+    private func registerHelperAgainIfStuck(now: Date = Date()) async {
+        if helperSilentSince == nil { helperSilentSince = now }
+        guard !helperRegisteredAgain, let since = helperSilentSince, now.timeIntervalSince(since) >= 20,
+              !SysctlProcessControl.isRunning(command: "DarraOwlHelper")
+        else { return }
+        helperRegisteredAgain = true
+        log.error("helper registered but not running: registering it again")
+        // Not running: unregistering stops nothing; the helper restores its
+        // journal when it starts again.
+        try? await ServiceRegistration.unregisterHelper()
+        installHelper()
+    }
+
+    /// "Réessayer": a helper that does not run is registered again at once.
+    public func retryHelper() async {
+        if !SysctlProcessControl.isRunning(command: "DarraOwlHelper") {
+            helperRegisteredAgain = false
+            helperSilentSince = .distantPast
+        }
+        await refresh()
+    }
+
     public func refresh() async {
         // A missing plist is only learnt from register(); keep showing it.
         if registration != .notFound {
@@ -194,8 +223,16 @@ public final class AppModel {
             reachable = false
             return
         }
+        // launchd keeps the helper running: not running at all, it was
+        // refused, and asking it would only time out.
+        guard SysctlProcessControl.isRunning(command: "DarraOwlHelper") else {
+            reachable = false
+            await registerHelperAgainIfStuck()
+            return
+        }
         do {
             let response = try await client.send(.status)
+            helperSilentSince = nil
             apply(response)
             await restartHelperIfOutdated(response)
             // The helper forgets the displays when it restarts (update,
@@ -210,6 +247,7 @@ public final class AppModel {
             reachable = false
             client.invalidate()
             log.error("helper unreachable: \(String(describing: error), privacy: .public)")
+            await registerHelperAgainIfStuck()
         }
     }
 

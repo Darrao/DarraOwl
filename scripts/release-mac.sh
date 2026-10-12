@@ -71,6 +71,10 @@ xcrun notarytool submit "$ZIP" "${NOTARY_AUTH[@]}" --wait
 xcrun stapler staple "$APP"
 spctl --assess --type execute --verbose "$APP"
 rm -f "$ZIP" && ditto -c -k --keepParent "$APP" "$ZIP"
+# Only the zip stays: macOS could open the built copy instead of the
+# installed one (a second DarraOwl in the menu bar).
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$APP" >/dev/null 2>&1 || true
+rm -rf "$APP" "$ARCHIVE"
 # Hashed from inside the folder, so `shasum -c` works for whoever downloads it.
 (cd "$OUT" && shasum -a 256 "DarraOwl-$VERSION.zip" | tee "DarraOwl-$VERSION.zip.sha256")
 

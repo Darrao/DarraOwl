@@ -54,6 +54,24 @@ public struct SysctlProcessControl: ProcessControlling {
         return result
     }
 
+    /// Whether a process with this command name runs (the kernel keeps
+    /// its first 16 characters).
+    public static func isRunning(command: String) -> Bool {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
+        var size = 0
+        guard sysctl(&mib, 4, nil, &size, nil, 0) == 0 else { return false }
+        size += size / 8
+        var entries = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride)
+        guard sysctl(&mib, 4, &entries, &size, nil, 0) == 0 else { return false }
+        let count = size / MemoryLayout<kinfo_proc>.stride
+        return entries.prefix(count).contains { entry in
+            guard entry.kp_proc.p_stat != UInt8(SZOMB) else { return false }
+            var comm = entry.kp_proc.p_comm
+            let name = withUnsafeBytes(of: &comm) { raw in String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self) }
+            return name == command
+        }
+    }
+
     private static func state(of entry: kinfo_proc) -> ProcessState {
         let started = entry.kp_proc.p_starttime
         return ProcessState(
