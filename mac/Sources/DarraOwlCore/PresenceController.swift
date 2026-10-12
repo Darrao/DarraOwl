@@ -34,10 +34,15 @@ public enum PresenceStopReason: String, Codable, Sendable {
 
 /// "Presence" mode, à la Caffeine or Amphetamine: display awake and user
 /// activity declared every minute, with or without an end time. It does not
-/// keep a closed lid awake; that is the job of a (bounded) session.
+/// keep a closed lid awake; that is the job of a (bounded) session. As an
+/// option, while a session keeps the Mac awake with the lid closed, activity
+/// is still declared every 4 minutes (apps such as Teams mark the user away
+/// after 5), and the display goes dark again right after each one.
 @MainActor
 public final class PresenceController {
     public static let activityInterval: TimeInterval = 60
+    /// Lid closed: as rarely as Teams' 5 minutes allow, each one wakes the display.
+    public static let closedActivityInterval: TimeInterval = 240
 
     public private(set) var isActive = false
     /// nil while active means no end time.
@@ -50,8 +55,15 @@ public final class PresenceController {
     /// not declared again until it wakes, or it would light up at once. The
     /// Mac itself stays awake.
     public private(set) var quiet = false
+    /// Option: keep declaring activity with the lid closed, during a session.
+    public private(set) var whileClosed = false
+    /// A session keeps the Mac awake: without one, a closed lid sleeps anyway.
+    public private(set) var sessionRunning = false
+    /// Called after each activity declared with the lid closed: the display
+    /// it woke goes dark again.
+    public var onClosedActivity: (() -> Void)?
 
-    private enum Hold { case none, display, system }
+    private enum Hold { case none, display, system, closed }
 
     private let asserter: any PresenceAsserting
     private var lastActivity: Date?
@@ -90,6 +102,18 @@ public final class PresenceController {
         try? apply(now: now)
     }
 
+    public func setWhileClosed(_ on: Bool, now: Date = Date()) {
+        guard on != whileClosed else { return }
+        whileClosed = on
+        try? apply(now: now)
+    }
+
+    public func setSessionRunning(_ running: Bool, now: Date = Date()) {
+        guard running != sessionRunning else { return }
+        sessionRunning = running
+        try? apply(now: now)
+    }
+
     public func stop(_ reason: PresenceStopReason) {
         guard isActive else { return }
         isActive = false
@@ -101,8 +125,17 @@ public final class PresenceController {
 
     /// Active with the lid open: the display is held and activity declared,
     /// or, with the display put to sleep on purpose, only the system is held.
+    /// Lid closed: nothing, or with the option during a session, activity
+    /// only (the session keeps the Mac awake, nothing holds the display).
     private func apply(now: Date) throws {
-        let wanted: Hold = !isActive || suspended ? .none : quiet ? .system : .display
+        let wanted: Hold
+        if !isActive {
+            wanted = .none
+        } else if suspended {
+            wanted = whileClosed && sessionRunning ? .closed : .none
+        } else {
+            wanted = quiet ? .system : .display
+        }
         guard wanted != holding else { return }
         switch wanted {
         case .none:
@@ -113,6 +146,11 @@ public final class PresenceController {
             lastActivity = now
         case .system:
             try asserter.hold(display: false)
+        case .closed:
+            asserter.release()
+            asserter.declareActivity()
+            lastActivity = now
+            onClosedActivity?()
         }
         holding = wanted
     }
@@ -132,9 +170,15 @@ public final class PresenceController {
             default: break
             }
         }
-        guard holding == .display else { return }
-        if let last = lastActivity, now.timeIntervalSince(last) < Self.activityInterval { return }
+        let interval: TimeInterval
+        switch holding {
+        case .display: interval = Self.activityInterval
+        case .closed: interval = Self.closedActivityInterval
+        case .none, .system: return
+        }
+        if let last = lastActivity, now.timeIntervalSince(last) < interval { return }
         asserter.declareActivity()
         lastActivity = now
+        if holding == .closed { onClosedActivity?() }
     }
 }

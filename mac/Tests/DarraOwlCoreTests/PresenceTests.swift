@@ -149,4 +149,45 @@ final class FakeAsserter: PresenceAsserting {
         p.stop(.user)
         #expect(!a.held)
     }
+
+    /// Option off (the default): a closed lid declares nothing, session or not.
+    @Test func aClosedLidDeclaresNothingByDefault() throws {
+        let a = FakeAsserter()
+        let p = PresenceController(asserter: a)
+        try p.start(until: nil, now: t0)
+        p.setSessionRunning(true, now: t0)
+        p.setSuspended(true, now: t0)
+        p.tick(now: t0.addingTimeInterval(600), power: battery, settings: .default)
+        #expect(!a.held && a.activity == 1)
+    }
+
+    /// Option on, during a session: activity every 4 minutes with the lid
+    /// closed, nothing held on the display, and the display darkened again.
+    @Test func withTheOptionAClosedLidStillDeclaresActivityDuringASession() throws {
+        let a = FakeAsserter()
+        let p = PresenceController(asserter: a)
+        var darkened = 0
+        p.onClosedActivity = { darkened += 1 }
+        p.setWhileClosed(true, now: t0)
+        try p.start(until: nil, now: t0)
+        p.setSessionRunning(true, now: t0)
+        p.setSuspended(true, now: t0)
+        #expect(!a.held, "no display assertion under the lid")
+        #expect(a.activity == 2 && darkened == 1)
+
+        p.tick(now: t0.addingTimeInterval(120), power: battery, settings: .default)
+        #expect(a.activity == 2, "not every minute: each one wakes the display")
+        p.tick(now: t0.addingTimeInterval(PresenceController.closedActivityInterval), power: battery, settings: .default)
+        #expect(a.activity == 3 && darkened == 2)
+
+        // The session ends: a closed lid sleeps, nothing more is declared.
+        p.setSessionRunning(false, now: t0.addingTimeInterval(300))
+        p.tick(now: t0.addingTimeInterval(900), power: battery, settings: .default)
+        #expect(a.activity == 3)
+
+        // Lid open again: back to the display and every minute.
+        p.setSessionRunning(true, now: t0.addingTimeInterval(901))
+        p.setSuspended(false, now: t0.addingTimeInterval(902))
+        #expect(a.held && a.display)
+    }
 }

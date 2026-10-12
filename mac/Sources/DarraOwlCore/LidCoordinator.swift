@@ -278,6 +278,24 @@ public final class LidCoordinator {
         return problems
     }
 
+    /// Activity was declared with the lid closed ("Toujours actif" option):
+    /// the display it woke goes dark again, as at the close. Only what the
+    /// journal already holds is set to 0 again: nothing new is changed.
+    public func darkenAgain(saved: UserChanges, settings: LidSettings) async {
+        guard settings.darkenDisplay else { return }
+        let mine = generation
+        if saved.displayBrightness != nil { try? deps.display?.setBrightness(0) }
+        if saved.keyboardBrightness != nil { try? deps.keyboard?.setBrightness(0) }
+        guard let sleeper = deps.displaySleep else { return }
+        // powerd defers a display sleep request for about 30 s after a wake.
+        await deps.sleep(.seconds(3))
+        guard generation == mine else { return }
+        sleeper.requestSleep()
+        await deps.sleep(.seconds(32))
+        guard generation == mine else { return }
+        sleeper.requestSleep()
+    }
+
     /// Lid opened: resume apps, then restore what the journal holds. Sound
     /// muted from the phone stays muted while the session goes on.
     @discardableResult

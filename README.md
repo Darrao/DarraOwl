@@ -151,6 +151,16 @@ d'alimentation que macOS retire dès que l'app se ferme, même en cas de
 plantage. Il ne garde pas le Mac éveillé capot fermé : pour ça, lance une
 session, qui a toujours une heure de fin.
 
+**Rester disponible capot fermé** (option dans Réglages > Toujours actif,
+désactivée par défaut) : pendant une session, capot fermé, une activité est
+déclarée toutes les 4 minutes, pour que Teams te garde « Disponible ».
+L'écran se rallume un instant sous le capot, luminosité à zéro, puis
+s'éteint. Teams passe toujours « Absent » quand la session macOS est
+verrouillée : l'option ne sert que si le Mac ne se verrouille pas quand
+l'écran s'éteint (Réglages Système > Écran verrouillé > « Exiger le mot de
+passe… »). À toi de juger : un portable non verrouillé est ouvert à quiconque
+soulève le capot.
+
 ## iPhone
 
 - **Appairage** : DarraOwl > **iPhone…** > **Afficher le code d'appairage**,

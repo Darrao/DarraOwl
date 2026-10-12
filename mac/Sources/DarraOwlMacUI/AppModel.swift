@@ -26,8 +26,11 @@ public final class AppModel {
     public private(set) var presenceActive = false
     public private(set) var presenceUntil: Date?
     public private(set) var presenceLastStop: PresenceStopReason?
+    public private(set) var presenceWhileClosed = UserDefaults.standard.bool(forKey: AppModel.presenceWhileClosedKey)
     private let presence = PresenceController(asserter: IOPMPresenceAsserter())
     static let presenceIndefiniteKey = "presenceIndefinite"
+    /// Option: "Toujours actif" goes on with the lid closed, during a session.
+    static let presenceWhileClosedKey = "presenceWhileClosed"
     /// The lid as the app last saw it, kept across launches.
     static let lidClosedKey = "lidClosedAtLastLook"
 
@@ -77,6 +80,7 @@ public final class AppModel {
         keyboardRefusal = keyboard.refusal()
         let gateway = AppHelperGateway(client: client) { [weak self] status in
             self?.status = status
+            self?.presence.setSessionRunning(status.session != nil)
         }
         lid = LidCoordinator(.init(
             display: displayRefusal == nil ? display : nil,
@@ -115,8 +119,13 @@ public final class AppModel {
         lidClosed = lidObserver.isClosed
         lidWasClosedAtLastRun = UserDefaults.standard.bool(forKey: Self.lidClosedKey)
         UserDefaults.standard.set(lidClosed, forKey: Self.lidClosedKey)
-        // Presence learns about the lid before it may hold anything.
+        // Presence learns about the lid and its option before it may hold anything.
         presence.setSuspended(lidClosed)
+        presence.setWhileClosed(presenceWhileClosed)
+        presence.onClosedActivity = { [weak self] in
+            guard let self, let status = self.status else { return }
+            Task { await self.lid.darkenAgain(saved: status.userChanges, settings: status.settings.lid) }
+        }
         // "Sans limite" survives a relaunch, so the Mac stays active after a
         // restart; a timed presence does not.
         if UserDefaults.standard.bool(forKey: Self.presenceIndefiniteKey) {
@@ -405,6 +414,13 @@ public final class AppModel {
         syncPresence()
     }
 
+    /// The option to stay available with the lid closed (during a session).
+    public func setPresenceWhileClosed(_ on: Bool) {
+        presenceWhileClosed = on
+        UserDefaults.standard.set(on, forKey: Self.presenceWhileClosedKey)
+        presence.setWhileClosed(on)
+    }
+
     public func stopPresence() {
         presence.stop(.user)
         UserDefaults.standard.set(false, forKey: Self.presenceIndefiniteKey)
@@ -485,7 +501,10 @@ public final class AppModel {
 
     private func apply(_ response: HelperResponse, showingError: Bool = true) {
         reachable = true
-        if let status = response.status { self.status = status }
+        if let status = response.status {
+            self.status = status
+            presence.setSessionRunning(status.session != nil)
+        }
         if showingError, let error = response.error { lastError = error }
         now = Date()
     }

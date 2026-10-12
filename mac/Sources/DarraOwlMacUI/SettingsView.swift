@@ -46,6 +46,15 @@ struct SettingsView: View {
             Section("Session") {
                 Stepper("Durée maximale : \(capHours) h", value: $capHours, in: Int(Policy.minimumMaxSessionDuration / 3600)...Int(Policy.absoluteMaxSessionDuration / 3600))
             }
+            Section("Toujours actif") {
+                Toggle("Rester disponible capot fermé", isOn: Binding(
+                    get: { model.presenceWhileClosed },
+                    set: { model.setPresenceWhileClosed($0) }
+                ))
+                Text("Avec « Toujours actif », pendant une session : capot fermé, une activité est déclarée toutes les 4 minutes pour que Teams te garde « Disponible ». L'écran se rallume un instant sous le capot, luminosité à zéro, puis s'éteint. Ne marche que si le Mac ne se verrouille pas quand l'écran s'éteint (Réglages Système > Écran verrouillé).")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Section {
                 HStack {
                     Spacer()

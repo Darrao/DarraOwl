@@ -277,4 +277,26 @@ struct LidRig {
         await rig.coordinator.lidClosed(settings: LidSettings(pausedApps: [], pauseDocker: false))
         #expect(await rig.h.engine.status().userChanges.isEmpty)
     }
+
+    /// "Rester disponible capot fermé": after each declared activity the
+    /// display goes dark again, but only values the journal already holds.
+    @Test func darkenAgainOnlyTouchesWhatTheJournalHolds() async throws {
+        let rig = LidRig()
+        try await rig.startSession()
+        await rig.coordinator.lidClosed(settings: LidSettings(pausedApps: [], pauseDocker: false))
+        let saved = await rig.h.engine.status().userChanges
+        #expect(saved.displayBrightness != nil)
+
+        rig.display.brightness = 0.7 // the wake brought it back
+        rig.h.events.clear()
+        await rig.coordinator.darkenAgain(saved: saved, settings: LidSettings())
+        #expect(rig.display.brightness == 0)
+        #expect(rig.h.events.all.filter { $0 == "display sleep" }.count == 2)
+
+        // Nothing journaled: nothing changed.
+        rig.display.brightness = 0.7
+        await rig.coordinator.darkenAgain(saved: UserChanges(), settings: LidSettings())
+        #expect(rig.display.brightness == 0.7)
+    }
 }
+
