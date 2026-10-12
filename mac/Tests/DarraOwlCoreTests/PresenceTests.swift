@@ -114,12 +114,20 @@ final class FakeAsserter: PresenceAsserting {
         #expect(a.held && a.display)
     }
 
-    /// "Bouger la souris" is not someone at the Mac.
+    /// "Bouger la souris" is not someone at the Mac; the user's own moves
+    /// before it still are.
     @Test func ownPointerMovesAreNotTheUser() {
-        #expect(IdleTime.seconds(others: 300, moved: 10, ownMove: nil) == 10)
-        #expect(IdleTime.seconds(others: 300, moved: 10, ownMove: 10.4) == 300, "that move was DarraOwl's")
-        #expect(IdleTime.seconds(others: 300, moved: 3, ownMove: 60) == 3, "the user moved since")
-        #expect(IdleTime.seconds(others: 5, moved: 10, ownMove: 10) == 5)
+        #expect(IdleTime.seconds(others: 300, moved: 10, own: nil, now: t0) == 10)
+        // The user last moved 10 s before DarraOwl's move.
+        let own = IdleTime.ownMove(now: t0, lastMoveAge: 10, previous: nil)
+        let later = t0.addingTimeInterval(30)
+        #expect(IdleTime.seconds(others: 300, moved: 30, own: own, now: later) == 40, "that move was DarraOwl's")
+        #expect(IdleTime.seconds(others: 300, moved: 3, own: own, now: later) == 3, "the user moved since")
+        #expect(IdleTime.seconds(others: 5, moved: 30, own: own, now: later) == 5, "a key since")
+        // The next own move: the last one was DarraOwl's, the user's stays.
+        let next = IdleTime.ownMove(now: t0.addingTimeInterval(60), lastMoveAge: 60, previous: own)
+        #expect(next.userMovedAt == t0.addingTimeInterval(-10))
+        #expect(IdleTime.seconds(others: 300, moved: 10, own: next, now: t0.addingTimeInterval(70)) == 80)
     }
 
     @Test func changingTheEndKeepsOneAssertion() throws {

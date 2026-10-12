@@ -135,6 +135,9 @@ public final class AppModel {
             guard let self, let status = self.status else { return }
             Task { await self.lid.darkenAgain(saved: status.userChanges, settings: status.settings.lid) }
         }
+        // Relaunched by an update while the display was off from the phone:
+        // presence does not light it.
+        if CGDisplayIsAsleep(CGMainDisplayID()) != 0 { presence.setQuiet(true) }
         // "Sans limite" survives a relaunch, so the Mac stays active after a
         // restart; a timed presence does not.
         if UserDefaults.standard.bool(forKey: Self.presenceIndefiniteKey) {
@@ -157,8 +160,7 @@ public final class AppModel {
                 self.tickPresence()
                 if tick % 30 == 0 { self.sampleBrightnessIfPresent() }
                 if tick % 60 == 30 {
-                    let mayInstall = self.mayInstallUpdate
-                    Task { await self.updater.tick(mayInstall: mayInstall) }
+                    Task { await self.updater.tick { await self.mayInstallUpdateNow(byHand: false) } }
                 }
                 if self.reachable { self.remote.start() }
                 self.remote.everySecond()
@@ -433,6 +435,22 @@ public final class AppModel {
     /// nobody is using the Mac.
     var mayInstallUpdate: Bool {
         UpdatePolicy.mayInstall(sessionRunning: session != nil, timedPresence: presenceActive && presenceUntil != nil, userIdle: UserIdle.seconds())
+    }
+
+    /// Right before an update replaces the app, the helper is asked again:
+    /// a session the Terminal started a moment ago, or an undo still
+    /// pending, keeps this app running. `byHand`: "Installer" was clicked.
+    func mayInstallUpdateNow(byHand: Bool) async -> Bool {
+        let timedPresence = presenceActive && presenceUntil != nil
+        guard byHand ? !timedPresence : mayInstallUpdate else { return false }
+        // No helper: no session can run.
+        guard registration == .enabled else { return true }
+        guard let status = try? await client.send(.status, timeout: 2).status else { return false }
+        return status.session == nil && status.pendingUndo.isEmpty
+    }
+
+    func installUpdateNow() async {
+        await updater.installNow { await self.mayInstallUpdateNow(byHand: true) }
     }
 
     /// The option to move the pointer a pixel with each declared activity.

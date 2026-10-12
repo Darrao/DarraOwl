@@ -10,12 +10,14 @@ enum UpdateError: Error, LocalizedError {
     case checksum
     case signature
     case version
+    case system
 
     var errorDescription: String? {
         switch self {
         case .checksum: "le fichier téléchargé ne correspond pas à celui publié."
         case .signature: "la nouvelle version n'est pas signée par le développeur de DarraOwl."
         case .version: "la nouvelle version ne dit pas être celle annoncée."
+        case .system: "la nouvelle version demande une version plus récente de macOS."
         }
     }
 }
@@ -60,13 +62,14 @@ final class Updater {
         try? FileManager.default.removeItem(at: Self.previousURL(for: Bundle.main.bundleURL))
     }
 
-    /// About every minute, from the app model.
-    func tick(mayInstall: Bool) async {
-        if let ready, automatic, mayInstall {
-            install(ready)
+    /// About every minute, from the app model. `mayInstall` is asked only
+    /// once an update is ready, right before it would replace the app.
+    func tick(mayInstall: () async -> Bool) async {
+        if ready != nil {
+            if automatic { await installIfAllowed(mayInstall) }
             return
         }
-        guard automatic, !working, ready == nil else { return }
+        guard automatic, !working else { return }
         let last = UserDefaults.standard.object(forKey: Self.lastCheckKey) as? Date ?? .distantPast
         guard Date().timeIntervalSince(last) >= Self.checkInterval else { return }
         await checkAndDownload()
@@ -100,13 +103,21 @@ final class Updater {
         }
     }
 
-    /// "Installer maintenant": only called when nothing runs.
-    func installNow() {
-        guard let ready else { return }
-        install(ready)
+    /// "Installer": the same last checks as an automatic install.
+    func installNow(mayInstall: () async -> Bool) async {
+        await installIfAllowed(mayInstall)
     }
 
     // MARK: Private
+
+    /// One install at a time: the last checks can take a moment.
+    private func installIfAllowed(_ mayInstall: () async -> Bool) async {
+        guard let update = ready, !working else { return }
+        working = true
+        defer { working = false }
+        guard await mayInstall(), ready?.app == update.app else { return }
+        install(update)
+    }
 
     private func download(_ release: AppRelease) async throws -> URL {
         let work = FileManager.default.temporaryDirectory.appending(path: "DarraOwl-update-\(UUID().uuidString)")
@@ -146,11 +157,22 @@ final class Updater {
               info["CFBundleIdentifier"] as? String == bundleID,
               info["CFBundleShortVersionString"] as? String == version
         else { throw UpdateError.version }
+        guard ReleaseCheck.runs(minimum: info["LSMinimumSystemVersion"] as? String, on: ProcessInfo.processInfo.operatingSystemVersion)
+        else { throw UpdateError.system }
     }
 
     /// The running copy is set aside, the new one takes its place and
     /// starts, this one quits. Any failure puts the old copy back.
     private func install(_ update: (version: String, app: URL)) {
+        // Checked again: the download may be days old, and macOS cleans
+        // the temporary folder.
+        do {
+            try Self.verify(update.app, version: update.version)
+        } catch {
+            ready = nil
+            phase = .failed(error.localizedDescription)
+            return
+        }
         let current = Bundle.main.bundleURL
         let previous = Self.previousURL(for: current)
         phase = .installing(update.version)
@@ -171,8 +193,30 @@ final class Updater {
         ready = nil
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: current, configuration: configuration) { _, _ in
-            Task { @MainActor in NSApp.terminate(nil) }
+        // Unattended: the app in use keeps the focus.
+        configuration.activates = false
+        NSWorkspace.shared.openApplication(at: current, configuration: configuration) { _, error in
+            let reason = error?.localizedDescription
+            Task { @MainActor in
+                if let reason {
+                    self.putBack(current: current, previous: previous, reason: reason)
+                } else {
+                    NSApp.terminate(nil)
+                }
+            }
+        }
+    }
+
+    /// The new copy does not start on this Mac: the old one goes back in
+    /// its place and keeps running.
+    private func putBack(current: URL, previous: URL, reason: String) {
+        let refused = FileManager.default.temporaryDirectory.appending(path: "DarraOwl-refused-\(UUID().uuidString).app")
+        do {
+            try FileManager.default.moveItem(at: current, to: refused)
+            try FileManager.default.moveItem(at: previous, to: current)
+            phase = .failed("la nouvelle version ne démarre pas sur ce Mac (\(reason)) : l'actuelle est gardée.")
+        } catch {
+            phase = .failed("remise en place impossible (\(error.localizedDescription)) : réinstalle DarraOwl.")
         }
     }
 

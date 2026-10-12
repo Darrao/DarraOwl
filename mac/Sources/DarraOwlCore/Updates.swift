@@ -78,6 +78,21 @@ public enum ReleaseCheck {
         return numbers.count == parts.count ? numbers : nil
     }
 
+    /// Whether an app asking for macOS `minimum` ("26.0") runs on `system`.
+    /// Unreadable: it does not.
+    public static func runs(minimum: String?, on system: OperatingSystemVersion) -> Bool {
+        guard let minimum else { return true }
+        let wanted = minimum.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) }
+        guard !wanted.isEmpty, wanted.allSatisfy({ $0 != nil }) else { return false }
+        let have = [system.majorVersion, system.minorVersion, system.patchVersion]
+        for i in 0..<max(wanted.count, have.count) {
+            let w = i < wanted.count ? wanted[i]! : 0
+            let h = i < have.count ? have[i] : 0
+            if w != h { return h > w }
+        }
+        return true
+    }
+
     /// The hash in a `shasum -a 256` line for this file name, lower case.
     public static func checksum(fromShasumLine text: String, fileName: String) -> String? {
         for line in text.split(whereSeparator: \.isNewline) {

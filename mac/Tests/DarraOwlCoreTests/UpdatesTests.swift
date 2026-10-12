@@ -50,6 +50,17 @@ import Testing
         #expect(ReleaseCheck.checksum(fromShasumLine: "1234  DarraOwl-0.2.0.zip", fileName: "DarraOwl-0.2.0.zip") == nil)
     }
 
+    /// A version this macOS cannot open is never put in place.
+    @Test func theMinimumMacOSIsRead() {
+        let system = OperatingSystemVersion(majorVersion: 27, minorVersion: 0, patchVersion: 1)
+        #expect(ReleaseCheck.runs(minimum: nil, on: system))
+        #expect(ReleaseCheck.runs(minimum: "26.0", on: system))
+        #expect(ReleaseCheck.runs(minimum: "27.0.1", on: system))
+        #expect(!ReleaseCheck.runs(minimum: "27.1", on: system))
+        #expect(!ReleaseCheck.runs(minimum: "28", on: system))
+        #expect(!ReleaseCheck.runs(minimum: "27.x", on: system), "unreadable: refused")
+    }
+
     /// Quitting ends a session and a timed "Toujours actif": never then,
     /// and never under the user's hands.
     @Test func anUpdateWaitsForNothingToRun() {

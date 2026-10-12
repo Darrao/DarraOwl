@@ -21,10 +21,10 @@ enum MouseNudge {
     }
 
     /// Never under the user's hand: not while a button is down, nor when
-    /// the mouse moved in the last few seconds (no need then anyway).
+    /// the user typed, clicked or moved in the last few seconds (no need
+    /// then anyway, and a hidden pointer would show while typing).
     static func nudge() {
-        guard allowed, let here = CGEvent(source: nil)?.location,
-              CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .mouseMoved) > 5,
+        guard allowed, let here = CGEvent(source: nil)?.location, UserIdle.seconds() >= 5,
               ![CGMouseButton.left, .right, .center].contains(where: { CGEventSource.buttonState(.hidSystemState, button: $0) })
         else { return }
         // Known as DarraOwl's own: not taken for someone at the Mac.

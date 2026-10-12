@@ -51,6 +51,10 @@ fi
 if [ "$status" -eq 0 ] && [ -d "$APP" ]; then
   rm -rf "$APP" && echo "App supprimée : $APP"
 fi
+# The copy an update set aside, if the new version never started.
+if [ "$status" -eq 0 ] && [ -d "/Applications/.DarraOwl-previous.app" ]; then
+  rm -rf "/Applications/.DarraOwl-previous.app" && echo "Ancienne copie de mise à jour supprimée."
+fi
 
 if [ "$PURGE" -eq 1 ]; then
   defaults delete com.darrao.darraowl.mac >/dev/null 2>&1 || true

@@ -146,8 +146,9 @@ struct SettingsView: View {
                     Text(updateText).foregroundStyle(.secondary)
                     Spacer()
                     if case .ready = model.updater.phase {
-                        Button("Installer") { model.updater.installNow() }
-                            .disabled(model.session != nil)
+                        // Quitting ends a session and a timed "Toujours actif".
+                        Button("Installer") { Task { await model.installUpdateNow() } }
+                            .disabled(model.session != nil || (model.presenceActive && model.presenceUntil != nil))
                     } else {
                         Button("Vérifier maintenant") { Task { await model.updater.checkAndDownload() } }
                             .disabled(isUpdating)
