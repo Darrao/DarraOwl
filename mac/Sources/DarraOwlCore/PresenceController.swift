@@ -87,6 +87,13 @@ public final class PresenceController {
     }
 
     /// Lid closed: drop the display assertion without ending presence.
+    /// Closed with no external display, presence is suspended: its display
+    /// assertion would keep the panel lit under the lid. Closed on a desk
+    /// with an external display, the Mac is used as an open one.
+    public func setLid(closed: Bool, externalDisplay: Bool, now: Date = Date()) {
+        setSuspended(closed && !externalDisplay, now: now)
+    }
+
     public func setSuspended(_ suspended: Bool, now: Date = Date()) {
         guard suspended != self.suspended else { return }
         self.suspended = suspended

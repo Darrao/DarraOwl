@@ -101,6 +101,27 @@ final class FakeAsserter: PresenceAsserting {
         #expect(a.held)
     }
 
+    /// Lid closed on a desk with an external display: used as an open Mac.
+    @Test func aDockedMacKeepsPresence() throws {
+        let a = FakeAsserter()
+        let p = PresenceController(asserter: a)
+        try p.start(until: nil, now: t0)
+        p.setLid(closed: true, externalDisplay: true, now: t0)
+        #expect(a.held && a.display)
+        p.setLid(closed: true, externalDisplay: false, now: t0)
+        #expect(!a.held, "undocked: the panel under the lid stays dark")
+        p.setLid(closed: false, externalDisplay: false, now: t0)
+        #expect(a.held && a.display)
+    }
+
+    /// "Bouger la souris" is not someone at the Mac.
+    @Test func ownPointerMovesAreNotTheUser() {
+        #expect(IdleTime.seconds(others: 300, moved: 10, ownMove: nil) == 10)
+        #expect(IdleTime.seconds(others: 300, moved: 10, ownMove: 10.4) == 300, "that move was DarraOwl's")
+        #expect(IdleTime.seconds(others: 300, moved: 3, ownMove: 60) == 3, "the user moved since")
+        #expect(IdleTime.seconds(others: 5, moved: 10, ownMove: 10) == 5)
+    }
+
     @Test func changingTheEndKeepsOneAssertion() throws {
         let a = FakeAsserter()
         let p = PresenceController(asserter: a)

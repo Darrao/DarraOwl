@@ -129,7 +129,7 @@ public final class AppModel {
         lidWasClosedAtLastRun = UserDefaults.standard.bool(forKey: Self.lidClosedKey)
         UserDefaults.standard.set(lidClosed, forKey: Self.lidClosedKey)
         // Presence learns about the lid and its option before it may hold anything.
-        presence.setSuspended(lidClosed)
+        presence.setLid(closed: lidClosed, externalDisplay: externalDisplay)
         presence.setWhileClosed(presenceWhileClosed)
         presence.onClosedActivity = { [weak self] in
             guard let self, let status = self.status else { return }
@@ -292,7 +292,8 @@ public final class AppModel {
         closeActionsFor = nil
         // Presence holds a display assertion, which would keep the panel lit
         // under the lid: release it while closed, take it back at open.
-        presence.setSuspended(closed)
+        // Docked, the Mac is used as an open one.
+        presence.setLid(closed: closed, externalDisplay: ExternalDisplays.anyActive())
         guard reachable, status != nil else {
             if !closed {
                 // Delayed close steps must not run with the lid open, and the
@@ -348,6 +349,7 @@ public final class AppModel {
         let external = ExternalDisplays.anyActive()
         guard external != externalDisplay else { return }
         externalDisplay = external
+        presence.setLid(closed: lidClosed, externalDisplay: external)
         // Unreachable: refresh() tells the helper once it answers.
         guard reachable else { return }
         _ = try? await client.send(.displays(external: external))

@@ -133,7 +133,7 @@ jamais mise en pause, même si elle est dans la liste.
 
 C'est le même principe que Caffeine ou Amphetamine. Choisis **Sans limite**,
 1 h, 2 h, 4 h ou 8 h dans la section **Toujours actif**. Tant que le capot
-est ouvert :
+est ouvert, ou fermé avec un écran externe branché :
 
 - le Mac ne se met pas en veille et l'écran reste allumé ;
 - une activité est déclarée chaque minute, pour que Teams te garde

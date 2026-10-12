@@ -298,5 +298,19 @@ struct LidRig {
         await rig.coordinator.darkenAgain(saved: UserChanges(), settings: LidSettings())
         #expect(rig.display.brightness == 0.7)
     }
+
+    /// Docked: the external display in use is never put to sleep.
+    @Test func darkenAgainLeavesADockedMacAlone() async throws {
+        let rig = LidRig()
+        try await rig.startSession()
+        await rig.coordinator.lidClosed(settings: LidSettings(pausedApps: [], pauseDocker: false))
+        let saved = await rig.h.engine.status().userChanges
+        rig.environment.externalDisplay = true
+        rig.display.brightness = 0.7
+        rig.h.events.clear()
+        await rig.coordinator.darkenAgain(saved: saved, settings: LidSettings())
+        #expect(rig.display.brightness == 0.7)
+        #expect(!rig.h.events.all.contains("display sleep"))
+    }
 }
 

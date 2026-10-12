@@ -282,7 +282,8 @@ public final class LidCoordinator {
     /// the display it woke goes dark again, as at the close. Only what the
     /// journal already holds is set to 0 again: nothing new is changed.
     public func darkenAgain(saved: UserChanges, settings: LidSettings) async {
-        guard settings.darkenDisplay else { return }
+        // Docked: a display sleep would black out the screen in use.
+        guard settings.darkenDisplay, !deps.externalDisplayActive() else { return }
         let mine = generation
         if saved.displayBrightness != nil { try? deps.display?.setBrightness(0) }
         if saved.keyboardBrightness != nil { try? deps.keyboard?.setBrightness(0) }

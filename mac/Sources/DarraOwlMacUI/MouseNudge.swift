@@ -1,5 +1,6 @@
 import ApplicationServices
 import CoreGraphics
+import DarraOwlSystem
 import Foundation
 
 /// Moves the pointer one pixel and back, as a real mouse would: some apps
@@ -26,6 +27,8 @@ enum MouseNudge {
               CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .mouseMoved) > 5,
               ![CGMouseButton.left, .right, .center].contains(where: { CGEventSource.buttonState(.hidSystemState, button: $0) })
         else { return }
+        // Known as DarraOwl's own: not taken for someone at the Mac.
+        UserIdle.noteOwnMove()
         let source = CGEventSource(stateID: .hidSystemState)
         for point in [CGPoint(x: here.x + 1, y: here.y), here] {
             CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?
