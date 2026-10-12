@@ -36,6 +36,8 @@ public enum CommandKind: Codable, Equatable, Sendable {
     case resumeApps
     /// The phone unpairs itself: the Mac forgets the signer's keys.
     case forgetThisDevice
+    /// "Toujours actif" goes on with the lid closed, during a session.
+    case setPresenceWhileClosed(Bool)
 
     /// Needs a Face ID signature from the phone's Secure Enclave key.
     public var isSensitive: Bool {
@@ -67,6 +69,7 @@ public enum CommandKind: Codable, Equatable, Sendable {
         case .pauseApps: "Mettre les apps en pause"
         case .resumeApps: "Relancer les apps"
         case .forgetThisDevice: "Désappairer cet iPhone"
+        case let .setPresenceWhileClosed(on): on ? "Rester disponible capot fermé" : "Ne plus rester disponible capot fermé"
         }
     }
 
@@ -120,7 +123,7 @@ public enum CommandKind: Codable, Equatable, Sendable {
         case let .startPresence(m):
             if let m { guard (1...Self.maxPresenceMinutes).contains(m) else { throw .duration } }
         case .stopSession, .sleepNow, .pauseDocker, .resumeDocker, .stopPresence, .displayOff, .lockScreen,
-             .setMuted, .pauseApps, .resumeApps, .forgetThisDevice:
+             .setMuted, .pauseApps, .resumeApps, .forgetThisDevice, .setPresenceWhileClosed:
             break
         }
     }

@@ -78,6 +78,7 @@ final class FakeTarget: CommandTarget {
     func setMuted(_ muted: Bool) async throws { try await record("muted \(muted)") }
     func pauseApps() async throws { try await record("pauseApps") }
     func resumeApps() async throws { try await record("resumeApps") }
+    func setPresenceWhileClosed(_ on: Bool) async throws { try await record("whileClosed \(on)") }
 }
 
 @MainActor

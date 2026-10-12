@@ -42,6 +42,8 @@ public final class RemoteController: CommandTarget {
     @ObservationIgnored private let sleepGate = SleepGate()
     /// The last phone was unpaired and does not know it yet.
     @ObservationIgnored private var farewellPending = false
+    /// A stop answered first, done 2 s later (lid closed).
+    @ObservationIgnored private var stopDeferred = false
     @ObservationIgnored private let log = OSLogEngineLogger(category: "remote")
     @ObservationIgnored private var lastBroadcast: MacState?
     @ObservationIgnored private var tick = 0
@@ -88,7 +90,13 @@ public final class RemoteController: CommandTarget {
         )
         self.hub = hub
         hub.mainEndpoints = { [weak self] in self?.mainEndpoints() }
-        hub.afterCommand = { [weak self] in await self?.publish(force: true) }
+        // Not when the command answered first and acts a moment later (sleep,
+        // a stop with the lid closed): its state is not new yet, and its
+        // result must leave before the Mac sleeps.
+        hub.afterCommand = { [weak self] in
+            guard let self, self.macPower != .goingToSleep, !self.stopDeferred else { return }
+            await self.publish(force: true)
+        }
         hub.onResult = { [weak self] result in
             self?.lastResult = result
             self?.server?.broadcast(.result(result))
@@ -382,7 +390,7 @@ public final class RemoteController: CommandTarget {
             containers: shownContainers,
             dockerPaused: status.frozen.contains { $0.bundleID == PausePolicy.dockerBundleID },
             settings: status.settings,
-            presence: MacState.Presence(active: model.presenceActive, until: model.presenceUntil),
+            presence: MacState.Presence(active: model.presenceActive, until: model.presenceUntil, whileClosed: model.presenceWhileClosed),
             muted: (try? audio.readDefaultOutput())?.muted,
             dockerRunning: NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == PausePolicy.dockerBundleID },
             pairedDevices: devices.map(\.id)
@@ -469,6 +477,7 @@ public final class RemoteController: CommandTarget {
         // sleepNow, so the phone never reads "pas de réponse" for a stop
         // that worked.
         if model.lidClosed, let status = model.status, status.session != nil {
+            stopDeferred = true
             Task {
                 try? await Task.sleep(for: .seconds(2))
                 do {
@@ -476,6 +485,7 @@ public final class RemoteController: CommandTarget {
                 } catch {
                     log.error("stop after answering failed: \(error.localizedDescription)")
                 }
+                stopDeferred = false
             }
             return
         }
@@ -552,6 +562,11 @@ public final class RemoteController: CommandTarget {
 
     public func stopPresence() async throws {
         model.stopPresence()
+        publishSoon()
+    }
+
+    public func setPresenceWhileClosed(_ on: Bool) async throws {
+        model.setPresenceWhileClosed(on)
         publishSoon()
     }
 

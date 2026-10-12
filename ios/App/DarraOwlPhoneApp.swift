@@ -22,7 +22,8 @@ struct DarraOwlPhoneApp: App {
                     }
                 }
                 .task { await PhoneRuntime.shared.start() }
-                .onChange(of: model.mac != nil) { _, paired in
+                // initial: the paired Mac is known from launch now.
+                .onChange(of: model.mac != nil, initial: true) { _, paired in
                     if paired, !runtime.isDemo { Task { await NotificationPermission.request() } }
                 }
                 .task(id: phase) {

@@ -121,6 +121,10 @@ struct OnboardingView: View {
             .padding(.horizontal, 24)
             .padding(.bottom, 40)
         }
+        // Any pairing that starts (a link confirmed too) shows its own outcome.
+        .onChange(of: model.isPairing) { _, pairing in
+            if pairing { pasteProblem = nil }
+        }
         .sheet(isPresented: $scanning) {
             ScannerSheet(close: { scanning = false }) { url in
                 scanning = false
@@ -504,6 +508,18 @@ struct MacView: View {
                         }
                     }
                     .buttonStyle(.glass)
+                }
+            }
+            if let whileClosed = presence.whileClosed {
+                Toggle(isOn: Binding(
+                    get: { whileClosed },
+                    set: { on in Task { await model.send(.setPresenceWhileClosed(on)) } }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Aussi capot fermé")
+                        Text("Pendant une session, si le Mac ne se verrouille pas quand l'écran s'éteint.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {

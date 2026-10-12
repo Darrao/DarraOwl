@@ -72,10 +72,14 @@ public struct MacState: Codable, Equatable, Sendable {
         public var active: Bool
         /// nil: no end time.
         public var until: Date?
+        /// The option to stay available with the lid closed, during a
+        /// session (nil: an older Mac without it).
+        public var whileClosed: Bool?
 
-        public init(active: Bool, until: Date?) {
+        public init(active: Bool, until: Date?, whileClosed: Bool? = nil) {
             self.active = active
             self.until = until
+            self.whileClosed = whileClosed
         }
     }
 

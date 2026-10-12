@@ -31,8 +31,10 @@ enum DemoMode {
     /// The demonstration Mac: every button changes it, as on a real one.
     struct Mac {
         var end: Date? = Date().addingTimeInterval(6420)
+        /// One id per session, as on a real Mac (the watch counts on it).
+        var sessionID = UUID()
         var watching: [Int32] = []
-        var presence = MacState.Presence(active: false, until: nil)
+        var presence = MacState.Presence(active: false, until: nil, whileClosed: false)
         var muted = false
         var agents = DemoMode.demoAgents
         var containers: [MacState.Container] = [.init(id: "3f9a2c1b7d4e", name: "postgres"), .init(id: "8b1e5d2a9c0f", name: "redis")]
@@ -49,7 +51,7 @@ enum DemoMode {
             }
             return MacState(
                 macID: DemoMode.macID, macName: "MacBook Pro", updatedAt: now, power: .awake,
-                session: end.map { Session(startedAt: now.addingTimeInterval(-2400), endsAt: $0, origin: .phone, watching: followed) },
+                session: end.map { Session(id: sessionID, startedAt: now.addingTimeInterval(-2400), endsAt: $0, origin: .phone, watching: followed) },
                 powerSnapshot: PowerSnapshot(battery: .percent(82), onExternalPower: false, thermal: .nominal, lidClosed: true, minutesToEmpty: 310),
                 lowPowerActive: end != nil, pausedApps: end == nil ? [] : pausedApps,
                 network: .init(kind: .hotspot, name: "iPhone", sessionBytes: 184_000_000),
@@ -65,6 +67,7 @@ enum DemoMode {
             case let .startSession(m):
                 guard end == nil else { return "Une session est déjà en cours." }
                 end = Date().addingTimeInterval(CommandKind.seconds(m))
+                sessionID = UUID()
             case let .extendSession(m):
                 guard let current = end else { return "Aucune session en cours." }
                 end = max(current, Date()).addingTimeInterval(CommandKind.seconds(m))
@@ -73,15 +76,20 @@ enum DemoMode {
                 watching = []
                 dockerPaused = false
             case let .watchAgent(pid):
-                if end == nil { end = Date().addingTimeInterval(settings.maxSessionDuration) }
+                if end == nil {
+                    end = Date().addingTimeInterval(settings.maxSessionDuration)
+                    sessionID = UUID()
+                }
                 if !watching.contains(pid) { watching.append(pid) }
             case let .stopAgent(pid):
                 agents.removeAll { $0.pid == pid }
                 watching.removeAll { $0 == pid }
             case let .startPresence(m):
-                presence = .init(active: true, until: m.map { Date().addingTimeInterval(CommandKind.seconds($0)) })
+                presence = .init(active: true, until: m.map { Date().addingTimeInterval(CommandKind.seconds($0)) }, whileClosed: presence.whileClosed)
             case .stopPresence:
-                presence = .init(active: false, until: nil)
+                presence = .init(active: false, until: nil, whileClosed: presence.whileClosed)
+            case let .setPresenceWhileClosed(on):
+                presence.whileClosed = on
             case let .setMuted(value):
                 muted = value
             case .pauseDocker:

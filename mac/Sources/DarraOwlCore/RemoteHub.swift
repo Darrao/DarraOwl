@@ -48,6 +48,7 @@ public protocol CommandTarget: AnyObject {
     func setMuted(_ muted: Bool) async throws
     func pauseApps() async throws
     func resumeApps() async throws
+    func setPresenceWhileClosed(_ on: Bool) async throws
     /// Settings now, to merge a partial change into.
     var currentSettings: PowerSettings? { get }
     /// Containers now running, to check a stop request against.
@@ -359,6 +360,7 @@ public final class RemoteHub {
         case .forgetThisDevice:
             // Only ever the signer itself.
             try unpair(deviceID: deviceID)
+        case let .setPresenceWhileClosed(on): try await target.setPresenceWhileClosed(on)
         case let .updateBatteryFloors(lowPower, end):
             guard var s = target.currentSettings else { throw RemoteError.helperUnavailable }
             s.lowPowerFloor = lowPower

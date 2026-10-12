@@ -28,9 +28,8 @@ final class PhoneRuntime {
         await model.pair(url: url)
     }
     @ObservationIgnored private let liveActivity = LiveActivityController()
-    /// When the Live Activity was changed here ahead of the Mac: a state
-    /// published before that does not undo it.
-    @ObservationIgnored private var localChangeAt: Date?
+    /// A change shown on the lock screen ahead of the Mac's answer.
+    @ObservationIgnored private var localChange: LocalChange?
     @ObservationIgnored private var started = false
 
     private init() {
@@ -101,28 +100,33 @@ final class PhoneRuntime {
     }
 
     /// The Live Activity shows the change at once (from the end it showed
-    /// before sending); the Mac's own state confirms it. Read again until a
-    /// state from after the command came: an older one is no news.
+    /// before sending); states that do not show it yet are taken for ones
+    /// from before the command, until the Mac's answer shows or the command
+    /// expired. The state is read again until then.
     private func afterFire(_ kind: CommandKind, baseline: Date?) {
         let firedAt = Date()
+        let expires = firedAt.addingTimeInterval(Policy.commandLifetime + 10)
         if !isDemo {
             switch kind {
             case let .extendSession(minutes):
-                localChangeAt = firedAt
+                // A timed session still running: its new end is known.
+                if let baseline, baseline > firedAt, liveActivity.currentIsTimed {
+                    localChange = LocalChange(expectedEnd: baseline.addingTimeInterval(CommandKind.seconds(minutes)), until: expires)
+                }
                 liveActivity.extendLocally(from: baseline, by: CommandKind.seconds(minutes))
             case .stopSession:
-                localChangeAt = firedAt
+                localChange = LocalChange(expectedEnd: nil, until: expires)
                 liveActivity.end()
             default:
                 break
             }
         }
+        let waitsForAnswer = localChange != nil
         Task {
-            for wait in [4.0, 6.0, 10.0] {
+            for wait in [4.0, 6.0, 10.0, 20.0] {
                 try? await Task.sleep(for: .seconds(wait))
                 await model.refreshFromCloud()
-                // A couple of seconds of slack for the two clocks.
-                if let state = model.state, state.updatedAt >= firedAt.addingTimeInterval(-2) { break }
+                if !waitsForAnswer || localChange == nil { break }
             }
         }
     }
@@ -179,9 +183,10 @@ final class PhoneRuntime {
             updatedAt: state.updatedAt
         )
         SharedStore.save(snapshot)
-        if let changed = localChangeAt, state.updatedAt < changed.addingTimeInterval(-2) {
-            // Older than the change shown on the lock screen: left as it is.
+        if let change = localChange, !change.isShown(by: state), Date() < change.until {
+            // From before the command: the lock screen keeps the change.
         } else {
+            localChange = nil
             liveActivity.update(state: state, online: snapshot.online)
         }
         if let watch = watchSnapshot() { WatchBridge.shared.push(watch) }
@@ -253,6 +258,8 @@ final class LiveActivityController {
 
     /// The end shown now, read before a command leaves.
     var currentEnd: Date? { current?.content.state.endsAt }
+    /// A timed session (not one following an agent, whose end is not known).
+    var currentIsTimed: Bool { current.map { $0.content.state.following == nil } ?? false }
 
     /// "+1 h" left: the new end shows at once, counted from the end shown
     /// before sending, never twice (the Mac's own state may already be
@@ -284,5 +291,21 @@ final class LiveActivityController {
                 await activity.end(nil, dismissalPolicy: .immediate)
             }
         }
+    }
+}
+
+/// A command's effect shown on the lock screen before the Mac's answer.
+struct LocalChange {
+    /// The end the session should reach; nil: it should be over.
+    var expectedEnd: Date?
+    /// Past this the command has expired: the Mac's state is right again.
+    var until: Date
+
+    /// The state shows the change, or that nothing runs any more: then it
+    /// is the Mac's word again.
+    func isShown(by state: MacState) -> Bool {
+        guard state.power == .awake, let session = state.session else { return true }
+        guard let expectedEnd else { return false }
+        return session.endsAt >= expectedEnd.addingTimeInterval(-5)
     }
 }

@@ -234,7 +234,15 @@ struct MenuView: View {
                 }
                 .controlSize(.small)
             }
-            Text("Le Mac ne se met pas en veille et ton statut Teams reste « Disponible », tant que le capot est ouvert. Capot fermé, lance une session.")
+            Toggle("Aussi capot fermé, pendant une session", isOn: Binding(
+                get: { model.presenceWhileClosed },
+                set: { model.setPresenceWhileClosed($0) }
+            ))
+            .toggleStyle(.checkbox)
+            .controlSize(.small)
+            Text(model.presenceWhileClosed
+                 ? "Le Mac ne se met pas en veille et ton statut Teams reste « Disponible ». Capot fermé, pendant une session, aussi, si le Mac ne se verrouille pas quand l'écran s'éteint."
+                 : "Le Mac ne se met pas en veille et ton statut Teams reste « Disponible », tant que le capot est ouvert. Capot fermé, lance une session.")
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if !model.presenceActive, let stop = model.presenceLastStop, stop != .user {

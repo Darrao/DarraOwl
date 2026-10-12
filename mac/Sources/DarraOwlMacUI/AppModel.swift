@@ -79,8 +79,7 @@ public final class AppModel {
         displayRefusal = display.refusal()
         keyboardRefusal = keyboard.refusal()
         let gateway = AppHelperGateway(client: client) { [weak self] status in
-            self?.status = status
-            self?.presence.setSessionRunning(status.session != nil)
+            self?.take(status)
         }
         lid = LidCoordinator(.init(
             display: displayRefusal == nil ? display : nil,
@@ -501,12 +500,17 @@ public final class AppModel {
 
     private func apply(_ response: HelperResponse, showingError: Bool = true) {
         reachable = true
-        if let status = response.status {
-            self.status = status
-            presence.setSessionRunning(status.session != nil)
-        }
+        if let status = response.status { take(status) }
         if showingError, let error = response.error { lastError = error }
         now = Date()
+    }
+
+    /// Every status from the helper goes through here.
+    private func take(_ new: EngineStatus) {
+        // Another session (or none): restores get their tries again.
+        if new.session?.id != status?.session?.id { failedRestores = 0 }
+        status = new
+        presence.setSessionRunning(new.session != nil)
     }
 
     /// After an update the running helper is still the old binary. An idle one
