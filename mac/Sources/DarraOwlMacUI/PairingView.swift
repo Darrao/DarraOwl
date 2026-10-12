@@ -54,6 +54,10 @@ struct PairingView: View {
                     .disabled(!model.reachable)
             }
         }
+        if let problem = remote.pairingProblem {
+            Text(problem).font(.caption).foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var devices: some View {
@@ -82,7 +86,7 @@ struct PairingView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Connexion").font(.headline)
             if let port = remote.serverPort {
-                Text("Serveur chiffré actif, port \(port).").font(.caption)
+                Text("Serveur chiffré actif, port \(String(port)).").font(.caption)
             } else if remote.devices.isEmpty {
                 Text("Le serveur chiffré démarre après le premier appairage.").font(.caption).foregroundStyle(.secondary)
             } else {
@@ -93,7 +97,7 @@ struct PairingView: View {
                 .foregroundStyle(remote.cloudProblem == nil ? Color.secondary : Color.orange)
                 .fixedSize(horizontal: false, vertical: true)
             if let result = remote.lastResult {
-                Text("Dernière commande : \(result.status.rawValue)\(result.message.map { ", \($0)" } ?? "")")
+                Text("Dernière commande : \(result.status.label)\(result.message.map { ", \($0)" } ?? "")")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

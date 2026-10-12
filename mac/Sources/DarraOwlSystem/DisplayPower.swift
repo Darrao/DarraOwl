@@ -54,12 +54,27 @@ public enum DisplayGuards {
         return nil
     }
 
-    static func builtInDisplayID() -> CGDirectDisplayID {
-        let main = CGMainDisplayID()
+    /// The built-in panel, nil when it is not online (lid closed with an
+    /// external display). Never another display: dimming must not reach an
+    /// external monitor.
+    static func builtInDisplayID() -> CGDirectDisplayID? {
         var ids = [CGDirectDisplayID](repeating: 0, count: 16)
         var count: UInt32 = 0
-        guard CGGetOnlineDisplayList(UInt32(ids.count), &ids, &count) == .success else { return main }
-        return ids.prefix(Int(count)).first { CGDisplayIsBuiltin($0) != 0 } ?? main
+        guard CGGetOnlineDisplayList(UInt32(ids.count), &ids, &count) == .success else { return nil }
+        return ids.prefix(Int(count)).first { CGDisplayIsBuiltin($0) != 0 }
+    }
+}
+
+/// External monitors.
+public enum ExternalDisplays {
+    /// An external display is on: a closed lid then means "docked", someone
+    /// works on the external screen.
+    @MainActor
+    public static func anyActive() -> Bool {
+        var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(UInt32(ids.count), &ids, &count) == .success else { return false }
+        return ids.prefix(Int(count)).contains { CGDisplayIsBuiltin($0) == 0 }
     }
 }
 
@@ -118,7 +133,12 @@ public final class DisplayServicesDimmer: DisplayDimming {
     }
 
     public func isAsleep() -> Bool {
-        CGDisplayIsAsleep(DisplayGuards.builtInDisplayID()) != 0
+        guard let id = DisplayGuards.builtInDisplayID() else { return true }
+        return CGDisplayIsAsleep(id) != 0
+    }
+
+    public func builtInOnline() -> Bool {
+        DisplayGuards.builtInDisplayID() != nil
     }
 
     private func symbols() throws -> Symbols {
@@ -151,7 +171,9 @@ public final class DisplayServicesDimmer: DisplayDimming {
     }
 
     private func changeable(_ s: Symbols) throws -> CGDirectDisplayID {
-        let display = DisplayGuards.builtInDisplayID()
+        guard let display = DisplayGuards.builtInDisplayID() else {
+            throw DisplayPowerError(what: "écran intégré éteint (capot fermé ?)")
+        }
         guard s.canChange(display) else { throw DisplayPowerError(what: "luminosité non modifiable sur l'écran \(display)") }
         return display
     }

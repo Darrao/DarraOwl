@@ -58,7 +58,7 @@ struct MenuView: View {
 
     private var stateLine: String {
         if let session = model.session {
-            if let watching = session.watchingText { return "Éveillé tant que \(watching) tourne" }
+            if let watching = session.watchingText { return "Éveillé tant que \(watching) \(session.watchingVerb)" }
             return "Éveillé jusqu'à \(DurationText.clock(session.endsAt))"
         }
         return "Veille normale"
@@ -257,7 +257,7 @@ struct MenuView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if model.session == nil, let end = status.lastEnd {
-                Text("Dernière session : \(end.reason.label.lowercased()) à \(DurationText.clock(end.endedAt))")
+                Text("Dernière session : \(end.reason.inlineLabel) à \(DurationText.clock(end.endedAt))")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

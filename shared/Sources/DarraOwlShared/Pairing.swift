@@ -48,6 +48,22 @@ public struct PairingInvite: Codable, Equatable, Sendable {
         else { throw .malformedInvite }
         self = invite
     }
+
+    /// Why this invite cannot come from a DarraOwl Mac, or nil. A link can
+    /// reach the phone from anywhere: its validity must be the normal five
+    /// minutes and its addresses private ones, so a crafted link cannot
+    /// point the phone at a server on the internet.
+    public func implausibility(now: Date) -> String? {
+        if expiresAt > now.addingTimeInterval(Self.lifetime + Self.clockTolerance) {
+            return "Ce code n'a pas une durée de validité normale."
+        }
+        if macName.count > 100 { return "Ce code n'est pas un code DarraOwl." }
+        if let endpoints, !endpoints.isPlausible { return "Ce code contient des adresses qui ne sont pas celles d'un Mac proche." }
+        return nil
+    }
+
+    /// Difference allowed between the Mac's and the phone's clocks.
+    public static let clockTolerance: TimeInterval = 120
 }
 
 /// The phone's answer: its public keys, bound to the invite by an HMAC keyed
@@ -104,12 +120,16 @@ public struct PairingResponse: Codable, Equatable, Sendable {
     public var macID: UUID
     public var macName: String
     public var message: String?
+    /// Where the paired-devices listener is: the invite only has the
+    /// pairing listener's port. Optional: older Macs do not send it.
+    public var endpoints: Endpoints?
 
-    public init(accepted: Bool, macID: UUID, macName: String, message: String?) {
+    public init(accepted: Bool, macID: UUID, macName: String, message: String?, endpoints: Endpoints? = nil) {
         self.accepted = accepted
         self.macID = macID
         self.macName = macName
         self.message = message
+        self.endpoints = endpoints
     }
 }
 

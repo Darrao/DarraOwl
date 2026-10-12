@@ -34,20 +34,38 @@ public enum AgentDetector {
         public var arguments: [String]
         public var cwd: String?
         public var startedAt: Date
+        /// The executable's path, when read.
+        public var path: String?
 
-        public init(pid: Int32, ppid: Int32, name: String, arguments: [String], cwd: String?, startedAt: Date) {
+        public init(pid: Int32, ppid: Int32, name: String, arguments: [String], cwd: String?, startedAt: Date, path: String? = nil) {
             self.pid = pid
             self.ppid = ppid
             self.name = name
             self.arguments = arguments
             self.cwd = cwd
             self.startedAt = startedAt
+            self.path = path
         }
+    }
+
+    /// A process name that is a version number: Claude Code's native
+    /// installer runs `~/.local/share/claude/versions/2.1.220`, so the
+    /// kernel names the process "2.1.220".
+    public static func isVersionName(_ name: String) -> Bool {
+        let parts = name.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count >= 2 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
     }
 
     /// The tool a process is, or nil. Node-based CLIs run as `node <path>/gemini`.
     public static func tool(of c: Candidate) -> String? {
         if tools.contains(c.name) { return c.name }
+        if isVersionName(c.name) {
+            for tool in tools {
+                if c.path?.contains("/\(tool)/versions/") == true { return tool }
+                if let argv0 = c.arguments.first, URL(fileURLWithPath: argv0).lastPathComponent == tool { return tool }
+            }
+            return nil
+        }
         guard c.name == "node" || c.name.hasPrefix("node") || c.name == "bun" else { return nil }
         for arg in c.arguments.prefix(3) {
             let base = URL(fileURLWithPath: arg).lastPathComponent
@@ -110,7 +128,13 @@ public enum ClaudeHook {
     public struct Payload: Decodable, Sendable {
         public var hook_event_name: String
         public var cwd: String?
+        /// "permission_prompt", "elicitation_dialog", "idle_prompt",
+        /// "auth_success"… Absent in older Claude Code versions.
+        public var notification_type: String?
     }
+
+    /// Notifications that mean Claude needs the user to answer.
+    static let waitingTypes: Set<String> = ["permission_prompt", "elicitation_dialog"]
 
     public enum Parsed: Equatable, Sendable {
         case finished(cwd: String?)
@@ -122,7 +146,10 @@ public enum ClaudeHook {
         guard let p = try? JSONDecoder().decode(Payload.self, from: body) else { return nil }
         switch p.hook_event_name {
         case "Stop": return .finished(cwd: p.cwd)
-        case "Notification": return .waiting(cwd: p.cwd)
+        case "Notification":
+            // "idle_prompt" (a minute after a finished turn) is not a question.
+            guard let type = p.notification_type else { return .waiting(cwd: p.cwd) }
+            return waitingTypes.contains(type) ? .waiting(cwd: p.cwd) : .ignored
         default: return .ignored
         }
     }

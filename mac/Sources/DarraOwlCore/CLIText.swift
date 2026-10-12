@@ -9,18 +9,18 @@ public enum CLIText {
             let remaining = DurationText.short(session.remaining(at: s.now))
             let end = DurationText.clock(session.endsAt, timeZone: timeZone)
             if let watching = session.watchingText {
-                lines.append("Éveillé tant que \(watching) tourne, au plus jusqu'à \(end) (encore \(remaining)).")
+                lines.append("Éveillé tant que \(watching) \(session.watchingVerb), au plus jusqu'à \(end) (encore \(remaining)).")
                 if let keep = session.keepUntil, keep > s.now {
-                    lines.append("Session prévue jusqu'à \(DurationText.clock(keep, timeZone: timeZone)) même si \(session.watching.count > 1 ? "ils finissent" : "il finit") avant.")
+                    lines.append("Session prévue jusqu'à \(DurationText.clock(keep, timeZone: timeZone)) même \(session.watching.count > 1 ? "s'ils finissent" : "s'il finit") avant.")
                 }
             } else {
                 lines.append("Éveillé jusqu'à \(end) (encore \(remaining)).")
             }
             lines.append("Lancée depuis \(origin(session.origin)).")
         } else {
-            lines.append("Veille normale : aucune session.")
+            lines.append(backToNormal(s) ? "Veille normale : aucune session." : "Aucune session. Retour à la normale en cours.")
             if let last = s.lastEnd {
-                lines.append("Dernière session : \(last.reason.label.lowercased()) à \(DurationText.clock(last.endedAt, timeZone: timeZone)).")
+                lines.append("Dernière session : \(last.reason.inlineLabel) à \(DurationText.clock(last.endedAt, timeZone: timeZone)).")
             }
         }
         if let power = s.power {
@@ -35,6 +35,11 @@ public enum CLIText {
             lines.append("Restauration incomplète, nouvel essai en cours : " + s.pendingUndo.joined(separator: " ; "))
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// After a stop or a finished command: the Mac really is back to normal.
+    public static func backToNormal(_ s: EngineStatus) -> Bool {
+        s.session == nil && !s.sleepHeld && !s.lowPowerHeld && s.pendingUndo.isEmpty
     }
 
     public static func origin(_ o: SessionOrigin) -> String {

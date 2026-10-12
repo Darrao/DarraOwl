@@ -16,13 +16,21 @@ public final class RemoteController: CommandTarget {
     public private(set) var invite: PairingInvite?
     public private(set) var devices: [PairedDevice] = []
     public private(set) var cloudProblem: String?
+    /// Pairing or unpairing problem, kept until the next attempt.
+    public private(set) var pairingProblem: String?
     public private(set) var macPower: MacState.Power = .awake
+    /// Copies of the direct server's and hook server's state, so windows
+    /// showing them refresh (those objects are not observable).
+    public private(set) var serverPort: UInt16?
+    public private(set) var serverProblem: String?
+    public private(set) var connectedDevices: Set<UUID> = []
+    public private(set) var hookListening = false
     public private(set) var containers: [MacState.Container] = []
     public private(set) var lastResult: CommandResult?
 
     @ObservationIgnored private unowned let model: AppModel
     @ObservationIgnored private let store = KeychainPairingStore()
-    @ObservationIgnored private var hub: RemoteHub!
+    @ObservationIgnored private var hub: RemoteHub?
     @ObservationIgnored private var server: LinkServer?
     @ObservationIgnored private var cloud: CloudKitMailbox?
     @ObservationIgnored private let network = NetworkInfo()
@@ -32,7 +40,9 @@ public final class RemoteController: CommandTarget {
     @ObservationIgnored private var lastBroadcast: MacState?
     @ObservationIgnored private var tick = 0
     @ObservationIgnored private var started = false
+    @ObservationIgnored private var lastStartAttempt: Date?
     @ObservationIgnored private var accountProblem: String?
+    @ObservationIgnored private var lastBroadcastAt: Date?
     @ObservationIgnored private var events = EventCenter()
     @ObservationIgnored private var signals = AgentSignals()
     @ObservationIgnored private var agentsSeenInSession: (session: UUID?, tools: [String]) = (nil, [])
@@ -47,15 +57,14 @@ public final class RemoteController: CommandTarget {
         self.model = model
     }
 
-    var serverPort: UInt16? { server?.port }
-    var serverProblem: String? { server?.lastError }
-    var connectedDevices: Set<UUID> { server?.connectedDevices ?? [] }
-
     // MARK: Lifecycle
 
+    /// Starts the link once the Keychain answers; retried every 30 s
+    /// otherwise (a locked keychain at login).
     func start() {
         guard !started else { return }
-        started = true
+        if let last = lastStartAttempt, Date().timeIntervalSince(last) < 30 { return }
+        lastStartAttempt = Date()
         let identity: MacIdentity
         do {
             identity = try store.identity()
@@ -63,26 +72,30 @@ public final class RemoteController: CommandTarget {
             cloudProblem = "Trousseau : \(error.localizedDescription)"
             return
         }
+        started = true
         let cloud = CloudKitMailbox(macID: identity.macID)
         self.cloud = cloud
-        hub = RemoteHub(
+        let hub = RemoteHub(
             store: store, target: self, cloud: cloud,
             ledgerStore: JSONFileStore<CommandLedger>(directory: Self.appSupport, fileName: "commands.json"),
             clock: SystemClock(), log: log
         )
+        self.hub = hub
+        hub.mainEndpoints = { [weak self] in self?.mainEndpoints() }
         hub.onResult = { [weak self] result in
             self?.lastResult = result
             self?.server?.broadcast(.result(result))
         }
         hub.onPaired = { [weak self] _, _ in
-            guard let self else { return }
-            self.devices = self.hub.pairedDevices()
+            guard let self, let hub = self.hub else { return }
+            self.devices = hub.pairedDevices()
+            self.pairingProblem = nil
             self.server?.stopPairing()
             self.invite = nil
             self.restartServer()
         }
         hub.onDeviceRemoved = { [weak self] id in
-            self?.server?.disconnect(deviceID: id)
+            self?.server?.disconnectAll()
             self?.restartServer()
         }
         server = LinkServer(macID: identity.macID, macName: macName, handlers: .init(
@@ -91,9 +104,11 @@ public final class RemoteController: CommandTarget {
             isPaired: { [weak self] id in self?.devices.contains { $0.id == id } ?? false }
         ))
         network.onChange = { [weak self] in self?.publishSoon() }
-        let hooks = HookServer(token: HookToken.current()) { [weak self] parsed in self?.handleHook(parsed) }
-        hooks.start()
-        hookServer = hooks
+        if let token = HookToken.current() {
+            let hooks = HookServer(token: token) { [weak self] parsed in self?.handleHook(parsed) }
+            hooks.start()
+            hookServer = hooks
+        }
         agents = AgentScanner.scan()
         network.start()
         devices = hub.pairedDevices()
@@ -107,9 +122,15 @@ public final class RemoteController: CommandTarget {
         }
     }
 
+    /// Where paired phones reach the main listener: its port once it runs,
+    /// the fixed port before (the first pairing starts it).
+    private func mainEndpoints() -> Endpoints? {
+        EndpointPicker.endpoints(from: NetworkInfo.interfaces(), port: server?.port ?? LinkProtocol.defaultPort)
+    }
+
     /// Called every second by the app model.
     func everySecond() {
-        guard started else { return }
+        guard started, let hub else { return }
         tick += 1
         if tick % 2 == 0 { Task { await publish() } }
         let pollEvery = model.session == nil ? 60 : 20
@@ -117,15 +138,30 @@ public final class RemoteController: CommandTarget {
         if tick % 30 == 0 { Task { await refreshContainers() } }
         if tick % 5 == 0 { checkEvents() }
         if tick % 10 == 0 { refreshAgents() }
+        if tick % 60 == 0, let cloud { Task { accountProblem = await cloud.accountProblem() } }
         if tick % 3600 == 0 { Task { await cloud?.removeEvents(before: Date().addingTimeInterval(-86_400)) } }
         if let invite, Date() > invite.expiresAt { cancelInvite() }
         let problem = accountProblem ?? hub.cloudError.map { "iCloud : \($0)" }
         if problem != cloudProblem { cloudProblem = problem }
+        // Mirrors of objects that are not observable.
+        if server?.port != serverPort { serverPort = server?.port }
+        if server?.lastError != serverProblem { serverProblem = server?.lastError }
+        let connected = server?.connectedDevices ?? []
+        if connected != connectedDevices { connectedDevices = connected }
+        let listening = hookServer?.isListening ?? false
+        if listening != hookListening { hookListening = listening }
+        if hookServer == nil, tick % 30 == 0, let token = HookToken.current() {
+            let hooks = HookServer(token: token) { [weak self] parsed in self?.handleHook(parsed) }
+            hooks.start()
+            hookServer = hooks
+        } else if tick % 30 == 0, hookServer?.isListening == false {
+            hookServer?.start()
+        }
     }
 
     /// A silent push from CloudKit: the phone wrote something.
     func cloudChanged() {
-        guard started else { return }
+        guard started, let hub else { return }
         Task { await hub.pollCloud(macName: macName) }
     }
 
@@ -165,7 +201,7 @@ public final class RemoteController: CommandTarget {
             break
         }
         publishSoon()
-        guard let event, nobodyAtTheMac else { return }
+        guard let event, nobodyAtTheMac, let hub, !devices.isEmpty else { return }
         Task { await hub.post([event]) }
     }
 
@@ -178,13 +214,16 @@ public final class RemoteController: CommandTarget {
     // MARK: Events
 
     private func checkEvents() {
-        guard let status = model.status else { return }
+        guard let status = model.status, let hub else { return }
         sessionBytes = dataMeter.update(session: status.session?.id, counter: NetworkInfo.byteCounter())
         let found = events.update(EventCenter.Input(
             now: Date(), session: status.session, power: status.power, networkUp: network.isUp,
-            sessionBytes: sessionBytes, lastEnd: status.lastEnd, alerts: status.settings.alerts,
+            // After the end, the ended session's total, for its recap.
+            sessionBytes: sessionBytes ?? dataMeter.lastSessionTotal, lastEnd: status.lastEnd, alerts: status.settings.alerts,
             agentsDuringSession: agentsSeenInSession.tools
         ))
+        // No paired phone: nobody to tell, nothing goes to iCloud.
+        guard !devices.isEmpty else { return }
         if !found.isEmpty || !hub.pendingEvents.isEmpty {
             Task { await hub.post(found) }
         }
@@ -193,24 +232,34 @@ public final class RemoteController: CommandTarget {
     // MARK: Pairing
 
     func showInvite() {
-        guard let hub else { return }
+        guard let hub else {
+            pairingProblem = "Appairage impossible : \(cloudProblem ?? "le trousseau ne répond pas.")"
+            return
+        }
+        pairingProblem = nil
         do {
-            var endpoints = currentEndpoints()
-            let invite = try hub.makeInvite(macName: macName, endpoints: endpoints)
-            server?.startPairing(identity: LinkKeys.pairingIdentity(secret: invite.secret), key: LinkKeys.pairingKey(secret: invite.secret, macID: invite.macID))
-            // The pairing listener has its own port; wait for it, then put it in the code.
+            let invite = try hub.makeInvite(macName: macName, endpoints: nil)
+            let listening = server?.startPairing(identity: LinkKeys.pairingIdentity(secret: invite.secret),
+                                                 key: LinkKeys.pairingKey(secret: invite.secret, macID: invite.macID)) ?? false
+            if !listening { pairingProblem = "Appairage direct indisponible : le code passera par iCloud." }
+            // The pairing listener has its own port; wait for it, then put it
+            // and this Mac's addresses in the code. Without it, the code still
+            // works through iCloud.
             Task {
-                for _ in 0..<20 where server?.pairingPort == nil {
+                for _ in 0..<30 where server?.pairingPort == nil {
                     try? await Task.sleep(for: .milliseconds(100))
                 }
-                guard let port = server?.pairingPort, self.hub.invite?.secret == invite.secret else { return }
-                endpoints?.port = port
-                var withPort = invite
-                withPort.endpoints = endpoints
-                self.invite = withPort
+                guard hub.invite?.secret == invite.secret else { return }
+                var shown = invite
+                if let port = server?.pairingPort {
+                    shown.endpoints = EndpointPicker.endpoints(from: NetworkInfo.interfaces(), port: port)
+                } else if listening {
+                    pairingProblem = "Appairage direct indisponible : le code passera par iCloud."
+                }
+                self.invite = shown
             }
         } catch {
-            cloudProblem = "Appairage : \(error.localizedDescription)"
+            pairingProblem = "Appairage : \(error.localizedDescription)"
         }
     }
 
@@ -221,16 +270,21 @@ public final class RemoteController: CommandTarget {
     }
 
     func unpair(_ device: PairedDevice) {
+        guard let hub else { return }
         do {
             try hub.unpair(deviceID: device.id)
+            pairingProblem = nil
         } catch {
-            cloudProblem = "Désappairage : \(error.localizedDescription)"
+            pairingProblem = "Désappairage : \(error.localizedDescription)"
         }
         devices = hub.pairedDevices()
     }
 
     private func pair(_ request: PairingRequest) -> PairingResponse {
-        hub.handlePairing(request, macName: macName, via: .direct)
+        guard let hub else {
+            return PairingResponse(accepted: false, macID: request.macID, macName: macName, message: "Le Mac n'est pas prêt.")
+        }
+        return hub.handlePairing(request, macName: macName, via: .direct)
     }
 
     // MARK: Direct link
@@ -240,6 +294,7 @@ public final class RemoteController: CommandTarget {
         case .getState:
             return makeState().map { .state($0) }
         case let .command(signed):
+            guard let hub else { return nil }
             return .result(await hub.handle(signed, via: .direct, peer: deviceID))
         case .hello, .pair:
             return nil
@@ -247,6 +302,7 @@ public final class RemoteController: CommandTarget {
     }
 
     private func restartServer() {
+        guard let hub else { return }
         let keys = devices.compactMap { d in hub.linkKey(deviceID: d.id).map { (deviceID: d.id, key: $0) } }
         server?.start(keys: keys)
     }
@@ -260,13 +316,15 @@ public final class RemoteController: CommandTarget {
         if mask, let watching = session?.watching {
             session?.watching = watching.map { var p = $0; p.project = nil; return p }
         }
+        // Compose names start with the project folder: masked with the rest.
+        let shownContainers = mask ? containers.map { var c = $0; c.name = "Conteneur \(c.id.prefix(6))"; return c } : containers
         return MacState(
             macID: identity.macID, macName: macName, updatedAt: Date(), power: macPower,
             session: session, powerSnapshot: status.power, lowPowerActive: status.lowPowerHeld,
             pausedApps: Set(status.frozen.map(\.name)).sorted(),
             network: MacState.Network(kind: network.kind, sessionBytes: sessionBytes),
             agents: signals.states(agents, now: Date(), mask: mask),
-            containers: containers,
+            containers: shownContainers,
             dockerPaused: status.frozen.contains { $0.bundleID == PausePolicy.dockerBundleID },
             settings: status.settings,
             presence: MacState.Presence(active: model.presenceActive, until: model.presenceUntil),
@@ -284,11 +342,17 @@ public final class RemoteController: CommandTarget {
     }
 
     private func publish(force: Bool = false) async {
-        guard let state = makeState() else { return }
-        if lastBroadcast.map({ !RemoteHub.sameContent($0, state) }) ?? true {
+        guard let state = makeState(), let hub else { return }
+        // On change, and every 30 s: a phone that hears nothing for a minute
+        // knows the link is dead even when no TCP error came.
+        let stale = lastBroadcastAt.map { Date().timeIntervalSince($0) >= 30 } ?? true
+        if stale || (lastBroadcast.map({ !RemoteHub.sameContent($0, state) }) ?? true) {
             server?.broadcast(.state(state))
             lastBroadcast = state
+            lastBroadcastAt = Date()
         }
+        // No paired phone: nothing to publish to iCloud.
+        guard !devices.isEmpty else { return }
         await hub.publishIfDue(state, endpoints: currentEndpoints(), force: force)
     }
 
@@ -308,7 +372,7 @@ public final class RemoteController: CommandTarget {
             Task { @MainActor in
                 self?.macPower = .awake
                 await self?.publish(force: true)
-                if let self { await self.hub.pollCloud(macName: self.macName) }
+                if let self, let hub = self.hub { await hub.pollCloud(macName: self.macName) }
             }
         }
     }
@@ -334,6 +398,8 @@ public final class RemoteController: CommandTarget {
         _ = try await model.sendHelper(.stop(reason: .userStopped))
     }
 
+    /// Answers first, sleeps 2 s later: a Mac asleep cannot send the result,
+    /// and the phone would show "pas de réponse" for a command that worked.
     public func sleepNow() async throws {
         // Brightness and sound first: the helper cannot put them back.
         if let changes = model.status?.userChanges, !changes.isEmpty {
@@ -341,11 +407,22 @@ public final class RemoteController: CommandTarget {
         }
         macPower = .goingToSleep
         await publish(force: true)
-        _ = try await model.sendHelper(.sleepNow)
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            do {
+                _ = try await model.sendHelper(.sleepNow)
+            } catch {
+                log.error("sleep now failed: \(error.localizedDescription)")
+                macPower = .awake
+                await publish(force: true)
+            }
+        }
     }
 
     public func pauseDocker() async throws {
-        guard model.session != nil else { throw RemoteError.notDuringSession }
+        guard let status = model.status, status.session != nil else { throw RemoteError.notDuringSession }
+        // Already paused: nothing to do.
+        if status.frozen.contains(where: { $0.bundleID == PausePolicy.dockerBundleID }) { return }
         try await model.lidCoordinator.pauseDocker()
     }
 
@@ -395,7 +472,7 @@ public final class RemoteController: CommandTarget {
     }
 
     public func displayOff() async throws {
-        PublicDisplaySleep().requestSleep()
+        model.displayOffFromPhone()
     }
 
     public func lockScreen() async throws {
@@ -408,8 +485,9 @@ public final class RemoteController: CommandTarget {
     }
 
     public func pauseApps() async throws {
-        guard model.session != nil, let settings = model.status?.settings else { throw RemoteError.notDuringSession }
-        try await model.lidCoordinator.pauseApps(settings.lid.pausedApps)
+        guard let status = model.status, status.session != nil else { throw RemoteError.notDuringSession }
+        let keeping = Set(agents.map(\.pid)).union(status.session?.watching.map(\.pid) ?? [])
+        try await model.lidCoordinator.pauseApps(status.settings.lid.pausedApps, alreadyPaused: Set(status.frozen.map(\.bundleID)), keeping: keeping)
     }
 
     public func resumeApps() async throws {

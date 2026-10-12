@@ -39,8 +39,10 @@ public enum CLIMain {
             print(CLIText.status(status))
             return 0
         case .stop:
-            guard await request(client, .stop(reason: .userStopped)) != nil else { return 1 }
-            print("Session arrêtée, veille normale rétablie.")
+            guard let status = await request(client, .stop(reason: .userStopped)) else { return 1 }
+            print(CLIText.backToNormal(status)
+                ? "Session arrêtée, veille normale rétablie."
+                : "Session arrêtée. Retour à la normale en cours : voir darraowl status.")
             return 0
         case let .run(seconds, arguments):
             return await run(arguments, seconds: seconds, client: client)
@@ -71,16 +73,24 @@ public enum CLIMain {
             say("darraowl : Mac éveillé tant que \(name) tourne, au plus jusqu'à \(DurationText.clock(end)).")
         }
 
-        let code = Spawn.runAndWait(arguments)
+        let outcome = Spawn.runAndWait(arguments)
 
         if let after = await request(client, .release(pid: pid), quiet: true) {
+            let what = outcome.started ? "\(name) terminé" : "\(name) n'a pas pu être lancé"
             if let session = after.session {
-                say("darraowl : \(name) terminé, la session continue jusqu'à \(DurationText.clock(session.endsAt)).")
+                say("darraowl : \(what), la session continue jusqu'à \(DurationText.clock(session.endsAt)).")
+            } else if CLIText.backToNormal(after) {
+                say("darraowl : \(what), veille normale rétablie.")
             } else {
-                say("darraowl : \(name) terminé, veille normale rétablie.")
+                say("darraowl : \(what). Retour à la normale en cours : voir darraowl status.")
             }
         }
-        return code
+        // Killed by Ctrl-C (or Ctrl-\\): die the same way, so a shell loop stops too.
+        if let signal = outcome.signal, signal == SIGINT || signal == SIGQUIT {
+            Spawn.restoreDefaults()
+            raise(signal)
+        }
+        return outcome.code
     }
 
     /// Sends a request; prints why it failed and returns nil.
@@ -103,8 +113,10 @@ public enum CLIMain {
         }
     }
 
+    /// To stderr. fputs, not FileHandle: writing to a terminal that went
+    /// away must not raise an exception.
     nonisolated static func say(_ text: String) {
-        FileHandle.standardError.write(Data((text + "\n").utf8))
+        fputs(text + "\n", stderr)
     }
 }
 
@@ -122,21 +134,41 @@ enum ProcessStart {
 
 /// Runs the command in the foreground, attached to the terminal, and waits.
 enum Spawn {
-    nonisolated(unsafe) private static var child: pid_t = 0
-    nonisolated(unsafe) private static var sources: [DispatchSourceSignal] = []
+    struct Outcome {
+        /// The command's exit code, 128 + the signal that killed it, or
+        /// 126/127 when it could not start (as a shell does).
+        var code: Int32
+        /// The signal that killed it.
+        var signal: Int32?
+        var started: Bool
+    }
 
-    /// The command's exit code, 128 + the signal that killed it, or 126/127
-    /// when it could not start (as a shell does).
-    static func runAndWait(_ arguments: [String]) -> Int32 {
+    nonisolated(unsafe) private static var child: pid_t = 0
+    /// A signal that came before the child existed, passed on once it does.
+    nonisolated(unsafe) private static var pending: Int32 = 0
+    nonisolated(unsafe) private static var sources: [DispatchSourceSignal] = []
+    nonisolated(unsafe) private static var inherited: [Int32: Bool] = [:]
+
+    static func runAndWait(_ arguments: [String]) -> Outcome {
         // Ctrl-C and Ctrl-\\ go to the whole foreground group: the command
-        // decides, and darraowl waits for it to end.
-        signal(SIGINT, SIG_IGN)
-        signal(SIGQUIT, SIG_IGN)
+        // decides, and darraowl waits for it to end. A disposition inherited
+        // as "ignored" (a background job) stays ignored for the command.
+        var keepIgnored = sigset_t()
+        sigemptyset(&keepIgnored)
+        for sig in [SIGINT, SIGQUIT] {
+            let previous = signal(sig, SIG_IGN)
+            // SIG_IGN is the handler value 1.
+            let wasIgnored = previous.map { unsafeBitCast($0, to: Int.self) == 1 } ?? false
+            inherited[sig] = wasIgnored
+            if wasIgnored { sigaddset(&keepIgnored, sig) }
+        }
         // A kill or a closed terminal is passed on to the command.
         for sig in [SIGTERM, SIGHUP] {
             signal(sig, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: sig, queue: .global())
-            source.setEventHandler { if child > 0 { kill(child, sig) } }
+            source.setEventHandler {
+                if child > 0 { kill(child, sig) } else { pending = sig }
+            }
             source.resume()
             sources.append(source)
         }
@@ -146,7 +178,9 @@ enum Spawn {
         defer { posix_spawnattr_destroy(&attr) }
         var defaults = sigset_t()
         sigemptyset(&defaults)
-        for sig in [SIGINT, SIGQUIT, SIGTERM, SIGHUP] { sigaddset(&defaults, sig) }
+        for sig in [SIGINT, SIGQUIT, SIGTERM, SIGHUP] where sigismember(&keepIgnored, sig) == 0 {
+            sigaddset(&defaults, sig)
+        }
         posix_spawnattr_setsigdefault(&attr, &defaults)
         var mask = sigset_t()
         sigemptyset(&mask)
@@ -160,17 +194,26 @@ enum Spawn {
         let rc = posix_spawnp(&pid, arguments[0], nil, &attr, argv, environ)
         guard rc == 0 else {
             CLIMain.say("darraowl : impossible de lancer \(arguments[0]) : \(String(cString: strerror(rc))).")
-            return rc == ENOENT ? 127 : 126
+            return Outcome(code: rc == ENOENT ? 127 : 126, signal: nil, started: false)
         }
         child = pid
+        if pending != 0 { kill(pid, pending) }
 
         var status: Int32 = 0
         while waitpid(pid, &status, 0) == -1 {
-            guard errno == EINTR else { return 1 }
+            guard errno == EINTR else { return Outcome(code: 1, signal: nil, started: true) }
         }
         child = 0
         let low = status & 0x7f
-        if low == 0 { return (status >> 8) & 0xff }
-        return 128 + low
+        if low == 0 { return Outcome(code: (status >> 8) & 0xff, signal: nil, started: true) }
+        return Outcome(code: 128 + low, signal: low, started: true)
+    }
+
+    /// Back to the dispositions darraowl started with, before raising the
+    /// child's signal on itself.
+    static func restoreDefaults() {
+        for sig in [SIGINT, SIGQUIT] where inherited[sig] != true {
+            signal(sig, SIG_DFL)
+        }
     }
 }

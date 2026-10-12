@@ -218,7 +218,7 @@ import Testing
         _ = await h.engine.evaluate()
         h.clock.advance(SessionEngine.lidSettle)
         #expect(await !h.engine.evaluate().lowPowerHeld)
-        #expect(!h.power.current.lowPowerOnAC)
+        #expect(h.power.current.lowPowerOnAC == false)
     }
 
     /// The night of 2026-10-12: closed, open, closed, open, closed in 8 s.

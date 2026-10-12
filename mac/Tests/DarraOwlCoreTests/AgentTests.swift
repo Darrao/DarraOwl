@@ -76,3 +76,41 @@ import Testing
         #expect(!LocalHTTP.authorized(req, token: "x"))
     }
 }
+
+@Suite struct NativeInstallerAgentTests {
+    let t = Date(timeIntervalSince1970: 1_800_000_000)
+
+    /// Claude Code's native installer: the process is named after its version.
+    @Test func aVersionNamedClaudeIsFound() {
+        let c = AgentDetector.Candidate(pid: 10, ppid: 1, name: "2.1.220", arguments: ["claude", "--resume"], cwd: "/p/site",
+                                        startedAt: t, path: "/Users/me/.local/share/claude/versions/2.1.220")
+        #expect(AgentDetector.agents(in: [c]).map(\.tool) == ["claude"])
+    }
+
+    @Test func aVersionNamedProcessOfSomethingElseIsNot() {
+        let c = AgentDetector.Candidate(pid: 11, ppid: 1, name: "3.12", arguments: ["python3.12"], cwd: nil,
+                                        startedAt: t, path: "/opt/homebrew/Cellar/python/3.12/bin/3.12")
+        #expect(AgentDetector.agents(in: [c]).isEmpty)
+    }
+
+    @Test(arguments: [("2.1.220", true), ("3.12", true), ("node", false), ("v2", false), ("1.", false), (".5", false), ("2..1", false)])
+    func versionNames(name: String, expected: Bool) {
+        #expect(AgentDetector.isVersionName(name) == expected)
+    }
+}
+
+@Suite struct ClaudeNotificationTypeTests {
+    func payload(_ type: String?) -> Data {
+        var json = #"{"hook_event_name":"Notification","cwd":"/p/x""#
+        if let type { json += #","notification_type":"\#(type)""# }
+        return Data((json + "}").utf8)
+    }
+
+    @Test func onlyQuestionsCountAsWaiting() {
+        #expect(ClaudeHook.parse(payload("permission_prompt")) == .waiting(cwd: "/p/x"))
+        #expect(ClaudeHook.parse(payload("elicitation_dialog")) == .waiting(cwd: "/p/x"))
+        #expect(ClaudeHook.parse(payload("idle_prompt")) == .ignored)
+        #expect(ClaudeHook.parse(payload("auth_success")) == .ignored)
+        #expect(ClaudeHook.parse(payload(nil)) == .waiting(cwd: "/p/x"), "older versions send no type")
+    }
+}

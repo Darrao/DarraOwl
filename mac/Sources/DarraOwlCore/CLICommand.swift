@@ -25,7 +25,7 @@ public enum CLICommand: Equatable, Sendable {
             case let .unknown(s): "commande inconnue : \(s)"
             case .missingCommand: "indique la commande à lancer, par exemple : darraowl run 3h -- claude"
             case let .missingDuration(verb): "indique une durée, par exemple : darraowl \(verb) 2h"
-            case let .badDuration(s): "durée illisible : \(s) (exemples : 45m, 2h, 1h30, 2j)"
+            case let .badDuration(s): "durée illisible : \(s) (exemples : 45m, 2h, 1h30, 1j)"
             case let .extraArguments(s): "argument en trop : \(s)"
             }
         }
@@ -55,27 +55,32 @@ public enum CLICommand: Equatable, Sendable {
         }
     }
 
-    /// `[durée] [--] commande…`. Without `--`, a first word that reads as a
+    /// `[durée] [--] commande…`. darraowl's `--` is only right after `run` or
+    /// right after the duration: a `--` further on belongs to the command
+    /// (`npm test -- --watch`). Without `--`, a first word that reads as a
     /// duration is one.
     private static func parseRun(_ args: [String]) throws(ParseError) -> CLICommand {
+        var rest = args[...]
         var seconds: TimeInterval?
-        var command: [String]
-        if let dash = args.firstIndex(of: "--") {
-            let before = args[..<dash]
-            guard before.count <= 1 else { throw .extraArguments(before[before.startIndex + 1]) }
-            if let text = before.first {
-                guard let s = duration(text) else { throw .badDuration(text) }
-                seconds = s
-            }
-            command = Array(args[(dash + 1)...])
-        } else if let first = args.first, let s = duration(first) {
+        if rest.first == "--" {
+            rest = rest.dropFirst()
+        } else if let first = rest.first, let s = duration(first) {
+            guard rest.count >= 2 else { throw .missingCommand }
             seconds = s
-            command = Array(args.dropFirst())
-        } else {
-            command = args
+            rest = rest.dropFirst()
+            if rest.first == "--" { rest = rest.dropFirst() }
+        } else if let first = rest.first, rest.dropFirst().first == "--", duration(first) == nil, looksLikeDuration(first) {
+            throw .badDuration(first)
         }
+        let command = Array(rest)
         guard !command.isEmpty, !command[0].isEmpty else { throw .missingCommand }
         return .run(seconds: seconds, command: command)
+    }
+
+    /// Digits followed by a unit: meant as a duration even if unreadable.
+    static func looksLikeDuration(_ s: String) -> Bool {
+        guard let first = s.first, first.isNumber else { return false }
+        return s.allSatisfy { $0.isNumber || "hmjd:".contains($0.lowercased()) || $0 == " " }
     }
 
     /// The menu's formats, plus days: "2j", "2d", "1j12h".
@@ -106,7 +111,7 @@ public enum CLICommand: Equatable, Sendable {
       darraowl stop                         arrête la session
       darraowl status                       état de la session (par défaut)
 
-    Durées : 45m, 90, 2h, 1h30, 2j.
+    Durées : 45m, 90, 2h, 1h30, 1j (24 h au plus).
     Exemples :
       darraowl run 3h -- claude
       darraowl run -- npm test

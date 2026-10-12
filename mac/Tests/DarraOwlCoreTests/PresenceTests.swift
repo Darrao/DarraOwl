@@ -106,4 +106,29 @@ final class FakeAsserter: PresenceAsserting {
         try p.start(until: nil, now: t0)
         #expect(p.isActive && p.until == nil)
     }
+
+    /// Turned on from the phone with the lid closed: nothing lights the panel.
+    @Test func startingWithTheLidClosedHoldsNothingUntilItOpens() throws {
+        let a = FakeAsserter()
+        let p = PresenceController(asserter: a)
+        p.setSuspended(true, now: t0)
+        try p.start(until: nil, now: t0)
+        #expect(!a.held && a.activity == 0)
+        p.tick(now: t0.addingTimeInterval(120), power: battery, settings: .default)
+        #expect(a.activity == 0)
+        p.setSuspended(false, now: t0.addingTimeInterval(130))
+        #expect(a.held && a.activity == 1)
+    }
+
+    /// "Éteindre l'écran" from the phone: no activity until the display wakes.
+    @Test func aDisplayTurnedOffOnPurposeStaysOff() throws {
+        let a = FakeAsserter()
+        let p = PresenceController(asserter: a)
+        try p.start(until: nil, now: t0)
+        p.setQuiet(true, now: t0)
+        p.tick(now: t0.addingTimeInterval(120), power: battery, settings: .default)
+        #expect(!a.held && a.activity == 1)
+        p.setQuiet(false, now: t0.addingTimeInterval(200))
+        #expect(a.held && a.activity == 2)
+    }
 }

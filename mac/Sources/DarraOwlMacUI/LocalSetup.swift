@@ -3,9 +3,18 @@ import DarraOwlSystem
 import Foundation
 
 /// DarraOwl's hooks in Claude Code's own settings file, added and removed on
-/// request. The file is backed up before each change.
+/// request. Nothing is written when the file exists but cannot be read, and
+/// the user's own version is kept as a backup before the first change.
 @MainActor
 enum ClaudeCodeSetup {
+    enum SetupError: Error, LocalizedError {
+        case keychain
+
+        var errorDescription: String? {
+            "Le trousseau ne répond pas : réessaie dans un instant."
+        }
+    }
+
     static var directory: URL { URL(fileURLWithPath: NSHomeDirectory()).appending(path: ".claude") }
     /// Followed if it is a symlink (dotfiles), so the link itself stays.
     static var file: URL { directory.appending(path: "settings.json").resolvingSymlinksInPath() }
@@ -15,32 +24,56 @@ enum ClaudeCodeSetup {
         FileManager.default.fileExists(atPath: directory.path)
     }
 
-    static func state() -> ClaudeHookConfig.State {
-        ClaudeHookConfig.state(try? Data(contentsOf: file), port: HookServer.port, token: HookToken.current())
+    /// The file's bytes, nil when there is none. Any other read error is
+    /// thrown: an unreadable file must never be taken for a missing one.
+    static func read() throws -> Data? {
+        do {
+            return try Data(contentsOf: file)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return nil
+        }
+    }
+
+    static func state() throws -> ClaudeHookConfig.State {
+        guard let token = HookToken.current() else { throw SetupError.keychain }
+        return ClaudeHookConfig.state(try read(), port: HookServer.port, token: token)
     }
 
     static func install() throws {
-        let current = try? Data(contentsOf: file)
-        try write(ClaudeHookConfig.install(current, port: HookServer.port, token: HookToken.current()), replacing: current)
-    }
-
-    static func remove() throws {
-        guard let current = try? Data(contentsOf: file) else { return }
-        try write(ClaudeHookConfig.remove(current, port: HookServer.port), replacing: current)
-    }
-
-    private static func write(_ new: Data, replacing current: Data?) throws {
-        guard new != current else { return }
-        let fm = FileManager.default
-        let permissions = (try? fm.attributesOfItem(atPath: file.path))?[.posixPermissions] as? NSNumber
-        if let current {
-            try current.write(to: backup, options: .atomic)
-            if let permissions { try? fm.setAttributes([.posixPermissions: permissions], ofItemAtPath: backup.path) }
-        } else {
-            try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard let token = HookToken.current() else { throw SetupError.keychain }
+        let current = try read()
+        let new = try ClaudeHookConfig.install(current, port: HookServer.port, token: token)
+        // The user's version, before DarraOwl touched it.
+        if let current, ClaudeHookConfig.state(current, port: HookServer.port, token: token) == .absent {
+            try write(current, to: backup, permissionsOf: file)
         }
-        try new.write(to: file, options: .atomic)
-        if let permissions { try? fm.setAttributes([.posixPermissions: permissions], ofItemAtPath: file.path) }
+        if new != current { try write(new, to: file, permissionsOf: file) }
+    }
+
+    /// Takes out exactly DarraOwl's hooks; needs no token.
+    static func remove() throws {
+        guard let current = try read() else { return }
+        let new = try ClaudeHookConfig.remove(current, port: HookServer.port)
+        if new != current { try write(new, to: file, permissionsOf: file) }
+    }
+
+    /// Written to a temporary file that already has the final permissions,
+    /// then renamed over the target: never readable by others, never half
+    /// written.
+    private static func write(_ data: Data, to target: URL, permissionsOf reference: URL) throws {
+        let fm = FileManager.default
+        let dir = target.deletingLastPathComponent()
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let permissions = (try? fm.attributesOfItem(atPath: reference.path))?[.posixPermissions] as? NSNumber ?? 0o600
+        let tmp = dir.appending(path: ".\(target.lastPathComponent).\(UUID().uuidString).tmp")
+        guard fm.createFile(atPath: tmp.path, contents: data, attributes: [.posixPermissions: permissions]) else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: target.path])
+        }
+        guard rename(tmp.path, target.path) == 0 else {
+            let code = errno
+            try? fm.removeItem(at: tmp)
+            throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
+        }
     }
 }
 

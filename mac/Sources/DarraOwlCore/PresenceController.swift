@@ -40,51 +40,74 @@ public final class PresenceController {
     /// nil while active means no end time.
     public private(set) var until: Date?
     public private(set) var lastStop: PresenceStopReason?
+    /// The lid is closed: nothing is held, nothing declared, whether or not
+    /// presence is on (it can be turned on with the lid closed, from the phone).
+    public private(set) var suspended = false
+    /// The display was turned off on purpose (from the phone): activity is
+    /// not declared again until it wakes, or it would light up at once.
+    public private(set) var quiet = false
 
     private let asserter: any PresenceAsserting
     private var lastActivity: Date?
+    private var holding = false
 
     public init(asserter: any PresenceAsserting) {
         self.asserter = asserter
     }
 
     public func start(until: Date?, now: Date) throws {
-        if !isActive {
-            try asserter.hold()
-        }
         isActive = true
         self.until = until
         lastStop = nil
-        asserter.declareActivity()
-        lastActivity = now
-    }
-
-    /// Lid closed: drop the display assertion without ending presence.
-    public func setSuspended(_ suspended: Bool) {
-        guard isActive, suspended != self.suspended else { return }
-        self.suspended = suspended
-        if suspended {
-            asserter.release()
-        } else {
-            try? asserter.hold()
-            asserter.declareActivity()
+        do {
+            try apply(now: now)
+        } catch {
+            isActive = false
+            self.until = nil
+            throw error
         }
     }
 
-    public private(set) var suspended = false
+    /// Lid closed: drop the display assertion without ending presence.
+    public func setSuspended(_ suspended: Bool, now: Date = Date()) {
+        guard suspended != self.suspended else { return }
+        self.suspended = suspended
+        try? apply(now: now)
+    }
+
+    /// The display was put to sleep from the phone (true) or woke (false).
+    public func setQuiet(_ quiet: Bool, now: Date = Date()) {
+        guard quiet != self.quiet else { return }
+        self.quiet = quiet
+        try? apply(now: now)
+    }
 
     public func stop(_ reason: PresenceStopReason) {
         guard isActive else { return }
-        asserter.release()
         isActive = false
-        suspended = false
         until = nil
         lastActivity = nil
         lastStop = reason
+        try? apply(now: Date())
     }
 
-    /// Called about every second. `power` is nil when unknown (the helper
-    /// does not answer): presence then goes on, as Caffeine would.
+    /// Holds and declares only while active, the lid open and the display
+    /// not put to sleep on purpose.
+    private func apply(now: Date) throws {
+        let wanted = isActive && !suspended && !quiet
+        if wanted, !holding {
+            try asserter.hold()
+            holding = true
+            asserter.declareActivity()
+            lastActivity = now
+        } else if !wanted, holding {
+            asserter.release()
+            holding = false
+        }
+    }
+
+    /// Called about every second. `power` is nil when unknown: presence then
+    /// goes on, as Caffeine would.
     public func tick(now: Date, power: PowerSnapshot?, settings: PowerSettings) {
         guard isActive else { return }
         if let until, now >= until {
@@ -98,7 +121,7 @@ public final class PresenceController {
             default: break
             }
         }
-        if suspended { return }
+        guard holding else { return }
         if let last = lastActivity, now.timeIntervalSince(last) < Self.activityInterval { return }
         asserter.declareActivity()
         lastActivity = now

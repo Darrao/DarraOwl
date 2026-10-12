@@ -14,6 +14,8 @@ final class FakeDisplay: DisplayDimming {
     func requestSleep() { log.add("display sleep") }
     func wake() { log.add("display wake") }
     func isAsleep() -> Bool { asleep }
+    var online = true
+    func builtInOnline() -> Bool { online }
 }
 
 @MainActor
@@ -86,6 +88,13 @@ final class EngineGateway: LidHelperGateway {
     func lidChanged() async throws -> EngineStatus { await engine.evaluate() }
 }
 
+/// What the room looks like when the lid closes.
+@MainActor
+final class LidEnvironment {
+    var externalDisplay = false
+    var microphone = false
+}
+
 @MainActor
 struct LidRig {
     let h = Harness()
@@ -95,15 +104,19 @@ struct LidRig {
     let snapshot = FakeSnapshot()
     let docker = FakeDocker()
     let coordinator: LidCoordinator
+    let environment = LidEnvironment()
 
     init() {
         display = FakeDisplay(log: h.events)
         keyboard = FakeKeyboard(log: h.events)
         audio = FakeAudio(log: h.events)
+        let environment = environment
         coordinator = LidCoordinator(.init(
             display: display, keyboard: keyboard, displaySleep: FakeDisplaySleep(log: h.events),
             audio: audio, processes: snapshot, docker: docker,
-            helper: EngineGateway(engine: h.engine, log: h.events), log: SilentLog(), sleep: { _ in }
+            helper: EngineGateway(engine: h.engine, log: h.events), log: SilentLog(), sleep: { _ in },
+            externalDisplayActive: { environment.externalDisplay },
+            microphoneInUse: { environment.microphone }
         ))
     }
 

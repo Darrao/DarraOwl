@@ -144,7 +144,7 @@ var failures = 0
 
     // Unpair on the Mac: the open connection must drop and stay out.
     try? hub.unpair(deviceID: phoneStore.id.deviceID)
-    server.disconnect(deviceID: phoneStore.id.deviceID)
+    server.disconnectAll()
     server.start(keys: [], anyPort: true)
     for _ in 0..<30 where phone.directPath != nil { try? await Task.sleep(for: .milliseconds(100)) }
     check(phone.directPath == nil, "désappairage : connexion coupée")

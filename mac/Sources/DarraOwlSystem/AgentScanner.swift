@@ -22,11 +22,13 @@ public enum AgentScanner {
                 String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
             }
             let pid = e.kp_proc.p_pid
-            let interesting = AgentDetector.tools.contains(name) || name.hasPrefix("node") || name == "bun"
+            let versioned = AgentDetector.isVersionName(name)
+            let interesting = AgentDetector.tools.contains(name) || name.hasPrefix("node") || name == "bun" || versioned
             guard interesting else { continue }
             let args = AgentDetector.tools.contains(name) ? [] : arguments(pid)
             let started = Date(timeIntervalSince1970: TimeInterval(e.kp_proc.p_starttime.tv_sec))
-            candidates.append(.init(pid: pid, ppid: e.kp_eproc.e_ppid, name: name, arguments: args, cwd: cwd(pid), startedAt: started))
+            candidates.append(.init(pid: pid, ppid: e.kp_eproc.e_ppid, name: name, arguments: args, cwd: cwd(pid),
+                                    startedAt: started, path: versioned ? executablePath(pid) : nil))
         }
         return AgentDetector.agents(in: candidates)
     }
@@ -40,8 +42,16 @@ public enum AgentScanner {
         }
     }
 
-    /// argv of a process: KERN_PROCARGS2 is argc, the executable path, then
-    /// NUL-separated arguments.
+    /// The executable's path (proc_pidpath).
+    static func executablePath(_ pid: Int32) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        let n = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard n > 0 else { return nil }
+        return String(decoding: buffer.prefix(Int(n)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+
+    /// argv of a process, argv[0] first: KERN_PROCARGS2 is argc, the
+    /// executable path, then NUL-separated arguments.
     static func arguments(_ pid: Int32) -> [String] {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
@@ -72,7 +82,10 @@ public enum AgentScanner {
 public enum HookToken {
     static let service = "com.darrao.darraowl.hooks"
 
-    public static func current() -> String {
+    /// The token, created the first time. nil when the Keychain does not
+    /// answer (locked, error): a token that could not be saved would make
+    /// every hook fail with 401 after the next launch.
+    public static func current() -> String? {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -81,14 +94,16 @@ public enum HookToken {
             kSecReturnData as String: true,
         ]
         var out: CFTypeRef?
-        if SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess, let data = out as? Data, let s = String(data: data, encoding: .utf8) {
+        let status = SecItemCopyMatching(query as CFDictionary, &out)
+        if status == errSecSuccess, let data = out as? Data, let s = String(data: data, encoding: .utf8) {
             return s
         }
+        guard status == errSecItemNotFound else { return nil }
         let token = (0..<32).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
         query.removeValue(forKey: kSecReturnData as String)
         query[kSecValueData as String] = Data(token.utf8)
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(query as CFDictionary, nil)
+        guard SecItemAdd(query as CFDictionary, nil) == errSecSuccess else { return nil }
         return token
     }
 

@@ -78,13 +78,18 @@ public struct Session: Codable, Equatable, Sendable, Identifiable {
 
     public var isAgentMode: Bool { !watching.isEmpty }
 
-    /// "claude · DarraOwl", "claude et npm", "3 process".
+    /// "tourne" or "tournent", to follow `watchingText`.
+    public var watchingVerb: String {
+        watching.count > 1 ? "tournent" : "tourne"
+    }
+
+    /// "claude · DarraOwl", "claude et npm", "3 processus".
     public var watchingText: String? {
         switch watching.count {
         case 0: nil
         case 1: watching[0].label
         case 2: "\(watching[0].name) et \(watching[1].name)"
-        default: "\(watching.count) process"
+        default: "\(watching.count) processus"
         }
     }
 
@@ -110,6 +115,14 @@ public enum SessionEndReason: String, Codable, Sendable {
     case journalUnreadable
     case sleepRequested
     case agentFinished
+
+    /// The label inside a sentence: "heure de fin atteinte", but
+    /// "DarraOwl a été quitté".
+    public var inlineLabel: String {
+        let l = label
+        guard !l.hasPrefix("DarraOwl"), let first = l.first else { return l }
+        return first.lowercased() + l.dropFirst()
+    }
 
     /// French text for the menu and the phone.
     public var label: String {

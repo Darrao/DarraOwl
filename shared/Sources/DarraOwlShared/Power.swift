@@ -24,9 +24,9 @@ public enum ThermalLevel: String, Codable, Sendable {
 
     public var label: String {
         switch self {
-        case .nominal: "Normal"
+        case .nominal: "Normale"
         case .fair: "Tiède"
-        case .serious: "Chaud"
+        case .serious: "Élevée"
         case .critical: "Critique"
         }
     }

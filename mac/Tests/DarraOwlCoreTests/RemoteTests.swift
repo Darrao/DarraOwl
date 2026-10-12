@@ -53,25 +53,31 @@ final class FakeTarget: CommandTarget {
     var currentSettings: PowerSettings? = .default
     var containerIDs: [String] = ["0123456789ab"]
     var fail = false
-    func record(_ s: String) throws { if fail { throw FakeError(message: "refusé") }; calls.append(s) }
-    func startSession(seconds: TimeInterval) async throws { try record("start \(Int(seconds))") }
-    func extendSession(seconds: TimeInterval) async throws { try record("extend \(Int(seconds))") }
-    func stopSession() async throws { try record("stop") }
-    func sleepNow() async throws { try record("sleep") }
-    func pauseDocker() async throws { try record("pauseDocker") }
-    func resumeDocker() async throws { try record("resumeDocker") }
-    func stopContainer(id: String) async throws { try record("stopContainer \(id)") }
-    func updateSettings(_ settings: PowerSettings) async throws { try record("settings \(settings.lowPowerFloor)/\(settings.endFloor)"); currentSettings = settings }
+    /// When set, every command waits at this gate before it is recorded.
+    var gate: AsyncGate?
+    func record(_ s: String) async throws {
+        if let gate { await gate.pass() }
+        if fail { throw FakeError(message: "refusé") }
+        calls.append(s)
+    }
+    func startSession(seconds: TimeInterval) async throws { try await record("start \(Int(seconds))") }
+    func extendSession(seconds: TimeInterval) async throws { try await record("extend \(Int(seconds))") }
+    func stopSession() async throws { try await record("stop") }
+    func sleepNow() async throws { try await record("sleep") }
+    func pauseDocker() async throws { try await record("pauseDocker") }
+    func resumeDocker() async throws { try await record("resumeDocker") }
+    func stopContainer(id: String) async throws { try await record("stopContainer \(id)") }
+    func updateSettings(_ settings: PowerSettings) async throws { try await record("settings \(settings.lowPowerFloor)/\(settings.endFloor)"); currentSettings = settings }
     var agentPIDs: [Int32] = [4242]
-    func watchAgent(pid: Int32) async throws { try record("watch \(pid)") }
-    func stopAgent(pid: Int32) async throws { try record("stopAgent \(pid)") }
-    func startPresence(seconds: TimeInterval?) async throws { try record("presence \(seconds.map { Int($0) } ?? -1)") }
-    func stopPresence() async throws { try record("stopPresence") }
-    func displayOff() async throws { try record("displayOff") }
-    func lockScreen() async throws { try record("lock") }
-    func setMuted(_ muted: Bool) async throws { try record("muted \(muted)") }
-    func pauseApps() async throws { try record("pauseApps") }
-    func resumeApps() async throws { try record("resumeApps") }
+    func watchAgent(pid: Int32) async throws { try await record("watch \(pid)") }
+    func stopAgent(pid: Int32) async throws { try await record("stopAgent \(pid)") }
+    func startPresence(seconds: TimeInterval?) async throws { try await record("presence \(seconds.map { Int($0) } ?? -1)") }
+    func stopPresence() async throws { try await record("stopPresence") }
+    func displayOff() async throws { try await record("displayOff") }
+    func lockScreen() async throws { try await record("lock") }
+    func setMuted(_ muted: Bool) async throws { try await record("muted \(muted)") }
+    func pauseApps() async throws { try await record("pauseApps") }
+    func resumeApps() async throws { try await record("resumeApps") }
 }
 
 @MainActor
@@ -87,12 +93,19 @@ final class FakeCloud: CloudMailbox {
         published.append(state)
     }
     func fetchInbox() async throws -> CloudInbox { defer { inbox = CloudInbox() }; return inbox }
-    func deliver(result: CommandResult) async throws { results.append(result) }
+    var failDeliver = false
+    func deliver(result: CommandResult) async throws {
+        if failDeliver { throw FakeError(message: "offline") }
+        results.append(result)
+    }
     func deliver(pairing: PairingResponse, requestID: String) async throws { pairings.append(pairing) }
     func discard(itemIDs: [String]) async throws { discarded += itemIDs }
     var events: [MacEvent] = []
     var failEvents = false
+    /// When set, posting waits at this gate.
+    var postGate: AsyncGate?
     func post(_ event: MacEvent) async throws {
+        if let postGate { await postGate.pass() }
         if failEvents { throw FakeError(message: "offline") }
         events.append(event)
     }
@@ -134,7 +147,7 @@ struct HubRig {
         let second = await rig.hub.handle(cmd, via: .cloud)
 
         #expect(first.status == .executed)
-        #expect(second.status == .duplicate)
+        #expect(second == first, "the iCloud copy gets the real result, not a bare duplicate")
         #expect(rig.target.calls == ["extend 3600"])
         #expect(rig.ledger.value?.results.map(\.status) == [.executed])
     }
@@ -264,7 +277,55 @@ struct HubRig {
         let cmd = try rig.phone.sign(.stopSession, mac: rig.macID, at: rig.clock.now())
         #expect(await rig.hub.handle(cmd, via: .cloud).status == .failed)
         rig.target.fail = false
-        #expect(await rig.hub.handle(cmd, via: .cloud).status == .duplicate)
+        #expect(await rig.hub.handle(cmd, via: .cloud).status == .failed, "not run again, its failure is reported")
+        #expect(rig.target.calls.isEmpty)
+    }
+
+    @Test func aLateRefusedCopyNeverReplacesTheResult() async throws {
+        let rig = HubRig().paired()
+        let cmd = try rig.phone.sign(.stopSession, mac: rig.macID, at: rig.clock.now())
+        #expect(await rig.hub.handle(cmd, via: .direct).status == .executed)
+        // An hour later the seen id is pruned: the copy is refused as expired.
+        rig.clock.advance(2 * 3600)
+        #expect(await rig.hub.handle(cmd, via: .cloud).status == .executed)
+        #expect(rig.ledger.value?.results.map(\.status) == [.executed])
+        #expect(rig.target.calls == ["stop"])
+    }
+
+    @Test func theCloudCopyOfARunningCommandGetsTheRealResultWhenItEnds() async throws {
+        let rig = HubRig().paired()
+        rig.target.gate = AsyncGate()
+        let cmd = try rig.phone.sign(.stopSession, mac: rig.macID, at: rig.clock.now())
+        let direct = Task { await rig.hub.handle(cmd, via: .direct) }
+        await rig.target.gate?.waitUntilEntered()
+        // The phone gave up waiting on the direct link and sent the copy.
+        rig.cloud.inbox = CloudInbox(commands: [("c1", cmd)])
+        await rig.hub.pollCloud(macName: "MacBook")
+        #expect(rig.cloud.results.isEmpty, "no bare duplicate while it runs")
+        #expect(rig.cloud.discarded == ["c1"])
+        rig.target.gate?.open()
+        #expect(await direct.value.status == .executed)
+        #expect(rig.cloud.results.map(\.status) == [.executed])
+    }
+
+    @Test func aResultNotWrittenToICloudIsWrittenAtTheNextPoll() async throws {
+        let rig = HubRig().paired()
+        rig.cloud.failDeliver = true
+        let cmd = try rig.phone.sign(.stopSession, mac: rig.macID, at: rig.clock.now())
+        rig.cloud.inbox = CloudInbox(commands: [("c1", cmd)])
+        await rig.hub.pollCloud(macName: "MacBook")
+        #expect(rig.cloud.results.isEmpty)
+        rig.cloud.failDeliver = false
+        await rig.hub.pollCloud(macName: "MacBook")
+        #expect(rig.cloud.results.map(\.status) == [.executed])
+        #expect(rig.target.calls == ["stop"])
+    }
+
+    @Test func overlongDurationsAreRefusedWithoutOverflow() async throws {
+        let rig = HubRig().paired()
+        let cmd = try rig.phone.sign(.startSession(minutes: Int.max), mac: rig.macID, at: rig.clock.now())
+        #expect(await rig.hub.handle(cmd, via: .direct).status == .rejected)
+        #expect(rig.target.calls.isEmpty)
     }
 
     @Test func unpairCutsAccessImmediately() async throws {
@@ -381,6 +442,32 @@ struct HubRig {
         #expect(rig.hub.cloudError == nil)
     }
 
+    /// The crash of 2026-10-12 00:53: a second post while the first one waited
+    /// for iCloud removed more events than were left.
+    @Test func overlappingPostsSendEachEventOnceAndNeverCrash() async {
+        let rig = HubRig()
+        let gate = AsyncGate()
+        rig.cloud.postGate = gate
+        let first = Task { await rig.hub.post([MacEvent(kind: .agentDone, title: "a", body: "b", at: rig.clock.now())]) }
+        await gate.waitUntilEntered()
+        await rig.hub.post([MacEvent(kind: .agentWaiting, title: "c", body: "d", at: rig.clock.now())])
+        await rig.hub.post([])
+        gate.open()
+        await first.value
+        #expect(rig.cloud.events.map(\.kind) == [.agentDone, .agentWaiting])
+        #expect(rig.hub.pendingEvents.isEmpty)
+    }
+
+    @Test func aFailingPublishDoesNotStopTheInbox() async throws {
+        let rig = HubRig().paired()
+        rig.cloud.failPublish = true
+        #expect(await !rig.hub.publishIfDue(state(rig), endpoints: nil, force: true))
+        let cmd = try rig.phone.sign(.stopSession, mac: rig.macID, at: rig.clock.now())
+        rig.cloud.inbox = CloudInbox(commands: [("c1", cmd)])
+        await rig.hub.pollCloud(macName: "MacBook")
+        #expect(rig.target.calls == ["stop"])
+    }
+
     @Test func eventsWaitForTheNetwork() async {
         let rig = HubRig()
         rig.cloud.failEvents = true
@@ -401,6 +488,27 @@ struct HubRig {
         #expect(rig.target.calls == ["stop"])
         #expect(rig.cloud.results.map(\.status) == [.executed])
         #expect(rig.cloud.discarded == ["c1"])
+    }
+
+    /// The phone's first answer was lost (direct link dropped): it asks again
+    /// through iCloud with the same invite, and is answered again.
+    @Test func theSamePhoneAskingAgainIsAcceptedAgain() async throws {
+        let rig = HubRig()
+        let invite = try rig.hub.makeInvite(macName: "MacBook", endpoints: nil)
+        let request = rig.phone.pairingRequest(for: invite, at: rig.clock.now())
+        #expect(rig.hub.handlePairing(request, macName: "MacBook").accepted)
+        #expect(rig.hub.handlePairing(request, macName: "MacBook", via: .cloud).accepted)
+        #expect(rig.store.stored.count == 1)
+        let other = TestPhone().pairingRequest(for: invite, at: rig.clock.now())
+        #expect(!rig.hub.handlePairing(other, macName: "MacBook").accepted, "the invite is spent for anyone else")
+    }
+
+    @Test func pairingAnswerCarriesTheMainEndpoints() async throws {
+        let rig = HubRig()
+        rig.hub.mainEndpoints = { Endpoints(port: 52525, local: ["192.168.1.20"], tailscale: nil) }
+        let invite = try rig.hub.makeInvite(macName: "MacBook", endpoints: Endpoints(port: 60001, local: ["192.168.1.20"], tailscale: nil))
+        let response = rig.hub.handlePairing(rig.phone.pairingRequest(for: invite, at: rig.clock.now()), macName: "MacBook")
+        #expect(response.endpoints?.port == 52525)
     }
 
     @Test func pairingThroughCloud() async throws {

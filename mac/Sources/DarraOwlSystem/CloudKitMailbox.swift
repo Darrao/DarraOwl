@@ -60,7 +60,7 @@ public final class CloudKitMailbox: CloudMailbox {
         record["protocolVersion"] = state.protocolVersion
         record.encryptedValues["state"] = try LinkCoding.encoder().encode(state)
         if let endpoints { record.encryptedValues["endpoints"] = try LinkCoding.encoder().encode(endpoints) }
-        _ = try await database.modifyRecords(saving: [record], deleting: [], savePolicy: .allKeys)
+        try await save(record)
     }
 
     public func fetchInbox() async throws -> CloudInbox {
@@ -68,6 +68,11 @@ public final class CloudKitMailbox: CloudMailbox {
             return try await fetchInboxOnce()
         } catch let error as CKError where error.code == .changeTokenExpired {
             // A token from another environment or an old zone: start over.
+            UserDefaults.standard.removeObject(forKey: Self.tokenKey)
+            return try await fetchInboxOnce()
+        } catch let error as CKError where error.code == .zoneNotFound || error.code == .userDeletedZone {
+            // The zone was deleted elsewhere: make it again, read from the start.
+            zoneReady = false
             UserDefaults.standard.removeObject(forKey: Self.tokenKey)
             return try await fetchInboxOnce()
         }
@@ -113,19 +118,19 @@ public final class CloudKitMailbox: CloudMailbox {
         record["status"] = result.status.rawValue
         record["at"] = result.at
         record.encryptedValues["message"] = result.message
-        _ = try await database.modifyRecords(saving: [record], deleting: [], savePolicy: .allKeys)
+        try await save(record)
+        remember(record.recordID.recordName, at: result.at, key: Self.resultsKey)
     }
 
     public func deliver(pairing: PairingResponse, requestID: String) async throws {
         let record = CKRecord(recordType: "PairingResponse", recordID: CKRecord.ID(recordName: "pairing-\(requestID)", zoneID: zoneID))
         record["macID"] = macID.uuidString
         record.encryptedValues["payload"] = try LinkCoding.encoder().encode(pairing)
-        _ = try await database.modifyRecords(saving: [record], deleting: [], savePolicy: .allKeys)
+        try await save(record)
     }
 
     public func discard(itemIDs: [String]) async throws {
-        let ids = itemIDs.map { CKRecord.ID(recordName: $0, zoneID: zoneID) }
-        _ = try await database.modifyRecords(saving: [], deleting: ids)
+        try await delete(itemIDs.map { CKRecord.ID(recordName: $0, zoneID: zoneID) })
     }
 
     public func post(_ event: MacEvent) async throws {
@@ -138,31 +143,98 @@ public final class CloudKitMailbox: CloudMailbox {
         record["title"] = event.title
         record["body"] = event.body
         record["at"] = event.at
-        _ = try await database.modifyRecords(saving: [record], deleting: [], savePolicy: .allKeys)
-        var sent = UserDefaults.standard.dictionary(forKey: Self.eventsKey) as? [String: Date] ?? [:]
-        sent[record.recordID.recordName] = event.at
-        UserDefaults.standard.set(sent, forKey: Self.eventsKey)
+        try await save(record)
+        remember(record.recordID.recordName, at: event.at, key: Self.eventsKey)
     }
 
+    /// Deletes this Mac's events, and the results the phone did not read
+    /// (Siri and Live Activity commands do not wait for them), older than `date`.
     public func removeEvents(before date: Date) async {
-        var sent = UserDefaults.standard.dictionary(forKey: Self.eventsKey) as? [String: Date] ?? [:]
-        let old = sent.filter { $0.value < date }.map(\.key)
-        guard !old.isEmpty else { return }
-        if (try? await database.modifyRecords(saving: [], deleting: old.map { CKRecord.ID(recordName: $0, zoneID: zoneID) })) != nil {
-            old.forEach { sent[$0] = nil }
-            UserDefaults.standard.set(sent, forKey: Self.eventsKey)
+        for key in [Self.eventsKey, Self.resultsKey] {
+            var sent = UserDefaults.standard.dictionary(forKey: key) as? [String: Date] ?? [:]
+            let old = sent.filter { $0.value < date }.map(\.key)
+            guard !old.isEmpty else { continue }
+            // Gone already (read by the phone) counts as deleted.
+            if (try? await delete(old.map { CKRecord.ID(recordName: $0, zoneID: zoneID) })) != nil {
+                old.forEach { sent[$0] = nil }
+                UserDefaults.standard.set(sent, forKey: key)
+            }
         }
     }
 
     static let eventsKey = "cloudSentEvents"
+    static let resultsKey = "cloudSentResults"
 
-    /// Deletes this Mac's records (uninstall).
+    /// Deletes this Mac's records (uninstall). The zone is shared with the
+    /// user's other Macs and with the phone: it goes only when no other
+    /// Mac's state is left in it.
     public func removeEverything() async {
-        _ = try? await database.deleteRecordZone(withID: zoneID)
-        UserDefaults.standard.removeObject(forKey: Self.tokenKey)
+        do {
+            var mine: [CKRecord.ID] = []
+            var otherMacs = false
+            var token: CKServerChangeToken?
+            var more = true
+            while more {
+                let changes = try await database.recordZoneChanges(inZoneWith: zoneID, since: token)
+                for (id, result) in changes.modificationResultsByID {
+                    guard case let .success(modification) = result else { continue }
+                    let record = modification.record
+                    if record["macID"] as? String == macID.uuidString || id.recordName == macID.uuidString {
+                        mine.append(id)
+                    } else if record.recordType == "MacState" {
+                        otherMacs = true
+                    }
+                }
+                token = changes.changeToken
+                more = changes.moreComing
+            }
+            if otherMacs {
+                for start in stride(from: 0, to: mine.count, by: 300) {
+                    try await delete(Array(mine[start..<min(start + 300, mine.count)]))
+                }
+            } else {
+                _ = try await database.deleteRecordZone(withID: zoneID)
+                _ = try? await database.deleteSubscription(withID: Self.subscriptionID)
+            }
+        } catch let error as CKError where error.code == .zoneNotFound || error.code == .userDeletedZone {
+            // Nothing left to delete.
+        } catch {
+            // Best effort: the user can still delete DarraOwl's data in iCloud settings.
+        }
+        zoneReady = false
+        for key in [Self.tokenKey, Self.eventsKey, Self.resultsKey] { UserDefaults.standard.removeObject(forKey: key) }
     }
 
     // MARK: Private
+
+    /// Saves one record. `modifyRecords` throws only when the whole request
+    /// fails: a refused record is reported in its result, read here.
+    private func save(_ record: CKRecord) async throws {
+        try await ensureZone()
+        do {
+            let (saved, _) = try await database.modifyRecords(saving: [record], deleting: [], savePolicy: .allKeys)
+            if case let .failure(error)? = saved[record.recordID] { throw error }
+        } catch let error as CKError where error.code == .zoneNotFound || error.code == .userDeletedZone {
+            // Deleted elsewhere (another Mac's uninstall, iCloud settings): made again next time.
+            zoneReady = false
+            throw error
+        }
+    }
+
+    /// Deletes records; one that is already gone is not an error.
+    private func delete(_ ids: [CKRecord.ID]) async throws {
+        guard !ids.isEmpty else { return }
+        let (_, deleted) = try await database.modifyRecords(saving: [], deleting: ids)
+        for (_, result) in deleted {
+            if case let .failure(error) = result, (error as? CKError)?.code != .unknownItem { throw error }
+        }
+    }
+
+    private func remember(_ recordName: String, at date: Date, key: String) {
+        var sent = UserDefaults.standard.dictionary(forKey: key) as? [String: Date] ?? [:]
+        sent[recordName] = date
+        UserDefaults.standard.set(sent, forKey: key)
+    }
 
     private func ensureZone() async throws {
         guard !zoneReady else { return }

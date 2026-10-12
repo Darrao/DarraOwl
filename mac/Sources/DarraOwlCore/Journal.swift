@@ -46,12 +46,27 @@ public struct AudioEntry: Codable, Equatable, Sendable {
     public var name: String?
     public var volume: Float
     public var muted: Bool
+    /// Muted from the phone: stays muted until the session ends or the phone
+    /// unmutes it, an open lid does not bring the sound back.
+    public var held: Bool
 
-    public init(deviceUID: String, name: String?, volume: Float, muted: Bool) {
+    public init(deviceUID: String, name: String?, volume: Float, muted: Bool, held: Bool = false) {
         self.deviceUID = deviceUID
         self.name = name
         self.volume = volume
         self.muted = muted
+        self.held = held
+    }
+
+    private enum CodingKeys: String, CodingKey { case deviceUID, name, volume, muted, held }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        deviceUID = try c.decode(String.self, forKey: .deviceUID)
+        name = try c.decodeIfPresent(String.self, forKey: .name)
+        volume = try c.decode(Float.self, forKey: .volume)
+        muted = try c.decode(Bool.self, forKey: .muted)
+        held = try c.decodeIfPresent(Bool.self, forKey: .held) ?? false
     }
 }
 
@@ -68,6 +83,13 @@ public struct UserChanges: Codable, Equatable, Sendable {
     }
 
     public var isEmpty: Bool { displayBrightness == nil && keyboardBrightness == nil && audio.isEmpty }
+
+    /// Without the sound muted from the phone, which waits for the session end.
+    public var withoutHeld: UserChanges {
+        var copy = self
+        copy.audio.removeAll(where: \.held)
+        return copy
+    }
 
     /// Adds what is not saved yet. A value already saved is kept: a second
     /// lid close would otherwise save the 0 the first one set.
@@ -97,10 +119,11 @@ public struct SleepEntry: Codable, Equatable, Sendable {
 }
 
 public struct LowPowerEntry: Codable, Equatable, Sendable {
-    public var previousOnBattery: Bool
+    /// nil: the Mac has no battery profile.
+    public var previousOnBattery: Bool?
     public var previousOnAC: Bool
 
-    public init(previousOnBattery: Bool, previousOnAC: Bool) {
+    public init(previousOnBattery: Bool?, previousOnAC: Bool) {
         self.previousOnBattery = previousOnBattery
         self.previousOnAC = previousOnAC
     }

@@ -48,10 +48,12 @@ public enum HelperMain {
         retained.append(thermal as AnyObject)
 
         // The check loop runs even when no client may connect: restoring the
-        // machine never depends on XPC.
+        // machine never depends on XPC. Clients are listened to only once the
+        // journal on disk has been read back.
         let binary = BinaryIdentity.current()
         Task {
             _ = await engine.reconcile()
+            DispatchQueue.main.async { startListening(engine: engine, build: build, ticker: ticker, log: log) }
             while true {
                 let delay = await engine.nextCheckDelay()
                 await ticker.wait(seconds: delay)
@@ -67,19 +69,21 @@ public enum HelperMain {
             }
         }
 
-        if let team = CodeRequirements.currentTeamID(), let requirement = CodeRequirements.client(teamID: team) {
-            let delegate = ListenerDelegate(engine: engine, build: build, ticker: ticker, log: log)
-            let listener = NSXPCListener(machServiceName: HelperConstants.machServiceName)
-            listener.setConnectionCodeSigningRequirement(requirement)
-            listener.delegate = delegate
-            listener.resume()
-            retained.append(contentsOf: [delegate, listener])
-            log.info("listening on \(HelperConstants.machServiceName) for team \(team)")
-        } else {
-            log.error("helper is not signed with a Team ID: no client is accepted, the check loop still runs")
-        }
-
         RunLoop.main.run()
         fatalError("main run loop returned")
+    }
+
+    private static func startListening(engine: SessionEngine, build: String, ticker: Ticker, log: any EngineLogging) {
+        guard let team = CodeRequirements.currentTeamID(), let requirement = CodeRequirements.client(teamID: team) else {
+            log.error("helper is not signed with a Team ID: no client is accepted, the check loop still runs")
+            return
+        }
+        let delegate = ListenerDelegate(engine: engine, build: build, ticker: ticker, log: log)
+        let listener = NSXPCListener(machServiceName: HelperConstants.machServiceName)
+        listener.setConnectionCodeSigningRequirement(requirement)
+        listener.delegate = delegate
+        listener.resume()
+        retained.append(contentsOf: [delegate, listener])
+        log.info("listening on \(HelperConstants.machServiceName) for team \(team)")
     }
 }

@@ -102,11 +102,27 @@ public final class RemoteHub {
     public private(set) var invite: PairingInvite?
     private var ledger: CommandLedger
     private var lastPublished: (state: MacState, at: Date)?
-    /// After an iCloud failure, wait this long, doubling up to 10 min.
+    /// After an iCloud failure, wait this long, doubling up to 10 min. Each
+    /// kind of operation backs off on its own: a publish that keeps failing
+    /// must not stop the inbox from being read.
     public static let firstBackoff: TimeInterval = 30
-    private var backoff: (until: Date, delay: TimeInterval)?
+    enum CloudOperation: Hashable { case publish, inbox, events }
+    private var backoffs: [CloudOperation: (until: Date, delay: TimeInterval)] = [:]
     private var publishing = false
     private var polling = false
+    private var posting = false
+    /// Commands being run now.
+    private var running: Set<UUID> = []
+    /// Commands whose iCloud copy arrived while they ran: their result goes
+    /// to iCloud once known, so the phone reads the real outcome.
+    private var cloudAwaiting: Set<UUID> = []
+    /// Answers that could not be written to iCloud: written at the next poll
+    /// (the inbox does not return an item twice).
+    private var undeliveredResults: [CommandResult] = []
+    private var undeliveredPairings: [(response: PairingResponse, requestID: String)] = []
+    /// The last accepted pairing, so the same phone asking again (its first
+    /// answer was lost) is answered again instead of refused.
+    private var lastPairing: (invite: PairingInvite, deviceID: UUID)?
     /// Called after a device is removed, so the direct link can drop it.
     public var onDeviceRemoved: ((UUID) -> Void)?
     /// Called after a pairing succeeded, whichever path it came by (direct
@@ -157,6 +173,10 @@ public final class RemoteHub {
             log.error("pairing refused: \(m)")
             return PairingResponse(accepted: false, macID: macID, macName: macName, message: m)
         }
+        if let again = repeatedPairing(request) {
+            log.info("pairing of \(request.deviceID) confirmed again via \(channel.rawValue)")
+            return PairingResponse(accepted: true, macID: macID, macName: macName, message: nil, endpoints: again)
+        }
         guard let invite, invite.macID == request.macID else { return refuse("Aucun appairage en cours sur le Mac.") }
         guard clock.now() <= invite.expiresAt else {
             self.invite = nil
@@ -179,13 +199,32 @@ public final class RemoteHub {
             return refuse("Trousseau : \(error.localizedDescription)")
         }
         self.invite = nil
+        lastPairing = (invite, device.id)
         log.info("paired device \(device.id) (\(name)) via \(channel.rawValue)")
         onPaired?(device, channel)
-        return PairingResponse(accepted: true, macID: macID, macName: macName, message: nil)
+        return PairingResponse(accepted: true, macID: macID, macName: macName, message: nil, endpoints: mainEndpoints?())
+    }
+
+    /// Where the phone reaches the paired-devices listener (not the pairing
+    /// one). Set by the app.
+    public var mainEndpoints: (() -> Endpoints?)?
+
+    /// The phone of the last pairing asks again with the same invite and the
+    /// same keys, before that invite would have expired: its first answer
+    /// was lost. Returns the endpoints to answer with.
+    private func repeatedPairing(_ request: PairingRequest) -> Endpoints?? {
+        guard let last = lastPairing, last.deviceID == request.deviceID, last.invite.macID == request.macID,
+              clock.now() <= last.invite.expiresAt, request.hasValidProof(secret: last.invite.secret),
+              let stored = pairedDevices().first(where: { $0.id == request.deviceID }),
+              stored.agreementKey == request.agreementKey, stored.signingKey == request.signingKey,
+              stored.biometricKey == request.biometricKey
+        else { return nil }
+        return .some(mainEndpoints?())
     }
 
     public func unpair(deviceID: UUID) throws {
         try store.remove(deviceID: deviceID)
+        if lastPairing?.deviceID == deviceID { lastPairing = nil }
         onDeviceRemoved?(deviceID)
         log.info("unpaired device \(deviceID)")
     }
@@ -228,6 +267,21 @@ public final class RemoteHub {
         let devices = Dictionary(uniqueKeysWithValues: pairedDevices().map { ($0.id, $0) })
         switch CommandAuthority.verify(signed, macID: identity.macID, devices: devices, ledger: ledger, now: now) {
         case let .reject(result):
+            // "duplicate" and "expired" come after the signature check: the
+            // same command again, usually its iCloud copy, maybe late. Answer
+            // with what really happened, never with a bare refusal.
+            if result.status == .duplicate || result.status == .expired,
+               let recorded = ledger.results.last(where: { $0.commandID == result.commandID && $0.status.isOutcome }) {
+                log.info("command \(result.commandID) again via \(channel.rawValue): answered with its result")
+                return recorded
+            }
+            if result.status == .duplicate {
+                if running.contains(result.commandID) {
+                    if channel == .cloud { cloudAwaiting.insert(result.commandID) }
+                    log.info("command \(result.commandID) again via \(channel.rawValue) while it runs")
+                    return result
+                }
+            }
             log.error("command \(result.commandID) \(result.status.rawValue) via \(channel.rawValue): \(result.message ?? "")")
             return finish(result)
         case let .accept(envelope):
@@ -235,19 +289,26 @@ public final class RemoteHub {
             ledger.markSeen(envelope.id, expiresAt: envelope.expiresAt)
             persistLedger()
             log.info("command \(envelope.id) \(envelope.kind.label) via \(channel.rawValue)")
+            running.insert(envelope.id)
+            let result: CommandResult
             do {
                 try await run(envelope.kind)
-                return finish(CommandResult(commandID: envelope.id, status: .executed, message: nil, at: clock.now()))
+                result = finish(CommandResult(commandID: envelope.id, status: .executed, message: nil, at: clock.now()))
             } catch {
-                return finish(CommandResult(commandID: envelope.id, status: .failed, message: error.localizedDescription, at: clock.now()))
+                result = finish(CommandResult(commandID: envelope.id, status: .failed, message: error.localizedDescription, at: clock.now()))
             }
+            running.remove(envelope.id)
+            if cloudAwaiting.remove(envelope.id) != nil, channel != .cloud {
+                await deliverToCloud(result)
+            }
+            return result
         }
     }
 
     private func run(_ kind: CommandKind) async throws {
         switch kind {
-        case let .startSession(m): try await target.startSession(seconds: TimeInterval(m * 60))
-        case let .extendSession(m): try await target.extendSession(seconds: TimeInterval(m * 60))
+        case let .startSession(m): try await target.startSession(seconds: CommandKind.seconds(m))
+        case let .extendSession(m): try await target.extendSession(seconds: CommandKind.seconds(m))
         case .stopSession: try await target.stopSession()
         case .sleepNow: try await target.sleepNow()
         case .pauseDocker: try await target.pauseDocker()
@@ -303,7 +364,7 @@ public final class RemoteHub {
     public func publishIfDue(_ state: MacState, endpoints: Endpoints?, force: Bool = false) async -> Bool {
         guard let cloud, !publishing else { return false }
         let now = clock.now()
-        if let backoff, now < backoff.until { return false }
+        if isBackingOff(.publish) { return false }
         if !force, let last = lastPublished {
             let age = now.timeIntervalSince(last.at)
             let changed = !Self.sameContent(last.state, state)
@@ -315,72 +376,118 @@ public final class RemoteHub {
             try await cloud.publish(state: state, endpoints: endpoints)
             if lastPublished == nil || cloudError != nil { log.info("iCloud: state published") }
             lastPublished = (state, now)
-            backoff = nil
-            cloudError = nil
+            succeeded(.publish)
             return true
         } catch {
-            failed(error, "iCloud publish failed")
+            failed(error, .publish, "iCloud publish failed")
             return false
         }
     }
 
     /// Sends events now; on failure they wait in memory for the next try
-    /// (at most 20, the oldest dropped).
+    /// (at most 20, the oldest dropped). One sender at a time: a call made
+    /// while another one sends only adds its events to the queue.
     public func post(_ events: [MacEvent]) async {
         pendingEvents += events
-        if pendingEvents.count > 20 { pendingEvents.removeFirst(pendingEvents.count - 20) }
-        guard let cloud, !pendingEvents.isEmpty else { return }
-        if let backoff, clock.now() < backoff.until { return }
-        var sent = 0
-        for event in pendingEvents {
+        if pendingEvents.count > Self.maxPendingEvents { pendingEvents.removeFirst(pendingEvents.count - Self.maxPendingEvents) }
+        guard let cloud, !posting, !pendingEvents.isEmpty, !isBackingOff(.events) else { return }
+        posting = true
+        defer { posting = false }
+        while let event = pendingEvents.first {
             do {
                 try await cloud.post(event)
-                sent += 1
+                pendingEvents.removeAll { $0.id == event.id }
+                succeeded(.events)
                 log.info("event \(event.kind.rawValue) sent")
             } catch {
-                failed(error, "iCloud event")
-                break
+                failed(error, .events, "iCloud event")
+                return
             }
         }
-        pendingEvents.removeFirst(sent)
     }
 
+    static let maxPendingEvents = 20
     public private(set) var pendingEvents: [MacEvent] = []
 
     /// Reads commands and pairing requests left in iCloud, answers them there.
     public func pollCloud(macName: String) async {
-        guard let cloud, !polling else { return }
-        if let backoff, clock.now() < backoff.until { return }
+        guard let cloud, !polling, !isBackingOff(.inbox) else { return }
         polling = true
         defer { polling = false }
+        await retryUndelivered()
         let inbox: CloudInbox
         do {
             inbox = try await cloud.fetchInbox()
-            backoff = nil
+            succeeded(.inbox)
         } catch {
-            failed(error, "iCloud inbox")
+            failed(error, .inbox, "iCloud inbox")
             return
         }
         var done: [String] = []
         for item in inbox.pairings {
             let response = handlePairing(item.request, macName: macName, via: .cloud)
-            try? await cloud.deliver(pairing: response, requestID: item.itemID)
+            await deliverToCloud(response, requestID: item.itemID)
             done.append(item.itemID)
         }
         for item in inbox.commands {
             let result = await handle(item.command, via: .cloud)
-            try? await cloud.deliver(result: result)
+            // Still running from its direct copy: answered when it ends.
+            if result.status == .duplicate, cloudAwaiting.contains(result.commandID) {
+                done.append(item.itemID)
+                continue
+            }
+            await deliverToCloud(result)
             done.append(item.itemID)
         }
         if !done.isEmpty { try? await cloud.discard(itemIDs: done) }
     }
 
+    private func deliverToCloud(_ result: CommandResult) async {
+        guard let cloud else { return }
+        do {
+            try await cloud.deliver(result: result)
+        } catch {
+            undeliveredResults.removeAll { $0.commandID == result.commandID }
+            undeliveredResults.append(result)
+            log.error("iCloud result \(result.commandID) not written, retried later: \(error.localizedDescription)")
+        }
+    }
+
+    private func deliverToCloud(_ response: PairingResponse, requestID: String) async {
+        guard let cloud else { return }
+        do {
+            try await cloud.deliver(pairing: response, requestID: requestID)
+        } catch {
+            undeliveredPairings.append((response, requestID))
+            log.error("iCloud pairing answer not written, retried later: \(error.localizedDescription)")
+        }
+    }
+
+    private func retryUndelivered() async {
+        let results = undeliveredResults
+        let pairings = undeliveredPairings
+        undeliveredResults = []
+        undeliveredPairings = []
+        for result in results { await deliverToCloud(result) }
+        for item in pairings { await deliverToCloud(item.response, requestID: item.requestID) }
+    }
+
     /// Last iCloud error, for the window (French text from CloudKit).
     public private(set) var cloudError: String?
 
-    private func failed(_ error: Error, _ what: String) {
-        let delay = min((backoff?.delay ?? Self.firstBackoff / 2) * 2, 600)
-        backoff = (clock.now().addingTimeInterval(delay), delay)
+    private func isBackingOff(_ operation: CloudOperation) -> Bool {
+        guard let backoff = backoffs[operation] else { return false }
+        return clock.now() < backoff.until
+    }
+
+    private func succeeded(_ operation: CloudOperation) {
+        backoffs[operation] = nil
+        if backoffs.isEmpty { cloudError = nil }
+    }
+
+    private func failed(_ error: Error, _ operation: CloudOperation, _ what: String) {
+        let delay = min((backoffs[operation]?.delay ?? Self.firstBackoff / 2) * 2, 600)
+        backoffs[operation] = (clock.now().addingTimeInterval(delay), delay)
         cloudError = error.localizedDescription
         log.error("\(what): \(error.localizedDescription) (next try in \(Int(delay)) s)")
     }

@@ -139,4 +139,35 @@ public struct Endpoints: Codable, Equatable, Sendable {
         self.local = local
         self.tailscale = tailscale
     }
+
+    public static let maxLocal = 8
+
+    /// A port, a few private or link-local IPv4 addresses, a Tailscale
+    /// address: what a Mac publishes. Anything else is refused.
+    public var isPlausible: Bool {
+        guard port != 0, local.count <= Self.maxLocal else { return false }
+        guard local.allSatisfy({ Self.ipv4($0).map(Self.isPrivate) ?? false }) else { return false }
+        if let tailscale, !(Self.ipv4(tailscale).map(Self.isTailscale) ?? false) { return false }
+        return true
+    }
+
+    static func ipv4(_ s: String) -> [UInt8]? {
+        let parts = s.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return nil }
+        let bytes = parts.compactMap { p -> UInt8? in
+            guard !p.isEmpty, p.count <= 3, p.allSatisfy(\.isASCII), p.allSatisfy(\.isNumber) else { return nil }
+            return UInt8(p)
+        }
+        return bytes.count == 4 ? bytes : nil
+    }
+
+    /// 10/8, 172.16/12, 192.168/16, 169.254/16.
+    static func isPrivate(_ b: [UInt8]) -> Bool {
+        b[0] == 10 || (b[0] == 172 && (16...31).contains(b[1])) || (b[0] == 192 && b[1] == 168) || (b[0] == 169 && b[1] == 254)
+    }
+
+    /// 100.64/10.
+    static func isTailscale(_ b: [UInt8]) -> Bool {
+        b[0] == 100 && (64...127).contains(b[1])
+    }
 }

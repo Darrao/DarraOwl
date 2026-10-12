@@ -217,14 +217,25 @@ import Testing
         #expect(try CLICommand.parse(["run", "claude", "-p", "x"]) == .run(seconds: nil, command: ["claude", "-p", "x"]))
         // After --, a duration-looking word is the command's.
         #expect(try CLICommand.parse(["run", "--", "45", "x"]) == .run(seconds: nil, command: ["45", "x"]))
-        #expect(try CLICommand.parse(["run", "2j", "--", "x"]) == .run(seconds: 2 * 86_400, command: ["x"]))
+        #expect(try CLICommand.parse(["run", "1j", "--", "x"]) == .run(seconds: 86_400, command: ["x"]))
+        // A `--` further on is the command's own.
+        #expect(try CLICommand.parse(["run", "npm", "test", "--", "--watch"]) == .run(seconds: nil, command: ["npm", "test", "--", "--watch"]))
+        #expect(try CLICommand.parse(["run", "claude", "--", "--resume"]) == .run(seconds: nil, command: ["claude", "--", "--resume"]))
+        #expect(try CLICommand.parse(["run", "2h", "--", "cargo", "run", "--", "-v"]) == .run(seconds: 7200, command: ["cargo", "run", "--", "-v"]))
+        #expect(try CLICommand.parse(["run", "2h", "cargo", "run", "--", "-v"]) == .run(seconds: 7200, command: ["cargo", "run", "--", "-v"]))
     }
 
     @Test func runErrors() {
         #expect(throws: CLICommand.ParseError.missingCommand) { try CLICommand.parse(["run"]) }
         #expect(throws: CLICommand.ParseError.missingCommand) { try CLICommand.parse(["run", "3h", "--"]) }
-        #expect(throws: CLICommand.ParseError.badDuration("trois")) { try CLICommand.parse(["run", "trois", "--", "x"]) }
-        #expect(throws: CLICommand.ParseError.extraArguments("2h")) { try CLICommand.parse(["run", "1h", "2h", "--", "x"]) }
+        #expect(throws: CLICommand.ParseError.missingCommand) { try CLICommand.parse(["run", "45"]) }
+        #expect(throws: CLICommand.ParseError.badDuration("2:75")) { try CLICommand.parse(["run", "2:75", "--", "x"]) }
+        #expect(throws: CLICommand.ParseError.badDuration("9999999999999999999999h")) { try CLICommand.parse(["run", "9999999999999999999999h", "--", "x"]) }
+    }
+
+    @Test func hugeNumbersDoNotCrash() {
+        #expect(CLICommand.duration("999999999999999999") != nil)
+        #expect(throws: (any Error).self) { try CLICommand.parse(["start", "99999999999999999999999"]) }
     }
 
     @Test func otherVerbs() throws {

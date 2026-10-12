@@ -72,7 +72,8 @@ enum Uninstaller {
         }
 
         // Our hooks in Claude Code's settings, the hook token, the darraowl link.
-        if ClaudeCodeSetup.state() != .absent {
+        // Without the token (Keychain silent) the state is unknown: remove anyway.
+        if (try? ClaudeCodeSetup.state()) != .absent {
             do {
                 try ClaudeCodeSetup.remove()
                 print("Hooks de DarraOwl retirés de \(ClaudeCodeSetup.file.path) (copie : \(ClaudeCodeSetup.backup.lastPathComponent)).")

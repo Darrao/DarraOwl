@@ -127,3 +127,57 @@ import Testing
         #expect(await stopper.stop(pid: 300, identity: identity(1000)) == .stillRunning)
     }
 }
+
+/// Lid-close actions in the cases the 2026-10-12 review found.
+@MainActor
+@Suite struct LidCloseCasesTests {
+    @Test func aDockedMacKeepsItsScreenSoundAndApps() async throws {
+        let rig = LidRig()
+        try await rig.startSession()
+        rig.addApp("com.tinyspeck.slackmacgap", name: "Slack", pid: 100)
+        rig.environment.externalDisplay = true
+        await rig.coordinator.lidClosed(settings: LidSettings())
+        #expect(!rig.h.events.all.contains { $0.hasPrefix("display") || $0.hasPrefix("mute") || $0.hasPrefix("SIGSTOP") })
+    }
+
+    @Test func noAppIsPausedDuringACall() async throws {
+        let rig = LidRig()
+        try await rig.startSession()
+        rig.addApp("com.tinyspeck.slackmacgap", name: "Slack", pid: 100)
+        rig.environment.microphone = true
+        await rig.coordinator.lidClosed(settings: LidSettings())
+        #expect(rig.h.processes.state(100)?.stopped == false)
+        #expect(rig.h.events.all.contains("mute spk"), "the rest still happens")
+    }
+
+    @Test func anAppRunningAnAgentIsNeverPaused() async throws {
+        let rig = LidRig()
+        try await rig.startSession()
+        rig.addApp("com.googlecode.iterm2", name: "iTerm2", pid: 100, children: [101, 102])
+        var settings = LidSettings()
+        settings.pausedApps = ["com.googlecode.iterm2"]
+        await rig.coordinator.lidClosed(settings: settings, keeping: [102])
+        #expect(rig.h.processes.state(102)?.stopped == false)
+        #expect(rig.h.processes.state(100)?.stopped == false)
+    }
+
+    @Test func soundMutedFromThePhoneStaysMutedWhenTheLidOpens() async throws {
+        let rig = LidRig()
+        try await rig.startSession()
+        try await rig.coordinator.setMuted(true, sessionActive: true, saved: [])
+        await rig.coordinator.lidClosed(settings: LidSettings())
+        await rig.coordinator.lidOpened(sessionActive: true)
+        #expect(rig.audio.devices["spk"]?.muted == true)
+        // The session ends: the sound comes back.
+        _ = try await rig.h.engine.stop(reason: .userStopped)
+        await rig.coordinator.lidOpened(sessionActive: false)
+        #expect(rig.audio.devices["spk"]?.muted == false)
+        #expect(rig.audio.devices["spk"]?.volume == 0.6)
+    }
+
+    @Test func pausingAppsAlreadyPausedIsNotAnError() async throws {
+        let rig = LidRig()
+        try await rig.startSession()
+        try await rig.coordinator.pauseApps(["com.tinyspeck.slackmacgap"], alreadyPaused: ["com.tinyspeck.slackmacgap"])
+    }
+}

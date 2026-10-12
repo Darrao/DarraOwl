@@ -30,6 +30,8 @@ public struct EventCenter: Sendable {
     }
 
     public static let networkOutageThreshold: TimeInterval = 120
+    /// In agent mode, warn below this much battery time.
+    public static let agentBatteryWarning: TimeInterval = 45 * 60
 
     private var sessionID: UUID?
     private var fired: Set<MacEvent.Kind> = []
@@ -40,6 +42,8 @@ public struct EventCenter: Sendable {
     private var networkDownSince: Date?
     private var seenEndID: UUID?
     private var primed = false
+    /// The end time "bientôt finie" was sent for: a later one re-arms it.
+    private var endingSoonFor: Date?
 
     public init() {}
 
@@ -80,9 +84,14 @@ public struct EventCenter: Sendable {
         }
 
         // Heat: once each time it gets serious.
-        let hot = (input.power?.thermal == .serious || input.power?.thermal == .critical)
+        let thermal = input.power?.thermal
+        let hot = thermal == .serious || thermal == .critical
         if hot, !lastHot, primed, input.session != nil {
-            emit(.hot, "Le Mac chauffe", "Température \(input.power!.thermal.label.lowercased()). Le mode économie d'énergie est activé.")
+            if thermal == .critical {
+                emit(.hot, "Le Mac surchauffe", "Température critique : la session s'arrête pour le protéger.")
+            } else {
+                emit(.hot, "Le Mac chauffe", "Température élevée : le mode économie d'énergie est activé.")
+            }
         }
         lastHot = hot
 
@@ -99,11 +108,25 @@ public struct EventCenter: Sendable {
             emit(kind, title, body)
         }
 
-        if remaining <= TimeInterval(input.alerts.endingSoonMinutes * 60) {
+        // Extended since the warning: warn again before the new end.
+        if let warned = endingSoonFor, session.endsAt > warned.addingTimeInterval(60) {
+            fired.remove(.endingSoon)
+            endingSoonFor = nil
+        }
+        if remaining <= TimeInterval(input.alerts.endingSoonMinutes * 60), !fired.contains(.endingSoon) {
+            endingSoonFor = session.endsAt
             once(.endingSoon, "Session bientôt finie", "Le Mac retrouve sa veille normale à \(DurationText.clock(session.endsAt)).")
         }
-        if !power.onExternalPower, let minutes = power.minutesToEmpty, TimeInterval(minutes * 60) < remaining - 300 {
-            once(.batteryShort, "La batterie ne tiendra pas", "Environ \(DurationText.short(TimeInterval(minutes * 60))) d'autonomie, la session finit à \(DurationText.clock(session.endsAt)).")
+        if !power.onExternalPower, let minutes = power.minutesToEmpty {
+            let autonomy = TimeInterval(minutes) * 60
+            if session.isAgentMode {
+                // The agent's end is unknown: warn when the battery is about to give out.
+                if autonomy < Self.agentBatteryWarning {
+                    once(.batteryShort, "Batterie bientôt vide", "Environ \(DurationText.short(autonomy)) d'autonomie : branche le chargeur pour que l'agent finisse.")
+                }
+            } else if autonomy < remaining - 300 {
+                once(.batteryShort, "La batterie ne tiendra pas", "Environ \(DurationText.short(autonomy)) d'autonomie, la session finit à \(DurationText.clock(session.endsAt)).")
+            }
         }
         if let bytes = input.sessionBytes, bytes >= Int64(input.alerts.dataThresholdMB) * 1_000_000 {
             once(.dataThreshold, "Data consommée", "\(ByteText.short(bytes)) depuis le début de la session.")
@@ -142,8 +165,12 @@ public struct DataMeter: Sendable {
 
     public init() {}
 
+    /// Bytes of the session that just ended, for its recap.
+    public private(set) var lastSessionTotal: Int64?
+
     public mutating func update(session: UUID?, counter: Int64?) -> Int64? {
         guard let session else {
+            if sessionID != nil { lastSessionTotal = used }
             sessionID = nil
             last = nil
             used = 0

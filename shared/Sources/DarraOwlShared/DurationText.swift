@@ -11,7 +11,7 @@ public enum DurationText {
         guard !s.isEmpty else { return nil }
 
         if let minutes = Int(s) {
-            return minutes > 0 ? TimeInterval(minutes * 60) : nil
+            return minutes > 0 ? TimeInterval(minutes) * 60 : nil
         }
 
         if s.contains(":") {
@@ -24,7 +24,7 @@ public enum DurationText {
 
         for suffix in ["minutes", "minute", "mins", "min", "mn", "m"] where !s.contains("h") && s.hasSuffix(suffix) {
             guard let m = Int(s.dropLast(suffix.count)) else { return nil }
-            return m > 0 ? TimeInterval(m * 60) : nil
+            return m > 0 ? TimeInterval(m) * 60 : nil
         }
 
         if let hIndex = s.firstIndex(of: "h") {
@@ -60,7 +60,8 @@ public enum DurationText {
     }
 
     private static func total(hours: Int, minutes: Int) -> TimeInterval? {
-        let seconds = TimeInterval(hours * 3600 + minutes * 60)
+        // In floating point: a huge number of hours must not overflow.
+        let seconds = TimeInterval(hours) * 3600 + TimeInterval(minutes) * 60
         return seconds > 0 ? seconds : nil
     }
 

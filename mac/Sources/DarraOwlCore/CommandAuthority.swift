@@ -39,9 +39,10 @@ public struct CommandLedger: Codable, Equatable, Sendable {
         seen[id] = expiresAt
     }
 
-    /// A replay's "duplicate" answer never replaces what really happened.
+    /// What really happened to a command is never replaced: a late copy that
+    /// is refused (duplicate, expired, bad signature) leaves it as it is.
     public mutating func record(_ result: CommandResult) {
-        if result.status == .duplicate, results.contains(where: { $0.commandID == result.commandID }) { return }
+        if !result.status.isOutcome, results.contains(where: { $0.commandID == result.commandID }) { return }
         results.removeAll { $0.commandID == result.commandID }
         results.append(result)
         if results.count > Self.maxResults { results.removeFirst(results.count - Self.maxResults) }

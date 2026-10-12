@@ -14,7 +14,9 @@ public enum PmsetParser {
     }
 
     /// `lowpowermode` of each profile from `pmset -g custom`. A profile the
-    /// output does not list (a desktop has no battery profile) reads as nil.
+    /// output does not list (a desktop has no battery profile) reads as nil,
+    /// and so does a profile that reports only `powermode` (Macs with a High
+    /// Power mode): its value is not a plain on/off.
     public static func lowPowerModes(fromCustom output: String) -> (battery: Bool?, ac: Bool?) {
         var section: String?
         var battery: Bool?

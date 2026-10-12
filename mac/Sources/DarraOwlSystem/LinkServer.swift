@@ -9,6 +9,8 @@ import Security
 final class LinkConnection {
     let connection: NWConnection
     var deviceID: UUID?
+    /// A pairing connection already got its answer.
+    var answered = false
     private var framer = Framer()
     var onMessage: ((LinkConnection, ClientMessage) -> Void)?
     var onClose: ((LinkConnection) -> Void)?
@@ -34,6 +36,16 @@ final class LinkConnection {
     func send(_ message: ServerMessage) {
         guard let data = try? Framer.frame(message) else { return }
         connection.send(content: data, completion: .contentProcessed { _ in })
+    }
+
+    /// Sends, then closes once the frame left: closing at once can drop it.
+    func sendThenClose(_ message: ServerMessage) {
+        guard let data = try? Framer.frame(message) else {
+            close()
+            return
+        }
+        let connection = connection
+        connection.send(content: data, completion: .contentProcessed { _ in connection.cancel() })
     }
 
     func close() {
@@ -102,6 +114,12 @@ public final class LinkServer {
     private var listener: NWListener?
     private var pairingListener: NWListener?
     private var connections: [ObjectIdentifier: LinkConnection] = [:]
+    /// Open connections at most: anyone on the network can connect before
+    /// the TLS handshake proves anything.
+    static let maxConnections = 24
+    /// A connection that has not said hello (or sent its pairing request)
+    /// by then is closed.
+    static let helloTimeout: TimeInterval = 10
 
     public init(macID: UUID, macName: String, handlers: Handlers) {
         self.macID = macID
@@ -114,9 +132,10 @@ public final class LinkServer {
     public func start(keys: [(deviceID: UUID, key: SymmetricKey)], anyPort: Bool = false) {
         listener?.cancel()
         listener = nil
+        port = nil
         guard !keys.isEmpty else { return }
         let tls = LinkTLS.options(keys: keys.map { ($0.deviceID.uuidString, $0.key) })
-        let params = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
+        let params = NWParameters(tls: tls, tcp: LinkTLS.tcpOptions())
         params.includePeerToPeer = true
         do {
             // A fixed port, so the address published to iCloud stays valid
@@ -125,7 +144,8 @@ public final class LinkServer {
             l.service = NWListener.Service(name: macName, type: LinkProtocol.bonjourType, txtRecord: NWTXTRecord(["mac": macID.uuidString]))
             l.stateUpdateHandler = { [weak self] state in
                 Task { @MainActor in
-                    guard let self else { return }
+                    // A listener replaced since then has nothing to say.
+                    guard let self, self.listener === l else { return }
                     switch state {
                     case .ready: self.port = l.port?.rawValue; self.lastError = nil
                     case let .failed(e):
@@ -135,6 +155,7 @@ public final class LinkServer {
                         } else {
                             self.lastError = e.localizedDescription
                         }
+                    case .cancelled: self.port = nil
                     default: break
                     }
                 }
@@ -150,14 +171,21 @@ public final class LinkServer {
     }
 
     /// Listener for the invite on screen, keyed by its one-time secret.
-    public func startPairing(identity: String, key: SymmetricKey) {
+    /// Returns false when the listener could not be created.
+    @discardableResult
+    public func startPairing(identity: String, key: SymmetricKey) -> Bool {
         stopPairing()
-        let params = NWParameters(tls: LinkTLS.options(keys: [(identity, key)]), tcp: NWProtocolTCP.Options())
+        let params = NWParameters(tls: LinkTLS.options(keys: [(identity, key)]), tcp: LinkTLS.tcpOptions())
         params.includePeerToPeer = true
-        guard let l = try? NWListener(using: params) else { return }
+        guard let l = try? NWListener(using: params) else { return false }
         l.stateUpdateHandler = { [weak self] state in
             Task { @MainActor in
-                if case .ready = state { self?.pairingPort = l.port?.rawValue }
+                guard let self, self.pairingListener === l else { return }
+                switch state {
+                case .ready: self.pairingPort = l.port?.rawValue
+                case .failed, .cancelled: self.pairingPort = nil
+                default: break
+                }
             }
         }
         l.newConnectionHandler = { [weak self] c in
@@ -165,6 +193,7 @@ public final class LinkServer {
         }
         l.start(queue: .main)
         pairingListener = l
+        return true
     }
 
     public func stopPairing() {
@@ -176,6 +205,7 @@ public final class LinkServer {
     public func stop() {
         listener?.cancel()
         listener = nil
+        port = nil
         stopPairing()
         connections.values.forEach { $0.close() }
         connections.removeAll()
@@ -188,11 +218,11 @@ public final class LinkServer {
         }
     }
 
-    /// Drops a device's open connections at once (unpairing).
-    public func disconnect(deviceID: UUID) {
-        for c in connections.values where c.deviceID == deviceID {
-            c.close()
-        }
+    /// Drops every open connection (unpairing). The id a connection gave in
+    /// its hello is not proof of which key it used, so all of them go; the
+    /// devices still paired reconnect within seconds.
+    public func disconnectAll() {
+        connections.values.forEach { $0.close() }
     }
 
     public var connectedDevices: Set<UUID> {
@@ -202,8 +232,17 @@ public final class LinkServer {
     // MARK: Private
 
     private func accept(_ nw: NWConnection, pairingOnly: Bool) {
+        guard connections.count < Self.maxConnections else {
+            nw.cancel()
+            return
+        }
         let c = LinkConnection(nw)
         connections[ObjectIdentifier(c)] = c
+        Task { [weak self, weak c] in
+            try? await Task.sleep(for: .seconds(Self.helloTimeout))
+            guard let self, let c, self.connections[ObjectIdentifier(c)] != nil, c.deviceID == nil, !c.answered else { return }
+            c.close()
+        }
         c.onClose = { [weak self] c in
             self?.connections[ObjectIdentifier(c)] = nil
         }
@@ -216,17 +255,22 @@ public final class LinkServer {
 
     private func handle(_ message: ClientMessage, on c: LinkConnection, pairingOnly: Bool) async {
         if pairingOnly {
-            guard case let .pair(request) = message else {
+            guard case let .pair(request) = message, !c.answered else {
                 c.close()
                 return
             }
-            c.send(.paired(handlers.pairing(request)))
+            c.answered = true
+            c.sendThenClose(.paired(handlers.pairing(request)))
             return
         }
         if case let .hello(version, deviceID) = message {
-            guard version == LinkProtocol.version else {
-                c.send(.error("Version du protocole différente : mets à jour DarraOwl."))
+            // One hello per connection: the id cannot be changed afterwards.
+            guard c.deviceID == nil else {
                 c.close()
+                return
+            }
+            guard version == LinkProtocol.version else {
+                c.sendThenClose(.error("Version du protocole différente : mets à jour DarraOwl."))
                 return
             }
             guard handlers.isPaired(deviceID) else {

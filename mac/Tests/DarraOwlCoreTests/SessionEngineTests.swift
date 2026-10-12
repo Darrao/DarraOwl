@@ -262,8 +262,8 @@ import Testing
 
         status = try await h.engine.stop(reason: .userStopped)
         #expect(!status.lowPowerHeld)
-        #expect(h.power.current.lowPowerOnBattery)
-        #expect(!h.power.current.lowPowerOnAC)
+        #expect(h.power.current.lowPowerOnBattery == true)
+        #expect(h.power.current.lowPowerOnAC == false)
     }
 
     @Test func chargerRestoresLowPowerDuringSession() async throws {
@@ -275,7 +275,7 @@ import Testing
         h.source.set(PowerSnapshot(battery: .percent(35), onExternalPower: true, thermal: .nominal))
         let status = await h.engine.evaluate()
         #expect(!status.lowPowerHeld)
-        #expect(!h.power.current.lowPowerOnBattery)
+        #expect(h.power.current.lowPowerOnBattery == false)
         #expect(status.session != nil)
     }
 
@@ -286,7 +286,7 @@ import Testing
         h.source.set(PowerSnapshot(battery: .percent(90), onExternalPower: true, thermal: .serious))
         let status = await h.engine.evaluate()
         #expect(status.lowPowerHeld)
-        #expect(h.power.current.lowPowerOnAC)
+        #expect(h.power.current.lowPowerOnAC == true)
     }
 
     @Test func lowPowerAlreadyOnEverywhereIsNotClaimed() async throws {
@@ -297,7 +297,7 @@ import Testing
         let status = await h.engine.evaluate()
         #expect(!status.lowPowerHeld)
         _ = try await h.engine.stop(reason: .userStopped)
-        #expect(h.power.current.lowPowerOnBattery && h.power.current.lowPowerOnAC)
+        #expect(h.power.current.lowPowerOnBattery == true && h.power.current.lowPowerOnAC == true)
     }
 }
 
@@ -338,8 +338,8 @@ import Testing
         let status = await h.engine.reconcile()
 
         #expect(!status.lowPowerHeld)
-        #expect(!h.power.current.lowPowerOnBattery)
-        #expect(!h.power.current.lowPowerOnAC)
+        #expect(h.power.current.lowPowerOnBattery == false)
+        #expect(h.power.current.lowPowerOnAC == false)
     }
 
     @Test func unreadableJournalIsSetAsideAndSleepRestored() async {

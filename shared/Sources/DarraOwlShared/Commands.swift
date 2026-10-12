@@ -45,8 +45,8 @@ public enum CommandKind: Codable, Equatable, Sendable {
 
     public var label: String {
         switch self {
-        case let .startSession(m): "Démarrer une session de \(DurationText.short(TimeInterval(m * 60)))"
-        case let .extendSession(m): "Prolonger de \(DurationText.short(TimeInterval(m * 60)))"
+        case let .startSession(m): "Démarrer une session de \(DurationText.short(Self.seconds(m)))"
+        case let .extendSession(m): "Prolonger de \(DurationText.short(Self.seconds(m)))"
         case .stopSession: "Arrêter la session"
         case .sleepNow: "Mettre le Mac en veille"
         case .pauseDocker: "Mettre Docker en pause"
@@ -57,7 +57,7 @@ public enum CommandKind: Codable, Equatable, Sendable {
         case .updateAlerts: "Changer les alertes"
         case .watchAgent: "Rester éveillé tant que l'agent tourne"
         case .stopAgent: "Arrêter l'agent"
-        case let .startPresence(m): m.map { "Toujours actif pendant \(DurationText.short(TimeInterval($0 * 60)))" } ?? "Toujours actif, sans limite"
+        case let .startPresence(m): m.map { "Toujours actif pendant \(DurationText.short(Self.seconds($0)))" } ?? "Toujours actif, sans limite"
         case .stopPresence: "Arrêter « Toujours actif »"
         case .displayOff: "Éteindre l'écran"
         case .lockScreen: "Verrouiller le Mac"
@@ -68,6 +68,11 @@ public enum CommandKind: Codable, Equatable, Sendable {
     }
 
     public static let extensionMinutes: Set<Int> = [30, 60]
+
+    /// Minutes as seconds, without overflowing on a value no one would send.
+    public static func seconds(_ minutes: Int) -> TimeInterval {
+        TimeInterval(minutes) * 60
+    }
     /// "Toujours actif" with an end time: at most a day.
     public static let maxPresenceMinutes = 24 * 60
 
@@ -89,7 +94,8 @@ public enum CommandKind: Codable, Equatable, Sendable {
     public func validateArguments() throws(ArgumentError) {
         switch self {
         case let .startSession(m):
-            guard m >= 1, TimeInterval(m * 60) <= Policy.absoluteMaxSessionDuration else { throw .duration }
+            // Compared in minutes first: a huge value must not overflow.
+            guard m >= 1, m <= Int(Policy.absoluteMaxSessionDuration / 60) else { throw .duration }
         case let .extendSession(m):
             guard Self.extensionMinutes.contains(m) else { throw .extensionStep }
         case let .stopContainer(id):
@@ -157,6 +163,21 @@ public struct CommandResult: Codable, Equatable, Sendable {
         case expired
         case duplicate
         case unauthorized
+
+        /// The command ran: what happened to it, not a refusal of a copy.
+        public var isOutcome: Bool { self == .executed || self == .failed }
+
+        /// French, for "Dernière commande : …".
+        public var label: String {
+            switch self {
+            case .executed: "faite"
+            case .failed: "échouée"
+            case .rejected: "refusée"
+            case .expired: "expirée"
+            case .duplicate: "déjà reçue"
+            case .unauthorized: "non autorisée"
+            }
+        }
     }
 
     public var commandID: UUID

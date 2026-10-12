@@ -23,6 +23,8 @@ final class FakePower: PowerControlling, Sendable {
         var failSetSleep: Bool? = nil // fail when asked to set this value
         var failLowPower = false
         var failRead = false
+        /// Each pmset call takes this long, so concurrent requests overlap.
+        var delay: Duration = .zero
     }
 
     let log: EventLog
@@ -36,14 +38,21 @@ final class FakePower: PowerControlling, Sendable {
     var current: PowerSettingsState { state.withLock { $0.settings } }
     func update(_ body: (inout State) -> Void) { state.withLock { body(&$0) } }
 
+    private func pause() async {
+        let delay = state.withLock { $0.delay }
+        if delay > .zero { try? await Task.sleep(for: delay) }
+    }
+
     func readState() async throws -> PowerSettingsState {
-        try state.withLock {
+        await pause()
+        return try state.withLock {
             if $0.failRead { throw FakeError(message: "read failed") }
             return $0.settings
         }
     }
 
     func setSleepDisabled(_ disabled: Bool) async throws {
+        await pause()
         try state.withLock {
             if $0.failSetSleep == disabled { throw FakeError(message: "pmset disablesleep failed") }
             $0.settings.sleepDisabled = disabled
@@ -55,13 +64,14 @@ final class FakePower: PowerControlling, Sendable {
         log.add("pmset sleepnow")
     }
 
-    func setLowPowerMode(onBattery: Bool, onAC: Bool) async throws {
+    func setLowPowerMode(onBattery: Bool?, onAC: Bool) async throws {
+        await pause()
         try state.withLock {
             if $0.failLowPower { throw FakeError(message: "pmset lowpowermode failed") }
-            $0.settings.lowPowerOnBattery = onBattery
+            if let onBattery { $0.settings.lowPowerOnBattery = onBattery }
             $0.settings.lowPowerOnAC = onAC
         }
-        log.add("pmset lowpowermode b=\(onBattery ? 1 : 0) c=\(onAC ? 1 : 0)")
+        log.add("pmset lowpowermode b=\(onBattery.map { $0 ? "1" : "0" } ?? "-") c=\(onAC ? 1 : 0)")
     }
 }
 
@@ -211,5 +221,57 @@ struct Harness {
             settingsStore: settings,
             log: SilentLog()
         ))
+    }
+}
+
+/// Holds whoever calls `pass()` until `open()`; `waitUntilEntered()` returns
+/// once someone is held. For tests that need two calls to overlap.
+final class AsyncGate: Sendable {
+    private struct State {
+        var isOpen = false
+        var held: [CheckedContinuation<Void, Never>] = []
+        var entered: [CheckedContinuation<Void, Never>] = []
+        var count = 0
+    }
+
+    private let state = Mutex(State())
+
+    func pass() async {
+        let (open, waiters) = state.withLock { s -> (Bool, [CheckedContinuation<Void, Never>]) in
+            if s.isOpen { return (true, []) }
+            s.count += 1
+            defer { s.entered = [] }
+            return (false, s.entered)
+        }
+        waiters.forEach { $0.resume() }
+        guard !open else { return }
+        await withCheckedContinuation { c in
+            let resumeNow = state.withLock { s -> Bool in
+                if s.isOpen { return true }
+                s.held.append(c)
+                return false
+            }
+            if resumeNow { c.resume() }
+        }
+    }
+
+    func waitUntilEntered() async {
+        await withCheckedContinuation { c in
+            let resumeNow = state.withLock { s -> Bool in
+                if s.count > 0 { return true }
+                s.entered.append(c)
+                return false
+            }
+            if resumeNow { c.resume() }
+        }
+    }
+
+    func open() {
+        let waiters = state.withLock { s -> [CheckedContinuation<Void, Never>] in
+            s.isOpen = true
+            defer { s.held = [] }
+            return s.held
+        }
+        waiters.forEach { $0.resume() }
     }
 }

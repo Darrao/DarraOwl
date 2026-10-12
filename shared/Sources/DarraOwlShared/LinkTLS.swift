@@ -23,8 +23,19 @@ public enum LinkTLS {
     }
 
     public static func parameters(keys: [(identity: String, key: SymmetricKey)]) -> NWParameters {
-        let params = NWParameters(tls: options(keys: keys), tcp: NWProtocolTCP.Options())
+        let params = NWParameters(tls: options(keys: keys), tcp: tcpOptions())
         params.includePeerToPeer = true
         return params
+    }
+
+    /// TCP keepalive: a peer that went to sleep or off the network is noticed
+    /// in about 30 s instead of the connection looking open for hours.
+    public static func tcpOptions() -> NWProtocolTCP.Options {
+        let tcp = NWProtocolTCP.Options()
+        tcp.enableKeepalive = true
+        tcp.keepaliveIdle = 15
+        tcp.keepaliveInterval = 5
+        tcp.keepaliveCount = 3
+        return tcp
     }
 }

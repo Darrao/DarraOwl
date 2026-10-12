@@ -2,6 +2,7 @@ import DarraOwlCore
 import DarraOwlShared
 import DarraOwlXPC
 import Foundation
+import SystemConfiguration
 
 /// Wakes the helper's check loop early: after a request changed the end time,
 /// or on a thermal event.
@@ -77,6 +78,13 @@ public final class HelperService: NSObject, HelperXPCProtocol, Sendable {
             log.error("rejected undecodable request")
             return HelperResponse(helperBuild: build, status: nil, error: "Requête invalide.")
         }
+        // Reading is open to any client; changing anything is for the user
+        // at the screen (or root): another account on this Mac cannot stop,
+        // extend or reconfigure the owner's session.
+        if request != .status, clientUID != 0, let console = Self.consoleUID(), clientUID != console {
+            log.error("refused \(String(describing: request).prefix(40)) from uid \(clientUID), console is \(console)")
+            return HelperResponse(helperBuild: build, status: await engine.status(), error: "Réservé à l'utilisateur connecté à l'écran du Mac.")
+        }
         do {
             let status: EngineStatus
             switch request {
@@ -127,6 +135,15 @@ public final class HelperService: NSObject, HelperXPCProtocol, Sendable {
             await ticker.kick()
             return HelperResponse(helperBuild: build, status: await engine.status(), error: error.localizedDescription)
         }
+    }
+}
+
+extension HelperService {
+    /// uid of the user logged in at the screen, nil at the login window.
+    static func consoleUID() -> UInt32? {
+        var uid: uid_t = 0
+        guard let name = SCDynamicStoreCopyConsoleUser(nil, &uid, nil) as String?, name != "loginwindow" else { return nil }
+        return uid
     }
 }
 

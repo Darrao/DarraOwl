@@ -14,6 +14,8 @@ public protocol DisplayDimming: AnyObject {
     /// Declares user activity so a sleeping display wakes.
     func wake()
     func isAsleep() -> Bool
+    /// The built-in panel is online (false: lid closed with an external display).
+    func builtInOnline() -> Bool
 }
 
 /// Public display sleep request (`IORequestIdle`, what `pmset
@@ -115,6 +117,10 @@ public final class LidCoordinator {
         public var helper: any LidHelperGateway
         public var log: any EngineLogging
         public var sleep: (Duration) async -> Void
+        /// An external display is on: the lid is closed on a docked Mac.
+        public var externalDisplayActive: () -> Bool
+        /// The microphone is in use: a call is probably going on.
+        public var microphoneInUse: () -> Bool
 
         public init(
             display: (any DisplayDimming)?,
@@ -125,7 +131,9 @@ public final class LidCoordinator {
             docker: any DockerProbing,
             helper: any LidHelperGateway,
             log: any EngineLogging,
-            sleep: @escaping (Duration) async -> Void = { try? await Task.sleep(for: $0) }
+            sleep: @escaping (Duration) async -> Void = { try? await Task.sleep(for: $0) },
+            externalDisplayActive: @escaping () -> Bool = { false },
+            microphoneInUse: @escaping () -> Bool = { false }
         ) {
             self.display = display
             self.keyboard = keyboard
@@ -136,6 +144,8 @@ public final class LidCoordinator {
             self.helper = helper
             self.log = log
             self.sleep = sleep
+            self.externalDisplayActive = externalDisplayActive
+            self.microphoneInUse = microphoneInUse
         }
     }
 
@@ -165,15 +175,29 @@ public final class LidCoordinator {
         }
     }
 
+    /// Cancels the delayed steps of a lid close (the open could not be
+    /// handled: helper unreachable).
+    public func cancelPending() {
+        generation += 1
+        isBusy = false
+    }
+
     /// Lid closed during a session. Returns problems worth showing.
+    /// `keeping`: processes never paused (running agents, followed processes),
+    /// with every app whose tree holds one of them.
     @discardableResult
-    public func lidClosed(settings: LidSettings) async -> [String] {
+    public func lidClosed(settings: LidSettings, keeping: Set<Int32> = []) async -> [String] {
         generation += 1
         let mine = generation
         isBusy = true
         defer { if generation == mine { isBusy = false } }
         var problems: [String] = []
         _ = try? await deps.helper.lidChanged()
+        // Docked: the lid is closed but someone works on the external display.
+        if deps.externalDisplayActive() {
+            deps.log.info("lid closed with an external display: nothing darkened, muted or paused")
+            return problems
+        }
 
         // 1. Brightness and sound: journal, then change.
         var plan = UserChanges()
@@ -193,14 +217,18 @@ public final class LidCoordinator {
         if !plan.isEmpty {
             do {
                 _ = try await deps.helper.recordUserChanges(plan)
+                // Opened again while the helper was answering: the open
+                // already restored; darkening now would leave it dark.
+                guard generation == mine else { return problems }
                 apply(plan, &problems)
             } catch {
                 problems.append("Écran et son laissés tels quels : journal non écrit (\(error.localizedDescription))")
             }
         }
 
-        // 2. Apps and Docker: the helper journals, then stops them.
-        var groups = appGroups(settings.pausedApps)
+        // 2. Apps and Docker: the helper journals, then stops them. Not during
+        // a call (microphone in use): pausing Slack would hang it up.
+        var groups = deps.microphoneInUse() ? [] : appGroups(settings.pausedApps, keeping: keeping)
         if settings.pauseDocker, let docker = await idleDockerGroup(), generation == mine {
             groups.append(docker)
         }
@@ -226,7 +254,8 @@ public final class LidCoordinator {
         return problems
     }
 
-    /// Lid opened: resume apps, then restore what the journal holds.
+    /// Lid opened: resume apps, then restore what the journal holds. Sound
+    /// muted from the phone stays muted while the session goes on.
     @discardableResult
     public func lidOpened(sessionActive: Bool) async -> [String] {
         generation += 1
@@ -236,7 +265,7 @@ public final class LidCoordinator {
         do {
             let status = try await deps.helper.resume(bundleID: nil)
             if sessionActive { _ = try? await deps.helper.lidChanged() }
-            problems += await restore(status.userChanges)
+            problems += await restore(sessionActive ? status.userChanges.withoutHeld : status.userChanges)
         } catch {
             problems.append("Composant système injoignable : \(error.localizedDescription)")
         }
@@ -253,7 +282,10 @@ public final class LidCoordinator {
         var problems: [String] = []
 
         if let value = changes.displayBrightness {
-            if let display = deps.display {
+            if let display = deps.display, !display.builtInOnline() {
+                // Lid closed on a docked Mac: kept for when the panel is back,
+                // and no wake (it would keep the Mac from idle sleep).
+            } else if let display = deps.display {
                 display.wake()
                 do {
                     try display.setBrightness(value)
@@ -323,14 +355,15 @@ public final class LidCoordinator {
         if muted {
             guard !output.muted else { return }
             if sessionActive {
-                let entry = AudioEntry(deviceUID: output.deviceUID, name: output.name, volume: output.volume, muted: output.muted)
+                let entry = AudioEntry(deviceUID: output.deviceUID, name: output.name, volume: output.volume, muted: output.muted, held: true)
                 _ = try await deps.helper.recordUserChanges(UserChanges(audio: [entry]))
             }
             try deps.audio.mute(deviceUID: output.deviceUID)
         } else {
             let previous = saved.first { $0.deviceUID == output.deviceUID }
-            // Unmuting at volume 0 would still be silent.
-            let volume = max(previous?.volume ?? output.volume, Self.audibleVolume)
+            // The saved level, or an audible one: unmuting at 0 would stay silent.
+            let wanted = previous?.volume ?? output.volume
+            let volume = wanted >= Self.audibleVolume / 5 ? wanted : Self.audibleVolume
             try deps.audio.apply(volume: volume, muted: false, deviceUID: output.deviceUID)
             if previous != nil { _ = try? await deps.helper.clearUserChanges([.audio(deviceUID: output.deviceUID)]) }
         }
@@ -339,10 +372,13 @@ public final class LidCoordinator {
     static let audibleVolume: Float = 0.25
 
     /// Phone request: pause the listed apps now (the helper refuses outside
-    /// a session: they are resumed at its end).
-    public func pauseApps(_ bundleIDs: [String]) async throws {
-        let groups = appGroups(bundleIDs)
-        guard !groups.isEmpty else { throw LidError.noAppToPause }
+    /// a session: they are resumed at its end). Apps already paused are fine.
+    public func pauseApps(_ bundleIDs: [String], alreadyPaused: Set<String> = [], keeping: Set<Int32> = []) async throws {
+        let groups = appGroups(bundleIDs.filter { !alreadyPaused.contains($0) }, keeping: keeping)
+        guard !groups.isEmpty else {
+            if bundleIDs.contains(where: alreadyPaused.contains) { return }
+            throw LidError.noAppToPause
+        }
         _ = try await deps.helper.freeze(groups)
     }
 
@@ -373,14 +409,18 @@ public final class LidCoordinator {
     }
 
     /// Each listed app that runs, with every process it started, owned by
-    /// this user. Protected apps are never included, whatever the list says.
-    func appGroups(_ bundleIDs: [String]) -> [FreezeGroup] {
+    /// this user. Protected apps are never included, whatever the list says,
+    /// nor an app whose tree holds a process to keep (an agent running in
+    /// that terminal or editor).
+    func appGroups(_ bundleIDs: [String], keeping: Set<Int32> = []) -> [FreezeGroup] {
         let wanted = Set(bundleIDs.filter { !PausePolicy.isProtected($0) })
         guard !wanted.isEmpty else { return [] }
         let apps = deps.processes.runningApps().filter { wanted.contains($0.bundleID) }
         guard !apps.isEmpty else { return [] }
         let table = deps.processes.processTable()
-        return apps.map { group(for: $0, table: table) }.filter { !$0.targets.isEmpty }
+        return apps.map { group(for: $0, table: table) }.filter { group in
+            !group.targets.isEmpty && !group.targets.contains { keeping.contains($0.pid) }
+        }
     }
 
     private func group(for app: RunningApp, table: [Int32: ProcessState]) -> FreezeGroup {

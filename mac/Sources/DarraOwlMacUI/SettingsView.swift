@@ -11,6 +11,8 @@ struct SettingsView: View {
     @State private var capHours = Int(Policy.defaultMaxSessionDuration / 3600)
     @State private var lid = LidSettings()
     @State private var claudeState = ClaudeHookConfig.State.absent
+    /// settings.json exists but cannot be read: nothing is offered.
+    @State private var claudeReadProblem: String?
     @State private var linkState = CommandLineLink.State.absent
     @State private var setupProblem: String?
     @Environment(\.openWindow) private var openWindow
@@ -26,7 +28,7 @@ struct SettingsView: View {
                 Toggle("Activer le mode économie d'énergie", isOn: $lid.lowPower)
                 Toggle("Mettre Docker Desktop en pause si aucun conteneur ne tourne", isOn: $lid.pauseDocker)
                 pausedApps
-                Text("Tout est rétabli à l'ouverture du capot. Les apps d'appel et de visio ne sont jamais mises en pause.")
+                Text("Tout est rétabli à l'ouverture du capot. Les apps de visio ne sont jamais mises en pause, et aucune app ne l'est pendant un appel (micro utilisé).")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Batterie") {
@@ -49,12 +51,17 @@ struct SettingsView: View {
                 }
             }
             Section("Claude Code") {
-                Text("Pour être prévenu sur l'iPhone quand Claude a fini ou attend ta validation. DarraOwl ajoute deux réglages (« hooks ») au fichier de configuration de Claude Code, sur ce Mac : ~/.claude/settings.json, dans un dossier caché de ton dossier personnel. Claude Code envoie alors à DarraOwl le nom de l'événement et du dossier, jamais le contenu.")
+                Text("Pour être prévenu sur l'iPhone quand Claude a fini ou attend ta validation. DarraOwl ajoute deux réglages (« hooks ») au fichier de configuration de Claude Code, sur ce Mac : ~/.claude/settings.json, dans un dossier caché de ton dossier personnel. DarraOwl ne lit de ce que Claude Code lui envoie que le nom de l'événement et celui du dossier.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if let claudeReadProblem {
+                    Text("settings.json est illisible, rien n'est modifié : \(claudeReadProblem)").font(.caption).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 HStack {
                     Text(claudeStateText)
                     Spacer()
+                    if claudeReadProblem == nil {
                     switch claudeState {
                     case .absent:
                         Button("Activer") { setup { try ClaudeCodeSetup.install() } }
@@ -64,6 +71,7 @@ struct SettingsView: View {
                         Button("Désactiver") { setup { try ClaudeCodeSetup.remove() } }
                     case .installed:
                         Button("Désactiver") { setup { try ClaudeCodeSetup.remove() } }
+                    }
                     }
                 }
                 if FileManager.default.fileExists(atPath: ClaudeCodeSetup.file.path) {
@@ -75,8 +83,8 @@ struct SettingsView: View {
                 Text("Ton fichier est d'abord copié dans settings.json.darraowl-backup. Les sessions de Claude déjà ouvertes en tiennent compte à leur prochain lancement. Les notifications partent quand personne n'est devant le Mac : capot fermé ou une minute sans activité.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if model.remote.hookServer?.isListening != true {
-                    Text("Le récepteur local (127.0.0.1:\(HookServer.port)) ne tourne pas.").font(.caption).foregroundStyle(.orange)
+                if !model.remote.hookListening {
+                    Text("Le récepteur local (127.0.0.1:\(String(HookServer.port))) ne tourne pas.").font(.caption).foregroundStyle(.orange)
                 }
             }
             Section("Terminal") {
@@ -208,7 +216,12 @@ struct SettingsView: View {
     }
 
     private func refreshSetup() {
-        claudeState = ClaudeCodeSetup.state()
+        do {
+            claudeState = try ClaudeCodeSetup.state()
+            claudeReadProblem = nil
+        } catch {
+            claudeReadProblem = error.localizedDescription
+        }
         linkState = CommandLineLink.state()
     }
 

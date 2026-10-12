@@ -13,6 +13,7 @@ struct DarraOwlApp: App {
                 .modifier(FirstLaunch())
                 .task {
                     AppDelegate.onCloudPush = { [model] in model.remote.cloudChanged() }
+                    AppDelegate.stopSessionBeforeQuitting = { [model] in await model.stopBeforeQuitting() }
                     model.start()
                 }
         }

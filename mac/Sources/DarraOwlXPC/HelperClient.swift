@@ -65,11 +65,17 @@ public final class HelperClient {
         let c = NSXPCConnection(machServiceName: HelperConstants.machServiceName, options: .privileged)
         c.remoteObjectInterface = NSXPCInterface(with: HelperXPCProtocol.self)
         c.setCodeSigningRequirement(requirement)
+        // A late handler of an older connection must not drop the current one.
+        let id = ObjectIdentifier(c)
         c.invalidationHandler = { @Sendable [weak self] in
-            Task { @MainActor in self?.connection = nil }
+            Task { @MainActor in
+                if let self, let current = self.connection, ObjectIdentifier(current) == id { self.connection = nil }
+            }
         }
         c.interruptionHandler = { @Sendable [weak self] in
-            Task { @MainActor in self?.connection = nil }
+            Task { @MainActor in
+                if let self, let current = self.connection, ObjectIdentifier(current) == id { self.connection = nil }
+            }
         }
         c.resume()
         connection = c

@@ -55,19 +55,49 @@ public struct JSONFileStore<Value: Codable & Sendable>: ValueStoring {
             try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
             let data = try Self.encoder.encode(value)
             let tmp = dir.appending(path: ".\(url.lastPathComponent).\(UUID().uuidString).tmp")
-            guard fm.createFile(atPath: tmp.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
-                throw StoreError.writeFailed("création de \(tmp.lastPathComponent)")
-            }
+            try Self.writeDurably(data, to: tmp.path)
             // rename(2) replaces the destination atomically.
             guard rename(tmp.path, url.path) == 0 else {
                 let code = errno
                 try? fm.removeItem(at: tmp)
                 throw StoreError.writeFailed("rename: \(String(cString: strerror(code)))")
             }
+            // The rename itself reaches the disk too.
+            let dfd = open(dir.path, O_RDONLY)
+            if dfd >= 0 {
+                _ = fsync(dfd)
+                close(dfd)
+            }
         } catch let error as StoreError {
             throw error
         } catch {
             throw .writeFailed("\(url.lastPathComponent): \(error.localizedDescription)")
+        }
+    }
+
+    /// Writes and flushes to the disk (F_FULLFSYNC) before the rename: after
+    /// a power loss the journal is the old one or the new one, never empty.
+    static func writeDurably(_ data: Data, to path: String) throws(StoreError) {
+        let fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard fd >= 0 else { throw .writeFailed("création : \(String(cString: strerror(errno)))") }
+        var ok = true
+        data.withUnsafeBytes { raw in
+            var offset = 0
+            while offset < raw.count {
+                let n = write(fd, raw.baseAddress! + offset, raw.count - offset)
+                if n < 0 {
+                    if errno == EINTR { continue }
+                    ok = false
+                    return
+                }
+                offset += n
+            }
+        }
+        let synced = fcntl(fd, F_FULLFSYNC) == 0 || fsync(fd) == 0
+        close(fd)
+        guard ok, synced else {
+            unlink(path)
+            throw .writeFailed("écriture sur le disque")
         }
     }
 

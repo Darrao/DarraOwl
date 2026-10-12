@@ -15,11 +15,8 @@ public struct PmsetPowerControl: PowerControlling {
             throw ProcessError(command: "pmset -g", detail: "SleepDisabled absent")
         }
         let modes = PmsetParser.lowPowerModes(fromCustom: custom)
-        guard let ac = modes.ac else {
-            throw ProcessError(command: "pmset -g custom", detail: "lowpowermode absent")
-        }
-        // A Mac without a battery profile follows the AC value.
-        return PowerSettingsState(sleepDisabled: sleepDisabled, lowPowerOnBattery: modes.battery ?? ac, lowPowerOnAC: ac)
+        // Without a plain lowpowermode line, Low Power Mode is left alone.
+        return PowerSettingsState(sleepDisabled: sleepDisabled, lowPowerOnBattery: modes.ac == nil ? nil : modes.battery, lowPowerOnAC: modes.ac)
     }
 
     public func setSleepDisabled(_ disabled: Bool) async throws {
@@ -30,8 +27,10 @@ public struct PmsetPowerControl: PowerControlling {
         try await ProcessRunner.runChecked(Self.pmset, ["sleepnow"])
     }
 
-    public func setLowPowerMode(onBattery: Bool, onAC: Bool) async throws {
-        try await ProcessRunner.runChecked(Self.pmset, ["-b", "lowpowermode", onBattery ? "1" : "0"])
+    public func setLowPowerMode(onBattery: Bool?, onAC: Bool) async throws {
+        if let onBattery {
+            try await ProcessRunner.runChecked(Self.pmset, ["-b", "lowpowermode", onBattery ? "1" : "0"])
+        }
         try await ProcessRunner.runChecked(Self.pmset, ["-c", "lowpowermode", onAC ? "1" : "0"])
     }
 }
