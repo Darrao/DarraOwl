@@ -98,6 +98,9 @@ public final class PhoneModel {
 
     public init(_ deps: Dependencies) {
         self.deps = deps
+        // Known from launch, before start(): the watch and a button tapped
+        // in the background must not take the phone for unpaired.
+        mac = deps.store.pairedMac()
         deps.direct.onState = { [weak self] state in self?.receive(state, direct: true) }
         deps.direct.onResult = { [weak self] result in self?.receive(result) }
         deps.direct.onPathChange = { [weak self] path in
@@ -131,14 +134,18 @@ public final class PhoneModel {
     /// Mac's notification does nothing here. Sent both ways without waiting
     /// for the answer: an action gets a few seconds in the background, and
     /// the app may have been launched for it.
-    public func handleNotificationAction(_ id: String, eventMacID: UUID? = nil, eventKind: MacEvent.Kind? = nil) async {
+    /// Returns the command it sent, if any.
+    @discardableResult
+    public func handleNotificationAction(_ id: String, eventMacID: UUID? = nil, eventKind: MacEvent.Kind? = nil) async -> CommandKind? {
         if mac == nil { mac = deps.store.pairedMac() }
-        guard let mac, eventMacID.map({ $0 == mac.macID }) ?? true else { return }
+        guard let mac, eventMacID.map({ $0 == mac.macID }) ?? true else { return nil }
         switch id {
         case MacEvent.extendAction:
-            // Read first: a session still running is extended, an ended one
-            // gives a new hour.
-            if state == nil { await fetchCloudState() }
+            // Read first, unless fresh: a session still running is extended,
+            // an ended one gives a new hour.
+            if state.map({ deps.now().timeIntervalSince($0.updatedAt) > MacPresence.staleAfter }) ?? true {
+                await fetchCloudState()
+            }
             let noSession: Bool
             if eventKind == .ended {
                 noSession = true
@@ -147,13 +154,14 @@ public final class PhoneModel {
             } else {
                 noSession = false
             }
-            await fire(noSession ? .startSession(minutes: 60) : .extendSession(minutes: 60))
+            let kind: CommandKind = noSession ? .startSession(minutes: 60) : .extendSession(minutes: 60)
+            return await fire(kind) ? kind : nil
         case MacEvent.stopAction:
             // "Session terminée": nothing left to stop.
-            guard eventKind != .ended else { return }
-            await fire(.stopSession)
+            guard eventKind != .ended else { return nil }
+            return await fire(.stopSession) ? .stopSession : nil
         default:
-            break
+            return nil
         }
     }
 
@@ -307,16 +315,19 @@ public final class PhoneModel {
     /// Forgets the Mac and this phone's keys, after asking the Mac to forget
     /// this phone too (both ways, without waiting: it works offline).
     public func unpair() async {
+        // Read before anything is sent or reset.
+        let listed = state?.pairedDevices
         _ = await fire(.forgetThisDevice)
-        if forget(notice: nil) { try? await deps.cloud.unsubscribeFromEvents() }
+        if forget(notice: nil, listed: listed) { try? await deps.cloud.unsubscribeFromEvents() }
     }
 
     /// Drops the Mac and the keys. Returns whether the notifications go too:
     /// their subscription is shared by every phone of the iCloud account,
     /// so it goes only when no other phone is paired with this Mac.
-    private func forget(notice: String?) -> Bool {
+    /// `listed`: the phones the Mac last listed (nil: not known).
+    private func forget(notice: String?, listed: [UUID]?) -> Bool {
         let me = identity?.deviceID ?? (try? deps.store.identity())?.deviceID
-        let others = state?.pairedDevices.map { ids in ids.filter { $0 != me } }
+        let others = listed.map { ids in ids.filter { $0 != me } }
         resetLink()
         try? deps.store.forgetMac()
         // The keys were deleted with it: the next pairing makes new ones.
@@ -462,7 +473,7 @@ public final class PhoneModel {
         // no longer lists it. Nothing of that Mac stays here.
         if let ids = state.pairedDevices, let since = mac.macPairedAt, state.updatedAt > since,
            let me = (try? loadIdentity())?.deviceID, !ids.contains(me) {
-            if forget(notice: "« \(mac.macName) » a désappairé cet iPhone.") {
+            if forget(notice: "« \(mac.macName) » a désappairé cet iPhone.", listed: ids) {
                 let cloud = deps.cloud
                 Task { try? await cloud.unsubscribeFromEvents() }
             }

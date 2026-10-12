@@ -47,6 +47,8 @@ struct OnboardingView: View {
     let model: PhoneModel
     let showDemo: () -> Void
     @State private var scanning = false
+    /// "Coller le lien du code" found nothing to pair with.
+    @State private var pasteProblem: String?
 
     private var canScan: Bool { DataScannerViewController.isSupported || DemoMode.isOn }
 
@@ -73,7 +75,10 @@ struct OnboardingView: View {
 
                 VStack(spacing: 12) {
                     if canScan {
-                        Button { scanning = true } label: {
+                        Button {
+                            pasteProblem = nil
+                            scanning = true
+                        } label: {
                             Label("Scanner le code d'appairage", systemImage: "qrcode.viewfinder").frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.glassProminent)
@@ -81,7 +86,10 @@ struct OnboardingView: View {
                     }
                     Button {
                         if let s = UIPasteboard.general.string, let url = URL(string: s.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                            pasteProblem = nil
                             Task { await model.pair(url: url) }
+                        } else {
+                            pasteProblem = "Aucun lien DarraOwl dans le presse-papiers : copie d'abord le lien affiché par le Mac."
                         }
                     } label: {
                         Text("Coller le lien du code").frame(maxWidth: .infinity)
@@ -97,7 +105,7 @@ struct OnboardingView: View {
                         }
                         .foregroundStyle(.secondary)
                     }
-                    if let error = model.pairingError {
+                    if let error = pasteProblem ?? model.pairingError {
                         Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
                     }
                     if let notice = model.unpairNotice {
@@ -596,7 +604,10 @@ struct MacView: View {
                         if demo { leaveDemo() } else { Task { await model.unpair() } }
                     }
                 } message: {
-                    Text("Le Mac est prévenu et oublie cet iPhone. S'il est éteint, retire aussi cet iPhone dans DarraOwl > iPhone… sur le Mac.")
+                    // A Mac that does not list its phones is older: it is not told.
+                    Text(model.state?.pairedDevices == nil
+                         ? "Sur le Mac, retire aussi cet iPhone dans DarraOwl > iPhone…."
+                         : "Le Mac est prévenu et oublie cet iPhone s'il est joignable dans la minute. S'il est en veille ou éteint, retire aussi cet iPhone dans DarraOwl > iPhone… sur le Mac.")
                 }
         }
     }

@@ -35,6 +35,10 @@ public enum ProcessRunner {
 
         return try await withCheckedThrowingContinuation { continuation in
             run.set(continuation)
+            // Counted before the launch: a command that ends at once still
+            // waits for its output to be read.
+            run.readers.enter()
+            run.readers.enter()
             process.terminationHandler = { p in
                 let status = p.terminationStatus
                 DispatchQueue.global().async {
@@ -49,6 +53,8 @@ public enum ProcessRunner {
                 try process.run()
             } catch {
                 process.terminationHandler = nil
+                run.readers.leave()
+                run.readers.leave()
                 run.finish(.failure(ProcessError(command: command, detail: error.localizedDescription)))
                 return
             }
@@ -92,8 +98,8 @@ private final class RunState: @unchecked Sendable {
         lock.withLock { self.continuation = continuation }
     }
 
+    /// The caller entered `readers` once for this read.
     func read(_ handle: FileHandle, isError: Bool) {
-        readers.enter()
         DispatchQueue.global().async {
             let data = handle.readDataToEndOfFile()
             self.lock.withLock {

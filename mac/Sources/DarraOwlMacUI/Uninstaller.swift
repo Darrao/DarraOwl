@@ -1,3 +1,4 @@
+import AppKit
 import DarraOwlCore
 import DarraOwlSystem
 import DarraOwlXPC
@@ -11,6 +12,10 @@ import ServiceManagement
 @MainActor
 enum Uninstaller {
     static func run() async -> Int32 {
+        // The menu bar app left running would publish to iCloud again and
+        // keep answering the phone: it quits first (its own quit ends the
+        // session and puts the sound back, a few seconds at most).
+        guard await quitRunningApp() else { return 1 }
         var clean = true
         let client = HelperClient()
         let registration = ServiceRegistration.helperState()
@@ -116,6 +121,30 @@ enum Uninstaller {
                 print("Ouverture à la connexion : \(error.localizedDescription)")
             }
         }
+        // A reinstall starts afresh: opened at login again, no presence
+        // switched back on by itself.
+        for key in [AppModel.firstLaunchKey, AppModel.presenceIndefiniteKey, AppModel.lidClosedKey, FirstLaunch.key] {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
         return 0
+    }
+
+    /// Asks the running menu bar app to quit and waits for it, 10 s at
+    /// most. False when it is still there: nothing is removed then.
+    private static func quitRunningApp() async -> Bool {
+        let me = ProcessInfo.processInfo.processIdentifier
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: HelperConstants.appIdentifier)
+            .filter { $0.processIdentifier != me }
+        guard !others.isEmpty else { return true }
+        others.forEach { $0.terminate() }
+        for _ in 0..<40 where others.contains(where: { !$0.isTerminated }) {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        guard others.allSatisfy(\.isTerminated) else {
+            print("DarraOwl ne s'est pas fermé : quitte-le depuis la barre des menus, puis relance la désinstallation.")
+            return false
+        }
+        print("DarraOwl fermé.")
+        return true
     }
 }

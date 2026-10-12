@@ -189,7 +189,9 @@ session, qui a toujours une heure de fin.
   signée, expire au bout de 60 s et ne s'exécute qu'une fois.
 - **Désappairer** depuis le Mac coupe aussitôt les commandes et la connexion
   directe de cet iPhone, qui oublie ce Mac dès qu'il reçoit son état suivant.
-  Depuis l'iPhone, le Mac est prévenu et oublie ses clés. L'état publié dans
+  Depuis l'iPhone, le Mac est prévenu et oublie ses clés s'il est allumé et
+  joignable dans la minute ; sinon, retire aussi l'iPhone dans DarraOwl >
+  iPhone… sur le Mac. L'état publié dans
   ta base iCloud reste lisible par les appareils connectés à ton compte
   iCloud, comme le reste de tes données iCloud.
 

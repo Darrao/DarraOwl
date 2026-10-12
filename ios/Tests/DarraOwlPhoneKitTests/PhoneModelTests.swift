@@ -523,6 +523,22 @@ struct PhoneRig {
         #expect(rig.model.unpairNotice?.contains("a désappairé cet iPhone") == true)
     }
 
+    /// Woken in the background with nothing loaded: unpaired on the Mac
+    /// while another phone stays paired, it keeps that phone's notifications.
+    @Test func anUnpairedPhoneLeavesTheOtherPhonesNotifications() async throws {
+        let rig = PhoneRig()
+        var mac = rig.pairedMac
+        mac.macPairedAt = rig.clock.now.addingTimeInterval(-60)
+        rig.store.mac = mac
+        var state = rig.state()
+        state.pairedDevices = [UUID()]
+        rig.cloud.state = (state, nil)
+        await rig.model.refreshFromCloud()
+        #expect(rig.model.mac == nil)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(rig.cloud.unsubscribed == 0)
+    }
+
     /// A state published before this pairing (an old iCloud copy) proves nothing.
     @Test func aStateFromBeforeThePairingNeverUnpairs() async throws {
         let rig = PhoneRig()

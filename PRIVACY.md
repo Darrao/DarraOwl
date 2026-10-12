@@ -64,7 +64,8 @@ elle demande à l'iPhone d'envoyer les commandes.
 ## Supprimer tes données
 
 - Sur l'iPhone : « Désappairer cet iPhone ». Les clés sont effacées du
-  trousseau et le Mac est prévenu. Supprimer l'app sans désappairer laisse
+  trousseau et le Mac est prévenu s'il est allumé et joignable dans la
+  minute (sinon, retire aussi l'iPhone sur le Mac). Supprimer l'app sans désappairer laisse
   ses clés dans le trousseau de l'iPhone (iOS les garde) et le Mac continue de
   publier son état : désappaire d'abord, ou retire l'iPhone sur le Mac
   (DarraOwl > iPhone…).

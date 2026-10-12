@@ -79,6 +79,19 @@ import Testing
         #expect(rig.cloud.discarded == ["c1", "c2"])
     }
 
+    /// A command through iCloud: the Mac's new state leaves before the
+    /// result, so the phone reading the state after the result sees it.
+    @Test func theNewStateLeavesBeforeTheResult() async throws {
+        let rig = HubRig().paired()
+        var order: [String] = []
+        rig.hub.afterCommand = { order.append("state") }
+        let cmd = try rig.phone.sign(.extendSession(minutes: 60), mac: rig.macID, at: rig.clock.now())
+        rig.cloud.inbox = CloudInbox(commands: [("c1", cmd)])
+        await rig.hub.pollCloud(macName: "MacBook")
+        order.append(contentsOf: rig.cloud.results.map { _ in "result" })
+        #expect(order == ["state", "result"])
+    }
+
     /// "Going to sleep" while another publish is on its way: sent right after.
     @Test func aForcedPublishWhileOneIsOnItsWayIsSentAfterIt() async {
         let rig = HubRig()

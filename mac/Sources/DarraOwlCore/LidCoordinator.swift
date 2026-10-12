@@ -265,13 +265,16 @@ public final class LidCoordinator {
         // sleep request for about 30 s after a wake: ask at 3 s and again
         // at 35 s. This is the public path; it turns the panel and the
         // keyboard backlight off even where brightness cannot be written.
+        problems.forEach { deps.log.error("lid close: \($0)") }
         if settings.darkenDisplay, let sleeper = deps.displaySleep {
             await deps.sleep(.seconds(3))
-            if generation == mine { sleeper.requestSleep() }
+            // Opened (or closed again) meanwhile: that event decides.
+            guard generation == mine else { return problems }
+            sleeper.requestSleep()
             await deps.sleep(.seconds(32))
-            if generation == mine { sleeper.requestSleep() }
+            guard generation == mine else { return problems }
+            sleeper.requestSleep()
         }
-        problems.forEach { deps.log.error("lid close: \($0)") }
         return problems
     }
 

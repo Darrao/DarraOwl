@@ -111,6 +111,8 @@ public final class RemoteHub {
     enum CloudOperation: Hashable { case publish, inbox, events }
     private var backoffs: [CloudOperation: (until: Date, delay: TimeInterval, error: String)] = [:]
     private var publishing = false
+    /// A publish is on its way to iCloud (a forced one may follow it).
+    public var isPublishing: Bool { publishing }
     /// A forced publish asked for while another one was on its way.
     private var forcedNext: (state: MacState, endpoints: Endpoints?)?
     private var polling = false
@@ -136,6 +138,10 @@ public final class RemoteHub {
     public var onPaired: ((PairedDevice, RemoteHub.Channel) -> Void)?
     /// Called with every result, so the direct link can send it.
     public var onResult: ((CommandResult) -> Void)?
+    /// Called once a command ran, before its result reaches iCloud: the
+    /// Mac's new state leaves first, so a phone reading it after the result
+    /// sees the change.
+    public var afterCommand: (() async -> Void)?
 
     public init(
         store: any PairingStore, target: any CommandTarget, cloud: (any CloudMailbox)?,
@@ -309,6 +315,7 @@ public final class RemoteHub {
             } catch {
                 result = finish(CommandResult(commandID: envelope.id, status: .failed, message: error.localizedDescription, at: clock.now()))
             }
+            await afterCommand?()
             running.remove(envelope.id)
             if cloudAwaiting.remove(envelope.id) != nil, channel != .cloud {
                 await deliverToCloud(result)
@@ -527,8 +534,10 @@ public final class RemoteHub {
     /// The network came back, the Mac woke, or a push came: iCloud is tried
     /// again at once instead of after the back-off.
     public func retryNow() {
+        // From the first delay again: one more failure waits 30 s, not the
+        // ten minutes the outage grew it to.
         for (operation, backoff) in backoffs {
-            backoffs[operation] = (clock.now(), backoff.delay, backoff.error)
+            backoffs[operation] = (clock.now(), Self.firstBackoff / 2, backoff.error)
         }
     }
 

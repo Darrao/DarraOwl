@@ -14,8 +14,10 @@ public struct SecureEnclaveSigner: BiometricSigner {
         // Bound to the enrolled faces: none enrolled, no key (said plainly
         // rather than as a Keychain code).
         var unavailable: NSError?
+        // Face ID refused to DarraOwl in Settings reads as "not available":
+        // the key is still made, and the prompt says what to do later.
         if !LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &unavailable),
-           let code = unavailable?.code, code == LAError.biometryNotEnrolled.rawValue || code == LAError.biometryNotAvailable.rawValue {
+           let code = unavailable?.code, code == LAError.biometryNotEnrolled.rawValue || code == LAError.passcodeNotSet.rawValue {
             throw BiometricError.notEnrolled
         }
         var error: Unmanaged<CFError>?

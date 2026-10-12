@@ -40,6 +40,8 @@ public final class RemoteController: CommandTarget {
     @ObservationIgnored private let docker = DockerControl()
     @ObservationIgnored private let audio = CoreAudioControl()
     @ObservationIgnored private let sleepGate = SleepGate()
+    /// The last phone was unpaired and does not know it yet.
+    @ObservationIgnored private var farewellPending = false
     @ObservationIgnored private let log = OSLogEngineLogger(category: "remote")
     @ObservationIgnored private var lastBroadcast: MacState?
     @ObservationIgnored private var tick = 0
@@ -86,6 +88,7 @@ public final class RemoteController: CommandTarget {
         )
         self.hub = hub
         hub.mainEndpoints = { [weak self] in self?.mainEndpoints() }
+        hub.afterCommand = { [weak self] in await self?.publish(force: true) }
         hub.onResult = { [weak self] result in
             self?.lastResult = result
             self?.server?.broadcast(.result(result))
@@ -93,13 +96,21 @@ public final class RemoteController: CommandTarget {
         hub.onPaired = { [weak self] _, _ in
             guard let self, let hub = self.hub else { return }
             self.devices = hub.pairedDevices()
+            self.farewellPending = false
             self.pairingProblem = nil
             self.server?.stopPairing()
             self.invite = nil
             self.restartServer()
         }
         hub.onDeviceRemoved = { [weak self] id in
-            if let self, let hub = self.hub { self.devices = hub.pairedDevices() }
+            if let self, let hub = self.hub {
+                self.devices = hub.pairedDevices()
+                // Read for sure (not a Keychain error): no phone left.
+                if let left = try? self.store.devices(), left.isEmpty {
+                    self.farewellPending = true
+                    Task { await self.publishFarewell() }
+                }
+            }
             self?.server?.disconnectAll()
             self?.restartServer()
         }
@@ -150,6 +161,7 @@ public final class RemoteController: CommandTarget {
         if tick % 5 == 0 { checkEvents() }
         if tick % 10 == 0 { refreshAgents() }
         if tick % 60 == 0, let cloud { Task { accountProblem = await cloud.accountProblem() } }
+        if farewellPending, tick % 10 == 0 { Task { await publishFarewell() } }
         // Old events go two minutes after launch, then every hour.
         if tick % 3600 == 120 { Task { await cloud?.removeEvents(before: Date().addingTimeInterval(-86_400)) } }
         if let invite, Date() > invite.expiresAt { cancelInvite() }
@@ -252,15 +264,24 @@ public final class RemoteController: CommandTarget {
     private func beforeSleep() async {
         macPower = .goingToSleep
         guard started, let hub else { return }
-        await model.refresh()
+        // The status only: restoring brightness now would spend the time.
+        await model.fetchStatus()
         if let found = collectEvents(), !found.isEmpty || !hub.pendingEvents.isEmpty {
             await hub.post(found)
         }
         await publish(force: true)
-        // A sender already on its way: a moment for it.
-        for _ in 0..<20 where !hub.pendingEvents.isEmpty {
+        // A publish or a sender already on its way (the forced state then
+        // goes right after it): a moment for them.
+        for _ in 0..<30 where hub.isPublishing || !hub.pendingEvents.isEmpty {
             try? await Task.sleep(for: .milliseconds(100))
         }
+    }
+
+    /// The last phone was unpaired: one last state, listing no phone, so a
+    /// phone that only reads iCloud forgets this Mac. Retried until it went.
+    private func publishFarewell() async {
+        guard farewellPending, devices.isEmpty, let state = makeState(), let hub else { return }
+        if await hub.publishIfDue(state, endpoints: nil, force: true) { farewellPending = false }
     }
 
     // MARK: Pairing

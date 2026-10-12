@@ -32,7 +32,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let action = response.actionIdentifier
         let (macID, kind) = Self.eventFields(response.notification.request.content.userInfo)
-        await AppDelegate.model?.handleNotificationAction(action, eventMacID: macID, eventKind: kind)
+        await PhoneRuntime.shared.handleNotificationAction(action, eventMacID: macID, eventKind: kind)
     }
 
     /// Which Mac and which kind of event a notification is about, from the

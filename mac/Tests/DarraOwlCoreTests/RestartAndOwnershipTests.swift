@@ -132,6 +132,16 @@ import Testing
         #expect(undocked.lowPowerHeld)
     }
 
+    /// A restarted helper has forgotten the displays: its status says so,
+    /// and the app tells it again.
+    @Test func theStatusSaysWhichDisplaysTheHelperKnows() async {
+        let h = Harness()
+        _ = await h.engine.reconcile()
+        #expect(await h.engine.status().externalDisplay == false)
+        _ = await h.engine.setExternalDisplay(true)
+        #expect(await h.engine.status().externalDisplay == true)
+    }
+
     /// Low Power Mode cannot be managed on this Mac (no plain lowpowermode
     /// line): pmset is not read again at every check.
     @Test func anUnmanageableLowPowerModeIsNotReadAgainAndAgain() async throws {

@@ -21,6 +21,9 @@ public struct EngineStatus: Codable, Equatable, Sendable {
     /// Recent problems worth showing in the menu, newest last.
     public var notices: [String]
     public var uninstalling: Bool
+    /// The external display as the helper knows it: forgotten when it
+    /// restarts, so the app tells it again (nil: an older helper).
+    public var externalDisplay: Bool? = nil
 }
 
 public enum EngineError: Error, Equatable, Sendable, LocalizedError {
@@ -571,7 +574,8 @@ public actor SessionEngine {
             frozen: journal.frozen,
             userChanges: journal.user,
             notices: notices,
-            uninstalling: uninstalling
+            uninstalling: uninstalling,
+            externalDisplay: externalDisplay
         )
     }
 

@@ -28,6 +28,9 @@ final class PhoneRuntime {
         await model.pair(url: url)
     }
     @ObservationIgnored private let liveActivity = LiveActivityController()
+    /// When the Live Activity was changed here ahead of the Mac: a state
+    /// published before that does not undo it.
+    @ObservationIgnored private var localChangeAt: Date?
     @ObservationIgnored private var started = false
 
     private init() {
@@ -63,6 +66,7 @@ final class PhoneRuntime {
     func enterDemo() {
         isDemo = true
         model = PhoneModel(DemoMode.dependencies(forcePaired: true))
+        wire()
         Task {
             await model.start()
             // The watch shows the demonstration too (App Review).
@@ -83,23 +87,44 @@ final class PhoneRuntime {
     /// Siri and Live Activity buttons: sign and send, do not wait. No full
     /// start first: an intent has a few seconds only.
     func fire(_ kind: CommandKind) async -> Bool {
+        let baseline = liveActivity.currentEnd
         let sent = await model.fire(kind)
-        if sent, !isDemo {
-            // Shown at once; the Mac's own state confirms a moment later.
-            switch kind {
-            case let .extendSession(minutes): liveActivity.extendLocally(by: CommandKind.seconds(minutes))
-            case .stopSession: liveActivity.end()
-            default: break
-            }
-        }
-        // The Mac's new state shows up on the Live Activity a moment later.
-        if sent {
-            Task {
-                try? await Task.sleep(for: .seconds(4))
-                await model.refreshFromCloud()
-            }
-        }
+        if sent { afterFire(kind, baseline: baseline) }
         return sent
+    }
+
+    /// A notification's button: shown at once like the Live Activity's own.
+    func handleNotificationAction(_ id: String, eventMacID: UUID?, eventKind: MacEvent.Kind?) async {
+        let baseline = liveActivity.currentEnd
+        guard let kind = await model.handleNotificationAction(id, eventMacID: eventMacID, eventKind: eventKind) else { return }
+        afterFire(kind, baseline: baseline)
+    }
+
+    /// The Live Activity shows the change at once (from the end it showed
+    /// before sending); the Mac's own state confirms it. Read again until a
+    /// state from after the command came: an older one is no news.
+    private func afterFire(_ kind: CommandKind, baseline: Date?) {
+        let firedAt = Date()
+        if !isDemo {
+            switch kind {
+            case let .extendSession(minutes):
+                localChangeAt = firedAt
+                liveActivity.extendLocally(from: baseline, by: CommandKind.seconds(minutes))
+            case .stopSession:
+                localChangeAt = firedAt
+                liveActivity.end()
+            default:
+                break
+            }
+        }
+        Task {
+            for wait in [4.0, 6.0, 10.0] {
+                try? await Task.sleep(for: .seconds(wait))
+                await model.refreshFromCloud()
+                // A couple of seconds of slack for the two clocks.
+                if let state = model.state, state.updatedAt >= firedAt.addingTimeInterval(-2) { break }
+            }
+        }
     }
 
     func spokenStatus() async -> String {
@@ -137,7 +162,11 @@ final class PhoneRuntime {
     /// Live Activity and widgets follow every state the app receives,
     /// including in the background after an event push.
     private func mirror(_ state: MacState) {
-        guard !isDemo else { return }
+        // The demonstration reaches the watch only: no widget, no Live Activity.
+        guard !isDemo else {
+            if let watch = watchSnapshot() { WatchBridge.shared.push(watch) }
+            return
+        }
         let snapshot = WidgetSnapshot(
             macName: state.macName,
             presence: presenceText,
@@ -150,7 +179,11 @@ final class PhoneRuntime {
             updatedAt: state.updatedAt
         )
         SharedStore.save(snapshot)
-        liveActivity.update(state: state, online: snapshot.online)
+        if let changed = localChangeAt, state.updatedAt < changed.addingTimeInterval(-2) {
+            // Older than the change shown on the lock screen: left as it is.
+        } else {
+            liveActivity.update(state: state, online: snapshot.online)
+        }
         if let watch = watchSnapshot() { WatchBridge.shared.push(watch) }
     }
 
@@ -218,16 +251,23 @@ final class LiveActivityController {
         }
     }
 
-    /// "+1 h" left from the Live Activity or Siri: its new end shows at once
-    /// (a timed session only; an agent's end is not known here).
-    func extendLocally(by seconds: TimeInterval) {
-        guard let current else { return }
+    /// The end shown now, read before a command leaves.
+    var currentEnd: Date? { current?.content.state.endsAt }
+
+    /// "+1 h" left: the new end shows at once, counted from the end shown
+    /// before sending, never twice (the Mac's own state may already be
+    /// there), and only for a session that had not ended (a timed one: an
+    /// agent's end is not known here).
+    func extendLocally(from baseline: Date?, by seconds: TimeInterval) {
+        guard let current, let baseline, baseline > Date() else { return }
         let id = current.id
+        let target = baseline.addingTimeInterval(seconds)
         Task.detached {
             for activity in Activity<DarraOwlActivityAttributes>.activities where activity.id == id && activity.content.state.following == nil {
                 var state = activity.content.state
-                state.endsAt = max(state.endsAt, Date()).addingTimeInterval(seconds)
-                await activity.update(ActivityContent(state: state, staleDate: state.endsAt))
+                guard state.endsAt < target else { continue }
+                state.endsAt = target
+                await activity.update(ActivityContent(state: state, staleDate: target))
             }
         }
     }

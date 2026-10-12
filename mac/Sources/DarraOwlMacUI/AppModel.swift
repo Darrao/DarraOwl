@@ -55,7 +55,11 @@ public final class AppModel {
     @ObservationIgnored private var closeActionsFor: UUID?
     /// An external display is on: a closed lid is then a Mac on a desk.
     @ObservationIgnored private var externalDisplay = ExternalDisplays.anyActive()
-    @ObservationIgnored private var displaysSent = false
+    @ObservationIgnored private var lidUpkeepRunning = false
+    /// Restores in a row that left problems: past a few, no more tries until
+    /// the lid moves (each try wakes the display).
+    @ObservationIgnored private var failedRestores = 0
+    static let maxFailedRestores = 3
     @ObservationIgnored private var lastHelperRestart: Date?
     @ObservationIgnored private let powerSource = IOPSPowerSource()
     /// Phone link: pairing, direct server, iCloud.
@@ -159,13 +163,14 @@ public final class AppModel {
             let response = try await client.send(.status)
             apply(response)
             await restartHelperIfOutdated(response)
-            if !displaysSent {
-                displaysSent = true
-                if externalDisplay { _ = try? await client.send(.displays(external: true)) }
+            // The helper forgets the displays when it restarts (update,
+            // crash): told again whenever it differs.
+            if let helper = response.status, (helper.externalDisplay ?? false) != externalDisplay {
+                _ = try? await client.send(.displays(external: externalDisplay))
             }
-            await finishLidOpenIfDue()
-            await runCloseActionsIfDue()
-            await restoreUserChangesIfDue()
+            // Lid work can last half a minute (display sleep requests, a
+            // second brightness write): it never holds up the 1-second loop.
+            if !lidUpkeepRunning { Task { await lidUpkeep() } }
         } catch {
             reachable = false
             client.invalidate()
@@ -260,6 +265,7 @@ public final class AppModel {
 
     private func handleLid(closed: Bool) async {
         lidClosed = closed
+        failedRestores = 0
         UserDefaults.standard.set(closed, forKey: Self.lidClosedKey)
         closeActionsFor = nil
         // Presence holds a display assertion, which would keep the panel lit
@@ -288,6 +294,21 @@ public final class AppModel {
         }
     }
 
+    private func lidUpkeep() async {
+        guard !lidUpkeepRunning else { return }
+        lidUpkeepRunning = true
+        defer { lidUpkeepRunning = false }
+        await finishLidOpenIfDue()
+        await runCloseActionsIfDue()
+        await restoreUserChangesIfDue()
+    }
+
+    /// The helper's status only, nothing acted upon: before the Mac sleeps.
+    func fetchStatus() async {
+        guard registration == .enabled, let response = try? await client.send(.status, timeout: 2) else { return }
+        apply(response, showingError: false)
+    }
+
     /// The close actions, once per session and per close.
     private func runCloseActionsIfDue(evenIfBusy: Bool = false) async {
         guard lidClosed, evenIfBusy || !lid.isBusy, let status, let session = status.session, closeActionsFor != session.id else { return }
@@ -305,10 +326,8 @@ public final class AppModel {
         let external = ExternalDisplays.anyActive()
         guard external != externalDisplay else { return }
         externalDisplay = external
-        guard reachable else {
-            displaysSent = false
-            return
-        }
+        // Unreachable: refresh() tells the helper once it answers.
+        guard reachable else { return }
         _ = try? await client.send(.displays(external: external))
         guard lidClosed, let status, let session = status.session else { return }
         if external {
@@ -344,12 +363,14 @@ public final class AppModel {
     /// open or the session is over, including after a crash or a relaunch.
     /// Sound muted from the phone waits for the end of the session.
     private func restoreUserChangesIfDue() async {
-        guard let status, !restoring, !lid.isBusy, status.session == nil || !lidClosed else { return }
+        guard let status, !restoring, !lid.isBusy, status.session == nil || !lidClosed,
+              failedRestores < Self.maxFailedRestores else { return }
         let due = status.session == nil ? status.userChanges : status.userChanges.withoutHeld
         guard !due.isEmpty else { return }
         restoring = true
         defer { restoring = false }
         lidProblems = await lid.restore(due)
+        failedRestores = lidProblems.isEmpty ? 0 : failedRestores + 1
     }
 
     /// From the phone: the display goes dark, and presence stops lighting it
