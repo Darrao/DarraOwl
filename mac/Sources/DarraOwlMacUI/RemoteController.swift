@@ -258,6 +258,13 @@ public final class RemoteController: CommandTarget {
     }
 
     /// The events of the moment, nil when nobody is to be told.
+    /// The macOS session's lock, as loginwindow reports it (the key is only
+    /// there while locked).
+    private static func screenLocked() -> Bool? {
+        guard let info = CGSessionCopyCurrentDictionary() as? [String: Any] else { return nil }
+        return info["CGSSessionScreenIsLocked"] as? Bool ?? false
+    }
+
     private func collectEvents() -> [MacEvent]? {
         guard let status = model.status else { return nil }
         sessionBytes = dataMeter.update(session: status.session?.id, counter: NetworkInfo.byteCounter())
@@ -265,7 +272,8 @@ public final class RemoteController: CommandTarget {
             now: Date(), session: status.session, power: status.power, networkUp: network.isUp,
             // After the end, the ended session's total, for its recap.
             sessionBytes: sessionBytes ?? dataMeter.lastSessionTotal, lastEnd: status.lastEnd, alerts: status.settings.alerts,
-            agentsDuringSession: agentsSeenInSession.tools
+            agentsDuringSession: agentsSeenInSession.tools,
+            screenLocked: Self.screenLocked(), presenceActive: model.presenceActive, userIdle: UserIdle.seconds()
         ))
         // No paired phone: nobody to tell, nothing goes to iCloud.
         return devices.isEmpty ? nil : found

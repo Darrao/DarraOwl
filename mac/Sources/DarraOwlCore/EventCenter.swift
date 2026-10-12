@@ -15,9 +15,16 @@ public struct EventCenter: Sendable {
         public var lastEnd: SessionEndRecord?
         public var alerts: AlertSettings
         public var agentsDuringSession: [String]
+        /// The macOS session is locked; nil when it could not be read.
+        public var screenLocked: Bool?
+        /// "Toujours actif" is on.
+        public var presenceActive: Bool
+        /// Seconds since the user last typed, clicked or moved the pointer.
+        public var userIdle: TimeInterval?
 
         public init(now: Date, session: Session?, power: PowerSnapshot?, networkUp: Bool, sessionBytes: Int64?,
-                    lastEnd: SessionEndRecord?, alerts: AlertSettings, agentsDuringSession: [String] = []) {
+                    lastEnd: SessionEndRecord?, alerts: AlertSettings, agentsDuringSession: [String] = [],
+                    screenLocked: Bool? = nil, presenceActive: Bool = false, userIdle: TimeInterval? = nil) {
             self.now = now
             self.session = session
             self.power = power
@@ -26,10 +33,17 @@ public struct EventCenter: Sendable {
             self.lastEnd = lastEnd
             self.alerts = alerts
             self.agentsDuringSession = agentsDuringSession
+            self.screenLocked = screenLocked
+            self.presenceActive = presenceActive
+            self.userIdle = userIdle
         }
     }
 
     public static let networkOutageThreshold: TimeInterval = 120
+    /// A lock this soon after the user's last input, lid open, is theirs.
+    public static let deliberateLockIdle: TimeInterval = 60
+    /// "Mac verrouillé" at most this often.
+    public static let lockAlertInterval: TimeInterval = 600
     /// In agent mode, warn below this much battery time.
     public static let agentBatteryWarning: TimeInterval = 45 * 60
 
@@ -44,6 +58,8 @@ public struct EventCenter: Sendable {
     private var primed = false
     /// The end time "bientôt finie" was sent for: a later one re-arms it.
     private var endingSoonFor: Date?
+    private var lastLocked: Bool?
+    private var lastLockAlert: Date?
 
     public init() {}
 
@@ -81,6 +97,18 @@ public struct EventCenter: Sendable {
             if primed, input.session != nil, gap >= Self.networkOutageThreshold {
                 emit(.networkRestored, "Réseau revenu", "Le Mac était hors ligne pendant \(DurationText.short(gap)).")
             }
+        }
+
+        // Locked: Teams shows the user Away. Not when the user locked it,
+        // lid open, right after using it (Touch ID, Ctrl-Cmd-Q).
+        if let locked = input.screenLocked {
+            let deliberate = input.power?.lidClosed != true && (input.userIdle ?? .infinity) < Self.deliberateLockIdle
+            if locked, lastLocked == false, primed, input.alerts.macLocked, input.session != nil || input.presenceActive,
+               !deliberate, lastLockAlert.map({ input.now.timeIntervalSince($0) >= Self.lockAlertInterval }) ?? true {
+                lastLockAlert = input.now
+                emit(.macLocked, "Mac verrouillé", "Teams t'affiche Absent tant qu'il reste verrouillé.")
+            }
+            lastLocked = locked
         }
 
         // Heat: once each time it gets serious.

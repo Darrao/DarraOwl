@@ -105,18 +105,23 @@ public struct AlertSettings: Codable, Equatable, Sendable {
     public var endingSoonMinutes: Int
     /// Agent project names are left out of everything sent to iCloud.
     public var maskProjectNames: Bool
+    /// The Mac locked itself during a session or Toujours actif (Teams then
+    /// shows its user Away).
+    public var macLocked: Bool
 
     public static let dataThresholdRange = 50...100_000
     public static let endingSoonRange = 1...60
 
-    public init(antitheft: Bool = true, dataThresholdMB: Int = 1000, endingSoonMinutes: Int = 10, maskProjectNames: Bool = false) {
+    public init(antitheft: Bool = true, dataThresholdMB: Int = 1000, endingSoonMinutes: Int = 10, maskProjectNames: Bool = false,
+                macLocked: Bool = true) {
         self.antitheft = antitheft
         self.dataThresholdMB = dataThresholdMB
         self.endingSoonMinutes = endingSoonMinutes
         self.maskProjectNames = maskProjectNames
+        self.macLocked = macLocked
     }
 
-    private enum CodingKeys: String, CodingKey { case antitheft, dataThresholdMB, endingSoonMinutes, maskProjectNames }
+    private enum CodingKeys: String, CodingKey { case antitheft, dataThresholdMB, endingSoonMinutes, maskProjectNames, macLocked }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -124,5 +129,6 @@ public struct AlertSettings: Codable, Equatable, Sendable {
         dataThresholdMB = try c.decodeIfPresent(Int.self, forKey: .dataThresholdMB) ?? 1000
         endingSoonMinutes = try c.decodeIfPresent(Int.self, forKey: .endingSoonMinutes) ?? 10
         maskProjectNames = try c.decodeIfPresent(Bool.self, forKey: .maskProjectNames) ?? false
+        macLocked = try c.decodeIfPresent(Bool.self, forKey: .macLocked) ?? true
     }
 }

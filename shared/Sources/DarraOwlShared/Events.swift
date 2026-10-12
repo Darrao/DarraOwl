@@ -16,6 +16,8 @@ public struct MacEvent: Codable, Equatable, Sendable, Identifiable {
         case dataThreshold
         case agentDone
         case agentWaiting
+        /// The Mac locked itself: Teams shows its user Away.
+        case macLocked
     }
 
     public var id: UUID
@@ -37,7 +39,7 @@ public struct MacEvent: Codable, Equatable, Sendable, Identifiable {
         switch kind {
         case .endingSoon, .batteryShort, .hot, .lidOpened, .chargerUnplugged, .dataThreshold, .networkRestored:
             Self.sessionCategory
-        case .ended, .agentDone, .agentWaiting:
+        case .ended, .agentDone, .agentWaiting, .macLocked:
             Self.infoCategory
         }
     }

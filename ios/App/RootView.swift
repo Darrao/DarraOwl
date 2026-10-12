@@ -709,6 +709,7 @@ struct SettingsSheet: View {
                 }
                 Section("Alertes") {
                     Toggle("Antivol : capot ouvert, chargeur débranché", isOn: $settings.alerts.antitheft)
+                    Toggle("Mac verrouillé (Teams t'affiche Absent)", isOn: $settings.alerts.macLocked)
                     Stepper("Fin de session : \(settings.alerts.endingSoonMinutes) min avant", value: $settings.alerts.endingSoonMinutes,
                             in: AlertSettings.endingSoonRange, step: 5)
                     Stepper("Data : au-delà de \(ByteText.short(Int64(settings.alerts.dataThresholdMB) * 1_000_000))",

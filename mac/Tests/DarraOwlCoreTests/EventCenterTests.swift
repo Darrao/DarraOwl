@@ -52,6 +52,52 @@ import Testing
         #expect(c.update(input(at: 40, session: session, thermal: .serious)).map(\.kind) == [.hot])
     }
 
+    func locked(_ isLocked: Bool, at offset: TimeInterval, session: Session?, lid: Bool = false, presence: Bool = false,
+                idle: TimeInterval = 300, alerts: AlertSettings = AlertSettings()) -> EventCenter.Input {
+        var i = input(at: offset, session: session, lid: lid, alerts: alerts)
+        i.screenLocked = isLocked
+        i.presenceActive = presence
+        i.userIdle = idle
+        return i
+    }
+
+    /// Locked during a session or Toujours actif: Teams shows Away.
+    @Test func aLockAfterIdleIsReported() {
+        var c = EventCenter()
+        _ = c.update(locked(false, at: 0, session: session))
+        #expect(c.update(locked(true, at: 5, session: session, idle: 1200)).map(\.kind) == [.macLocked])
+        var p = EventCenter()
+        _ = p.update(locked(false, at: 0, session: nil, presence: true))
+        #expect(p.update(locked(true, at: 5, session: nil, presence: true, idle: 1200)).map(\.kind) == [.macLocked])
+    }
+
+    /// The user locking it on purpose, lid open, is not news; lid closed, it is.
+    @Test func aDeliberateLockIsNotReported() {
+        var c = EventCenter()
+        _ = c.update(locked(false, at: 0, session: session))
+        #expect(c.update(locked(true, at: 5, session: session, idle: 3)).isEmpty)
+        var closed = EventCenter()
+        _ = closed.update(locked(false, at: 0, session: session, lid: true))
+        #expect(closed.update(locked(true, at: 5, session: session, lid: true, idle: 3)).map(\.kind) == [.macLocked])
+    }
+
+    /// Nothing running, the option off, or a lock moments after the last one: quiet.
+    @Test func lockReportsAreRareAndOptional() {
+        var idle = EventCenter()
+        _ = idle.update(locked(false, at: 0, session: nil))
+        #expect(idle.update(locked(true, at: 5, session: nil)).isEmpty)
+        var off = EventCenter()
+        _ = off.update(locked(false, at: 0, session: session, alerts: AlertSettings(macLocked: false)))
+        #expect(off.update(locked(true, at: 5, session: session, alerts: AlertSettings(macLocked: false))).isEmpty)
+        var c = EventCenter()
+        _ = c.update(locked(false, at: 0, session: session))
+        #expect(c.update(locked(true, at: 5, session: session)).count == 1)
+        _ = c.update(locked(false, at: 60, session: session))
+        #expect(c.update(locked(true, at: 120, session: session)).isEmpty, "within ten minutes")
+        _ = c.update(locked(false, at: 700, session: session))
+        #expect(c.update(locked(true, at: 710, session: session)).count == 1)
+    }
+
     @Test func antitheft() {
         var c = EventCenter()
         _ = c.update(input(at: 0, session: session, ac: true, lid: true))
