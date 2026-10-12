@@ -125,4 +125,10 @@ import Testing
         let session = AgentDetector.Candidate(pid: 22, ppid: 1, name: "claude", arguments: ["claude"], cwd: "/p/site", startedAt: t)
         #expect(AgentDetector.agents(in: [bridge, mcp, session]).map(\.pid) == [22])
     }
+
+    @Test func anNpmInstalledMCPServerIsNotASession() {
+        let mcp = AgentDetector.Candidate(pid: 30, ppid: 1, name: "node", arguments: ["node", "/opt/homebrew/bin/claude", "mcp", "serve"], cwd: "/p", startedAt: t)
+        let prompt = AgentDetector.Candidate(pid: 31, ppid: 1, name: "claude", arguments: ["claude", "-p", "mcp"], cwd: "/p", startedAt: t)
+        #expect(AgentDetector.agents(in: [mcp, prompt]).map(\.pid) == [31], "a prompt that says mcp is still a session")
+    }
 }

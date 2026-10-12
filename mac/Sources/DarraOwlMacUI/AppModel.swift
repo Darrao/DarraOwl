@@ -7,6 +7,7 @@ import DarraOwlXPC
 import Foundation
 import Observation
 import os
+import Synchronization
 
 /// State of the menu bar app. The helper owns the session; this only shows
 /// it and forwards requests.
@@ -27,6 +28,8 @@ public final class AppModel {
     public private(set) var presenceLastStop: PresenceStopReason?
     private let presence = PresenceController(asserter: IOPMPresenceAsserter())
     static let presenceIndefiniteKey = "presenceIndefinite"
+    /// The lid as the app last saw it, kept across launches.
+    static let lidClosedKey = "lidClosedAtLastLook"
 
     /// Lid-close actions.
     public private(set) var lidClosed = false
@@ -42,6 +45,18 @@ public final class AppModel {
     @ObservationIgnored private var openPending = false
     /// Apps paused before this launch are checked once the helper answers.
     @ObservationIgnored private var checkedFrozenAtLaunch = false
+    /// The previous run of the app ended with the lid closed (crash, quit):
+    /// apps paused then are resumed at this launch if the lid is open. Apps
+    /// paused from the phone with the lid open stay paused.
+    @ObservationIgnored private var lidWasClosedAtLastRun = false
+    /// The session the close actions ran for, during this close: once per
+    /// session and per close, even when the app learns of the session after
+    /// the lid closed (started from the Terminal or the phone a moment before).
+    @ObservationIgnored private var closeActionsFor: UUID?
+    /// An external display is on: a closed lid is then a Mac on a desk.
+    @ObservationIgnored private var externalDisplay = ExternalDisplays.anyActive()
+    @ObservationIgnored private var displaysSent = false
+    @ObservationIgnored private var lastHelperRestart: Date?
     @ObservationIgnored private let powerSource = IOPSPowerSource()
     /// Phone link: pairing, direct server, iCloud.
     public private(set) var remote: RemoteController!
@@ -49,7 +64,6 @@ public final class AppModel {
     private let client = HelperClient()
     private let log = Logger(subsystem: "com.darrao.darraowl", category: "app")
     private var loop: Task<Void, Never>?
-    private var checkedHelperBuild = false
     static let firstLaunchKey = "didConfigureLoginItem"
 
     public init() {
@@ -95,6 +109,8 @@ public final class AppModel {
         }
         lidObserver.start()
         lidClosed = lidObserver.isClosed
+        lidWasClosedAtLastRun = UserDefaults.standard.bool(forKey: Self.lidClosedKey)
+        UserDefaults.standard.set(lidClosed, forKey: Self.lidClosedKey)
         // Presence learns about the lid before it may hold anything.
         presence.setSuspended(lidClosed)
         // "Sans limite" survives a relaunch, so the Mac stays active after a
@@ -105,6 +121,11 @@ public final class AppModel {
         // A display put to sleep from the phone stays dark for presence until it wakes.
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.presence.setQuiet(false) }
+        }
+        // A display plugged or unplugged with the lid closed changes what a
+        // closed lid means.
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in await self?.displaysChanged() }
         }
         loop = Task { [weak self] in
             var tick = 0
@@ -138,7 +159,12 @@ public final class AppModel {
             let response = try await client.send(.status)
             apply(response)
             await restartHelperIfOutdated(response)
+            if !displaysSent {
+                displaysSent = true
+                if externalDisplay { _ = try? await client.send(.displays(external: true)) }
+            }
             await finishLidOpenIfDue()
+            await runCloseActionsIfDue()
             await restoreUserChangesIfDue()
         } catch {
             reachable = false
@@ -197,10 +223,18 @@ public final class AppModel {
         NSApp.terminate(nil)
     }
 
-    /// Called by the app delegate however the app is quit.
+    /// Called by the app delegate however the app is quit. The helper is
+    /// asked even when this app saw no session (one may have started from
+    /// the Terminal a moment ago), then the brightness and sound saved for
+    /// the session come back: only the app can restore them. A few seconds
+    /// at most, so a silent helper never holds up a quit or a logout.
     func stopBeforeQuitting() async {
-        guard session != nil else { return }
-        _ = try? await client.send(.stop(reason: .appQuit))
+        guard registration == .enabled else { return }
+        await Bounded.run(seconds: 6) { [self] in
+            let response = try? await client.send(.stop(reason: .appQuit), timeout: 3)
+            guard let status = response?.status ?? status, !status.userChanges.isEmpty else { return }
+            _ = await lid.restore(status.userChanges)
+        }
     }
 
     // MARK: Remote
@@ -226,10 +260,12 @@ public final class AppModel {
 
     private func handleLid(closed: Bool) async {
         lidClosed = closed
+        UserDefaults.standard.set(closed, forKey: Self.lidClosedKey)
+        closeActionsFor = nil
         // Presence holds a display assertion, which would keep the panel lit
         // under the lid: release it while closed, take it back at open.
         presence.setSuspended(closed)
-        guard reachable, let status else {
+        guard reachable, status != nil else {
             if !closed {
                 // Delayed close steps must not run with the lid open, and the
                 // open is finished when the helper answers again.
@@ -240,24 +276,56 @@ public final class AppModel {
         }
         if closed {
             openPending = false
-            if status.session != nil {
-                let problems = await lid.lidClosed(settings: status.settings.lid, keeping: keptProcesses(status))
-                // A later open already replaced these.
-                if lidClosed { lidProblems = problems }
-            } else {
-                _ = try? await client.send(.lidChanged)
-            }
+            // Asked afresh: a session started from the Terminal a moment ago counts.
+            if let fresh = try? await client.send(.lidChanged) { apply(fresh, showingError: false) }
+            await runCloseActionsIfDue(evenIfBusy: true)
         } else {
             openPending = false
-            let problems = await lid.lidOpened(sessionActive: status.session != nil)
+            let problems = await lid.lidOpened(sessionActive: status?.session != nil)
+            // The helper did not answer: done again once it does.
+            if lid.resumeFailed { openPending = true }
             if !lidClosed { lidProblems = problems }
         }
     }
 
+    /// The close actions, once per session and per close.
+    private func runCloseActionsIfDue(evenIfBusy: Bool = false) async {
+        guard lidClosed, evenIfBusy || !lid.isBusy, let status, let session = status.session, closeActionsFor != session.id else { return }
+        closeActionsFor = session.id
+        let problems = await lid.lidClosed(settings: status.settings.lid, keeping: keptProcesses(status))
+        // A later open already replaced these.
+        if lidClosed { lidProblems = problems }
+    }
+
+    /// A display came or went. The helper is told (no Low Power Mode on a
+    /// desk). With the lid closed during a session, docking undoes the close
+    /// actions (someone works on the external display) and undocking runs
+    /// them (the Mac goes in a bag).
+    private func displaysChanged() async {
+        let external = ExternalDisplays.anyActive()
+        guard external != externalDisplay else { return }
+        externalDisplay = external
+        guard reachable else {
+            displaysSent = false
+            return
+        }
+        _ = try? await client.send(.displays(external: external))
+        guard lidClosed, let status, let session = status.session else { return }
+        if external {
+            closeActionsFor = session.id
+            lidProblems = await lid.lidOpened(sessionActive: true)
+            if lid.resumeFailed { openPending = true }
+        } else {
+            closeActionsFor = nil
+            await runCloseActionsIfDue(evenIfBusy: true)
+        }
+    }
+
     /// Running agents and followed processes: an app whose tree holds one is
-    /// never paused (an agent in that terminal would stop with it).
+    /// never paused (an agent in that terminal would stop with it). Scanned
+    /// now: an agent started a moment ago counts, phone link or not.
     private func keptProcesses(_ status: EngineStatus) -> Set<Int32> {
-        Set(remote.agents.map(\.pid)).union(status.session?.watching.map(\.pid) ?? [])
+        Set(AgentScanner.scan().map(\.pid)).union(status.session?.watching.map(\.pid) ?? [])
     }
 
     /// The lid is open but apps are still paused: the open happened while
@@ -266,10 +334,10 @@ public final class AppModel {
         guard let status, !lidClosed, !lid.isBusy else { return }
         let firstLook = !checkedFrozenAtLaunch
         checkedFrozenAtLaunch = true
-        guard openPending || (firstLook && !status.frozen.isEmpty) else { return }
+        guard openPending || (firstLook && lidWasClosedAtLastRun && !status.frozen.isEmpty) else { return }
         openPending = false
-        let problems = await lid.lidOpened(sessionActive: status.session != nil)
-        if !problems.isEmpty { lidProblems = problems }
+        lidProblems = await lid.lidOpened(sessionActive: status.session != nil)
+        if lid.resumeFailed { openPending = true }
     }
 
     /// Brightness and sound saved at a lid close come back once the lid is
@@ -281,8 +349,7 @@ public final class AppModel {
         guard !due.isEmpty else { return }
         restoring = true
         defer { restoring = false }
-        let problems = await lid.restore(due)
-        if !problems.isEmpty { lidProblems = problems }
+        lidProblems = await lid.restore(due)
     }
 
     /// From the phone: the display goes dark, and presence stops lighting it
@@ -296,8 +363,7 @@ public final class AppModel {
     /// idle dim and a closing lid both lower it.
     private func sampleBrightnessIfPresent() {
         guard !lidClosed, status?.userChanges.displayBrightness == nil else { return }
-        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
-        guard idle < 30 else { return }
+        guard UserIdle.seconds() < 30 else { return }
         lid.sampleBrightness()
     }
 
@@ -306,6 +372,9 @@ public final class AppModel {
     /// `duration` nil: no end time.
     public func startPresence(duration: TimeInterval?) {
         let now = Date()
+        // Turned off from the phone earlier but lit again since (the request
+        // can be deferred right after a wake): no longer quiet.
+        if presence.quiet, CGDisplayIsAsleep(CGMainDisplayID()) == 0 { presence.setQuiet(false, now: now) }
         do {
             try presence.start(until: duration.map { now.addingTimeInterval($0) }, now: now)
             UserDefaults.standard.set(duration == nil, forKey: Self.presenceIndefiniteKey)
@@ -401,11 +470,12 @@ public final class AppModel {
     }
 
     /// After an update the running helper is still the old binary. An idle one
-    /// is asked to exit; launchd starts the new one at once.
+    /// is asked to exit; launchd starts the new one at once. A busy one is
+    /// asked again once its session is over, at most once a minute.
     private func restartHelperIfOutdated(_ response: HelperResponse) async {
-        guard !checkedHelperBuild else { return }
-        checkedHelperBuild = true
         guard response.helperBuild != appBuild, response.status?.session == nil else { return }
+        if let last = lastHelperRestart, Date().timeIntervalSince(last) < 60 { return }
+        lastHelperRestart = Date()
         _ = try? await client.send(.restartIfIdle)
         client.invalidate()
     }
@@ -415,5 +485,34 @@ public final class AppModel {
         guard !defaults.bool(forKey: Self.firstLaunchKey) else { return }
         defaults.set(true, forKey: Self.firstLaunchKey)
         try? ServiceRegistration.setLoginItem(true)
+    }
+}
+
+/// Waits for an operation at most a given time; the operation itself may
+/// go on after that.
+enum Bounded {
+    @MainActor
+    static func run(seconds: Double, _ operation: @escaping @MainActor () async -> Void) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let once = Once()
+            Task { @MainActor in
+                await operation()
+                if once.claim() { continuation.resume() }
+            }
+            Task {
+                try? await Task.sleep(for: .seconds(seconds))
+                if once.claim() { continuation.resume() }
+            }
+        }
+    }
+
+    private final class Once: Sendable {
+        private let done = Mutex(false)
+        func claim() -> Bool {
+            done.withLock { done in
+                defer { done = true }
+                return !done
+            }
+        }
     }
 }

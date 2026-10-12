@@ -90,7 +90,7 @@ public struct EventCenter: Sendable {
             if thermal == .critical {
                 emit(.hot, "Le Mac surchauffe", "Température critique : la session s'arrête pour le protéger.")
             } else {
-                emit(.hot, "Le Mac chauffe", "Température élevée : le mode économie d'énergie est activé.")
+                emit(.hot, "Le Mac chauffe", "Température élevée : le mode économie d'énergie est activé, si ce Mac le propose.")
             }
         }
         lastHot = hot

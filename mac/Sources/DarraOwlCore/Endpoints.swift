@@ -20,12 +20,17 @@ public enum EndpointPicker {
             guard let octets = octets(i.ipv4) else { continue }
             if isTailscale(octets) {
                 if tailscale == nil { tailscale = i.ipv4 }
-            } else if isPrivateLAN(octets), !i.name.hasPrefix("utun"), !i.name.hasPrefix("bridge"), !i.name.hasPrefix("lo") {
+            } else if isPrivateLAN(octets), !Self.virtualPrefixes.contains(where: i.name.hasPrefix), !local.contains(i.ipv4) {
                 local.append(i.ipv4)
             }
         }
-        return Endpoints(port: port, local: local, tailscale: tailscale)
+        // The phone refuses a longer list: the first ones (en0 first) stay.
+        return Endpoints(port: port, local: Array(local.prefix(Endpoints.maxLocal)), tailscale: tailscale)
     }
+
+    /// Tunnels, bridges, loopback and virtual machines' networks: never
+    /// where a phone finds the Mac.
+    static let virtualPrefixes = ["utun", "bridge", "lo", "vmnet", "vnic", "vboxnet", "anpi", "awdl", "llw"]
 
     /// 172.20.10.0/28: the network an iPhone hotspot hands out.
     public static func isHotspot(_ ipv4: String) -> Bool {

@@ -26,6 +26,13 @@ enum Uninstaller {
                 ))
                 _ = await lid.restore(changes)
                 if let left = try? await client.send(.status).status?.userChanges, !left.isEmpty {
+                    // The panel is off with the lid closed: its brightness
+                    // can only be put back once it is open again.
+                    if left.displayBrightness != nil || left.keyboardBrightness != nil {
+                        print("La luminosité enregistrée ne peut être remise qu'avec le capot ouvert : ouvre-le, puis relance la désinstallation.")
+                        client.invalidate()
+                        return 1
+                    }
                     for entry in left.audio {
                         print("Son de \(entry.name ?? entry.deviceUID) resté coupé (appareil absent) : remets-le à \(Int(entry.volume * 100)) % toi-même.")
                     }
@@ -34,7 +41,11 @@ enum Uninstaller {
             do {
                 let response = try await client.send(.prepareUninstall)
                 let pending = response.status?.pendingUndo ?? []
-                if pending.isEmpty {
+                if let refusal = response.error {
+                    // Another account is at the screen, or a refusal of the helper's own.
+                    clean = false
+                    print("Désinstallation refusée par le composant système : \(refusal)")
+                } else if pending.isEmpty {
                     print("Session terminée, réglages rétablis, fichiers du composant système supprimés.")
                 } else {
                     clean = false
@@ -71,12 +82,17 @@ enum Uninstaller {
             print("Clés d'appairage supprimées du trousseau.")
         }
 
+        // DarraOwl stays installed: its hooks, link and login item stay too.
+        guard clean else { return 1 }
+
         // Our hooks in Claude Code's settings, the hook token, the darraowl link.
-        // Without the token (Keychain silent) the state is unknown: remove anyway.
+        // Without the token (Keychain silent) the state is unknown: remove() only
+        // rewrites the file when one of our entries is in it.
         if (try? ClaudeCodeSetup.state()) != .absent {
             do {
-                try ClaudeCodeSetup.remove()
-                print("Hooks de DarraOwl retirés de \(ClaudeCodeSetup.file.path) (copie : \(ClaudeCodeSetup.backup.lastPathComponent)).")
+                if try ClaudeCodeSetup.remove() {
+                    print("Hooks de DarraOwl retirés de \(ClaudeCodeSetup.file.path). Ta version d'avant DarraOwl reste dans \(ClaudeCodeSetup.backup.lastPathComponent).")
+                }
             } catch {
                 // Not a reason to keep DarraOwl installed: said, with what to do.
                 print("Hooks de Claude Code non retirés (\(error.localizedDescription)). Dans \(ClaudeCodeSetup.file.path), retire les deux entrées \"http://127.0.0.1:\(String(HookServer.port))/hooks/claude\".")
@@ -100,6 +116,6 @@ enum Uninstaller {
                 print("Ouverture à la connexion : \(error.localizedDescription)")
             }
         }
-        return clean ? 0 : 1
+        return 0
     }
 }

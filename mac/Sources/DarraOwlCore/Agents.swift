@@ -57,9 +57,12 @@ public enum AgentDetector {
     }
 
     /// Helper modes of an agent's binary that are not a coding session: the
-    /// Chrome bridge (`--chrome-native-host`) and MCP servers (`claude mcp …`).
+    /// Chrome bridge (`--chrome-native-host`) and MCP servers (`claude mcp …`,
+    /// or `node …/claude mcp …` for an npm install).
     static func isHelperMode(_ arguments: [String]) -> Bool {
-        arguments.contains("--chrome-native-host") || arguments.dropFirst().first == "mcp"
+        if arguments.contains("--chrome-native-host") { return true }
+        if arguments.dropFirst().first == "mcp" { return true }
+        return arguments.count > 2 && arguments[2] == "mcp" && arguments[1].contains("/")
     }
 
     /// The tool a process is, or nil. Node-based CLIs run as `node <path>/gemini`.

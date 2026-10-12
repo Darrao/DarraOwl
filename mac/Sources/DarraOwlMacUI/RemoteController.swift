@@ -16,6 +16,9 @@ public final class RemoteController: CommandTarget {
     public private(set) var invite: PairingInvite?
     public private(set) var devices: [PairedDevice] = []
     public private(set) var cloudProblem: String?
+    /// The iCloud account has been looked at once (the link starts once the
+    /// system component answers).
+    public private(set) var cloudChecked = false
     /// Pairing or unpairing problem, kept until the next attempt.
     public private(set) var pairingProblem: String?
     public private(set) var macPower: MacState.Power = .awake
@@ -36,6 +39,7 @@ public final class RemoteController: CommandTarget {
     @ObservationIgnored private let network = NetworkInfo()
     @ObservationIgnored private let docker = DockerControl()
     @ObservationIgnored private let audio = CoreAudioControl()
+    @ObservationIgnored private let sleepGate = SleepGate()
     @ObservationIgnored private let log = OSLogEngineLogger(category: "remote")
     @ObservationIgnored private var lastBroadcast: MacState?
     @ObservationIgnored private var tick = 0
@@ -95,6 +99,7 @@ public final class RemoteController: CommandTarget {
             self.restartServer()
         }
         hub.onDeviceRemoved = { [weak self] id in
+            if let self, let hub = self.hub { self.devices = hub.pairedDevices() }
             self?.server?.disconnectAll()
             self?.restartServer()
         }
@@ -103,7 +108,12 @@ public final class RemoteController: CommandTarget {
             pairing: { [weak self] request in self?.pair(request) ?? PairingResponse(accepted: false, macID: identity.macID, macName: "", message: nil) },
             isPaired: { [weak self] id in self?.devices.contains { $0.id == id } ?? false }
         ))
-        network.onChange = { [weak self] in self?.publishSoon() }
+        network.onChange = { [weak self] in
+            guard let self else { return }
+            // Back online: iCloud is tried again at once, not after its back-off.
+            if self.network.isUp { self.hub?.retryNow() }
+            self.publishSoon()
+        }
         if let token = HookToken.current() {
             let hooks = HookServer(token: token) { [weak self] parsed in self?.handleHook(parsed) }
             hooks.start()
@@ -116,6 +126,7 @@ public final class RemoteController: CommandTarget {
         observeSleep()
         Task {
             accountProblem = await cloud.accountProblem()
+            cloudChecked = true
             await refreshContainers()
             await publish(force: true)
             await hub.pollCloud(macName: macName)
@@ -139,9 +150,11 @@ public final class RemoteController: CommandTarget {
         if tick % 5 == 0 { checkEvents() }
         if tick % 10 == 0 { refreshAgents() }
         if tick % 60 == 0, let cloud { Task { accountProblem = await cloud.accountProblem() } }
-        if tick % 3600 == 0 { Task { await cloud?.removeEvents(before: Date().addingTimeInterval(-86_400)) } }
+        // Old events go two minutes after launch, then every hour.
+        if tick % 3600 == 120 { Task { await cloud?.removeEvents(before: Date().addingTimeInterval(-86_400)) } }
         if let invite, Date() > invite.expiresAt { cancelInvite() }
-        let problem = accountProblem ?? hub.cloudError.map { "iCloud : \($0)" }
+        // Without a paired phone nothing goes to iCloud: an old error is moot.
+        let problem = accountProblem ?? (devices.isEmpty ? nil : hub.cloudError.map { "iCloud : \($0)" })
         if problem != cloudProblem { cloudProblem = problem }
         // Mirrors of objects that are not observable.
         if server?.port != serverPort { serverPort = server?.port }
@@ -162,6 +175,7 @@ public final class RemoteController: CommandTarget {
     /// A silent push from CloudKit: the phone wrote something.
     func cloudChanged() {
         guard started, let hub else { return }
+        hub.retryNow()
         Task { await hub.pollCloud(macName: macName) }
     }
 
@@ -206,15 +220,21 @@ public final class RemoteController: CommandTarget {
     }
 
     private var nobodyAtTheMac: Bool {
-        if model.lidClosed { return true }
-        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
-        return idle >= 60
+        model.lidClosed || UserIdle.seconds() >= 60
     }
 
     // MARK: Events
 
     private func checkEvents() {
-        guard let status = model.status, let hub else { return }
+        guard let hub, let found = collectEvents() else { return }
+        if !found.isEmpty || !hub.pendingEvents.isEmpty {
+            Task { await hub.post(found) }
+        }
+    }
+
+    /// The events of the moment, nil when nobody is to be told.
+    private func collectEvents() -> [MacEvent]? {
+        guard let status = model.status else { return nil }
         sessionBytes = dataMeter.update(session: status.session?.id, counter: NetworkInfo.byteCounter())
         let found = events.update(EventCenter.Input(
             now: Date(), session: status.session, power: status.power, networkUp: network.isUp,
@@ -223,9 +243,23 @@ public final class RemoteController: CommandTarget {
             agentsDuringSession: agentsSeenInSession.tools
         ))
         // No paired phone: nobody to tell, nothing goes to iCloud.
-        guard !devices.isEmpty else { return }
-        if !found.isEmpty || !hub.pendingEvents.isEmpty {
-            Task { await hub.post(found) }
+        return devices.isEmpty ? nil : found
+    }
+
+    /// The Mac is about to sleep: what the phone should know leaves first,
+    /// a session that just ended with the lid closed included (the helper is
+    /// asked afresh), with its recap. A few seconds at most (SleepGate).
+    private func beforeSleep() async {
+        macPower = .goingToSleep
+        guard started, let hub else { return }
+        await model.refresh()
+        if let found = collectEvents(), !found.isEmpty || !hub.pendingEvents.isEmpty {
+            await hub.post(found)
+        }
+        await publish(force: true)
+        // A sender already on its way: a moment for it.
+        for _ in 0..<20 where !hub.pendingEvents.isEmpty {
+            try? await Task.sleep(for: .milliseconds(100))
         }
     }
 
@@ -329,7 +363,8 @@ public final class RemoteController: CommandTarget {
             settings: status.settings,
             presence: MacState.Presence(active: model.presenceActive, until: model.presenceUntil),
             muted: (try? audio.readDefaultOutput())?.muted,
-            dockerRunning: NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == PausePolicy.dockerBundleID }
+            dockerRunning: NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == PausePolicy.dockerBundleID },
+            pairedDevices: devices.map(\.id)
         )
     }
 
@@ -362,18 +397,30 @@ public final class RemoteController: CommandTarget {
     }
 
     private func observeSleep() {
-        let center = NSWorkspace.shared.notificationCenter
-        center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+        sleepGate.willSleep = { [weak self] done in
+            guard let self else {
+                done()
+                return
+            }
             Task { @MainActor in
-                self?.macPower = .goingToSleep
-                await self?.publish(force: true)
+                await self.beforeSleep()
+                done()
+            }
+        }
+        let center = NSWorkspace.shared.notificationCenter
+        if !sleepGate.start() {
+            // No IOKit power notifications: the plain announcement, unwaited.
+            center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in await self?.beforeSleep() }
             }
         }
         center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
-                self?.macPower = .awake
-                await self?.publish(force: true)
-                if let self, let hub = self.hub { await hub.pollCloud(macName: self.macName) }
+                guard let self else { return }
+                self.macPower = .awake
+                self.hub?.retryNow()
+                await self.publish(force: true)
+                if let hub = self.hub { await hub.pollCloud(macName: self.macName) }
             }
         }
     }
@@ -396,6 +443,21 @@ public final class RemoteController: CommandTarget {
     }
 
     public func stopSession() async throws {
+        // Lid closed: the Mac sleeps as soon as the session ends, before the
+        // answer could leave. It leaves first and the stop follows, as for
+        // sleepNow, so the phone never reads "pas de réponse" for a stop
+        // that worked.
+        if model.lidClosed, let status = model.status, status.session != nil {
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                do {
+                    _ = try await model.sendHelper(.stop(reason: .userStopped))
+                } catch {
+                    log.error("stop after answering failed: \(error.localizedDescription)")
+                }
+            }
+            return
+        }
         _ = try await model.sendHelper(.stop(reason: .userStopped))
     }
 
@@ -481,7 +543,7 @@ public final class RemoteController: CommandTarget {
     }
 
     public func setMuted(_ muted: Bool) async throws {
-        try await model.lidCoordinator.setMuted(muted, sessionActive: model.session != nil, saved: model.status?.userChanges.audio ?? [])
+        try await model.lidCoordinator.setMuted(muted, saved: model.status?.userChanges.audio ?? [])
         publishSoon()
     }
 

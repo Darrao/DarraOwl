@@ -8,6 +8,7 @@ import Security
 @MainActor
 final class LinkConnection {
     let connection: NWConnection
+    let openedAt = Date()
     var deviceID: UUID?
     /// A pairing connection already got its answer.
     var answered = false
@@ -117,6 +118,8 @@ public final class LinkServer {
     /// Open connections at most: anyone on the network can connect before
     /// the TLS handshake proves anything.
     static let maxConnections = 24
+    /// Connections from one address that have not said hello yet.
+    static let maxSilentPerHost = 4
     /// A connection that has not said hello (or sent its pairing request)
     /// by then is closed.
     static let helloTimeout: TimeInterval = 10
@@ -161,7 +164,15 @@ public final class LinkServer {
                 }
             }
             l.newConnectionHandler = { [weak self] c in
-                Task { @MainActor in self?.accept(c, pairingOnly: false) }
+                Task { @MainActor in
+                    // A listener replaced since (a device was unpaired) knew
+                    // the old keys: what it accepted is not taken.
+                    guard let self, self.listener === l else {
+                        c.cancel()
+                        return
+                    }
+                    self.accept(c, pairingOnly: false)
+                }
             }
             l.start(queue: .main)
             listener = l
@@ -189,7 +200,13 @@ public final class LinkServer {
             }
         }
         l.newConnectionHandler = { [weak self] c in
-            Task { @MainActor in self?.accept(c, pairingOnly: true) }
+            Task { @MainActor in
+                guard let self, self.pairingListener === l else {
+                    c.cancel()
+                    return
+                }
+                self.accept(c, pairingOnly: true)
+            }
         }
         l.start(queue: .main)
         pairingListener = l
@@ -232,9 +249,22 @@ public final class LinkServer {
     // MARK: Private
 
     private func accept(_ nw: NWConnection, pairingOnly: Bool) {
-        guard connections.count < Self.maxConnections else {
+        let silent = connections.values.filter { $0.deviceID == nil && !$0.answered }
+        // One machine cannot take every slot with connections that never
+        // finish their handshake.
+        if let host = Self.host(of: nw), silent.filter({ Self.host(of: $0.connection) == host }).count >= Self.maxSilentPerHost {
             nw.cancel()
             return
+        }
+        if connections.count >= Self.maxConnections {
+            // Full: the oldest connection still silent goes, not the new one,
+            // so a paired phone always gets in.
+            guard let oldest = silent.min(by: { $0.openedAt < $1.openedAt }) else {
+                nw.cancel()
+                return
+            }
+            connections[ObjectIdentifier(oldest)] = nil
+            oldest.close()
         }
         let c = LinkConnection(nw)
         connections[ObjectIdentifier(c)] = c
@@ -251,6 +281,11 @@ public final class LinkServer {
             Task { @MainActor in await self.handle(message, on: c, pairingOnly: pairingOnly) }
         }
         c.start()
+    }
+
+    static func host(of connection: NWConnection) -> String? {
+        if case let .hostPort(host, _) = connection.endpoint { return "\(host)" }
+        return nil
     }
 
     private func handle(_ message: ClientMessage, on c: LinkConnection, pairingOnly: Bool) async {

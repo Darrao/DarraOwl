@@ -88,7 +88,10 @@ final class FakeCloud: CloudMailbox {
     var results: [CommandResult] = []
     var pairings: [PairingResponse] = []
     var discarded: [String] = []
+    /// When set, publishing waits at this gate.
+    var publishGate: AsyncGate?
     func publish(state: MacState, endpoints: Endpoints?) async throws {
+        if let publishGate { await publishGate.pass() }
         if failPublish { throw FakeError(message: "Couldn't get container configuration") }
         published.append(state)
     }
@@ -432,13 +435,13 @@ struct HubRig {
     @Test func failuresBackOff() async {
         let rig = HubRig()
         rig.cloud.failPublish = true
-        #expect(await !rig.hub.publishIfDue(state(rig), endpoints: nil, force: true))
+        #expect(await !rig.hub.publishIfDue(state(rig), endpoints: nil))
         #expect(rig.hub.cloudError != nil)
         rig.cloud.failPublish = false
         rig.clock.advance(10)
-        #expect(await !rig.hub.publishIfDue(state(rig), endpoints: nil, force: true), "still backing off")
+        #expect(await !rig.hub.publishIfDue(state(rig, battery: 70), endpoints: nil), "still backing off")
         rig.clock.advance(25)
-        #expect(await rig.hub.publishIfDue(state(rig), endpoints: nil, force: true))
+        #expect(await rig.hub.publishIfDue(state(rig, battery: 70), endpoints: nil))
         #expect(rig.hub.cloudError == nil)
     }
 

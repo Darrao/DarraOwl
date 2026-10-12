@@ -13,6 +13,9 @@ struct SettingsView: View {
     @State private var claudeState = ClaudeHookConfig.State.absent
     /// settings.json exists but cannot be read: nothing is offered.
     @State private var claudeReadProblem: String?
+    /// The hook token cannot be read yet (Keychain locked or silent): only
+    /// removing, which needs no token, is offered. Retried every few seconds.
+    @State private var claudeKeychainSilent = false
     @State private var linkState = CommandLineLink.State.absent
     @State private var setupProblem: String?
     @Environment(\.openWindow) private var openWindow
@@ -28,7 +31,7 @@ struct SettingsView: View {
                 Toggle("Activer le mode économie d'énergie", isOn: $lid.lowPower)
                 Toggle("Mettre Docker Desktop en pause si aucun conteneur ne tourne", isOn: $lid.pauseDocker)
                 pausedApps
-                Text("Tout est rétabli à l'ouverture du capot. Les apps de visio ne sont jamais mises en pause, et aucune app ne l'est pendant un appel (micro utilisé).")
+                Text("Tout est rétabli à l'ouverture du capot. Les apps de visio ne sont jamais mises en pause. Pendant un appel (micro utilisé), le son n'est pas coupé et aucune app n'est mise en pause. Avec un écran externe, rien n'est changé.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Batterie") {
@@ -51,7 +54,7 @@ struct SettingsView: View {
                 }
             }
             Section("Claude Code") {
-                Text("Pour être prévenu sur l'iPhone quand Claude a fini ou attend ta validation. DarraOwl ajoute deux réglages (« hooks ») au fichier de configuration de Claude Code, sur ce Mac : ~/.claude/settings.json, dans un dossier caché de ton dossier personnel. DarraOwl ne lit de ce que Claude Code lui envoie que le nom de l'événement et celui du dossier.")
+                Text("Pour être prévenu sur l'iPhone quand Claude a fini ou attend ta validation. DarraOwl ajoute deux réglages (« hooks ») au fichier de configuration de Claude Code, sur ce Mac : ~/.claude/settings.json, dans un dossier caché de ton dossier personnel. DarraOwl ne lit de ce que Claude Code lui envoie que le nom de l'événement, son type et le nom du dossier.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let claudeReadProblem {
@@ -61,7 +64,11 @@ struct SettingsView: View {
                 HStack {
                     Text(claudeStateText)
                     Spacer()
-                    if claudeReadProblem == nil {
+                    if claudeReadProblem == nil, claudeKeychainSilent {
+                        if claudeState != .absent {
+                            Button("Désactiver") { setup { try ClaudeCodeSetup.remove() } }
+                        }
+                    } else if claudeReadProblem == nil {
                     switch claudeState {
                     case .absent:
                         Button("Activer") { setup { try ClaudeCodeSetup.install() } }
@@ -134,6 +141,12 @@ struct SettingsView: View {
             load()
             refreshSetup()
         }
+        .task(id: claudeKeychainSilent) {
+            while claudeKeychainSilent, !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                refreshSetup()
+            }
+        }
         .onChange(of: model.status?.settings) { _, _ in load() }
     }
 
@@ -188,6 +201,9 @@ struct SettingsView: View {
 
     private var claudeStateText: String {
         if !ClaudeCodeSetup.claudeInstalled { return "Claude Code n'est pas installé" }
+        if claudeKeychainSilent {
+            return claudeState == .absent ? "Trousseau indisponible pour l'instant" : "Présents (trousseau indisponible pour l'instant)"
+        }
         switch claudeState {
         case .absent: return "Désactivé"
         case .installed: return "Activé"
@@ -219,8 +235,20 @@ struct SettingsView: View {
         do {
             claudeState = try ClaudeCodeSetup.state()
             claudeReadProblem = nil
+            claudeKeychainSilent = false
+        } catch ClaudeCodeSetup.SetupError.keychain {
+            // Whether our hooks are in the file is still known without the token.
+            claudeKeychainSilent = true
+            do {
+                let data = try ClaudeCodeSetup.read()
+                claudeState = data.map { ClaudeHookConfig.hasOurs($0, port: HookServer.port) } == true ? .outdated : .absent
+                claudeReadProblem = nil
+            } catch {
+                claudeReadProblem = error.localizedDescription
+            }
         } catch {
             claudeReadProblem = error.localizedDescription
+            claudeKeychainSilent = false
         }
         linkState = CommandLineLink.state()
     }

@@ -34,8 +34,11 @@ struct WelcomeView: View {
                  detail: "DarraOwl démarre avec ta session, pour que l'iPhone le trouve toujours.") {
                 if !model.loginItemEnabled { Button("Activer") { model.setLoginItem(true) } }
             }
-            step(3, "Même compte iCloud que l'iPhone", done: model.remote.cloudProblem == nil,
-                 detail: model.remote.cloudProblem ?? "Le Mac publie son état dans ta base iCloud privée. Rien ne passe par un serveur tiers.") {
+            step(3, "Même compte iCloud que l'iPhone", done: model.remote.cloudChecked && model.remote.cloudProblem == nil,
+                 detail: model.remote.cloudProblem
+                    ?? (model.remote.cloudChecked
+                        ? "Le Mac publie son état dans ta base iCloud privée. Rien ne passe par un serveur tiers."
+                        : "Vérifié dès que le composant système est installé.")) {
                 EmptyView()
             }
             step(4, "Appairer ton iPhone", done: !model.remote.devices.isEmpty,

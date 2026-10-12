@@ -5,12 +5,15 @@ import Testing
 
 final class FakeAsserter: PresenceAsserting {
     var held = false
+    /// What is held: the display (true) or only the system (false).
+    var display = false
     var activity = 0
     var failHold = false
 
-    func hold() throws {
+    func hold(display: Bool) throws {
         if failHold { throw FakeError(message: "assertion refused") }
         held = true
+        self.display = display
     }
 
     func release() { held = false }
@@ -120,15 +123,30 @@ final class FakeAsserter: PresenceAsserting {
         #expect(a.held && a.activity == 1)
     }
 
-    /// "Éteindre l'écran" from the phone: no activity until the display wakes.
-    @Test func aDisplayTurnedOffOnPurposeStaysOff() throws {
+    /// "Éteindre l'écran" from the phone: no activity until the display
+    /// wakes, but the Mac itself stays awake.
+    @Test func aDisplayTurnedOffOnPurposeStaysOffAndTheMacAwake() throws {
         let a = FakeAsserter()
         let p = PresenceController(asserter: a)
         try p.start(until: nil, now: t0)
+        #expect(a.held && a.display)
         p.setQuiet(true, now: t0)
+        #expect(a.held && !a.display, "system kept awake, display free to sleep")
         p.tick(now: t0.addingTimeInterval(120), power: battery, settings: .default)
-        #expect(!a.held && a.activity == 1)
+        #expect(a.activity == 1)
         p.setQuiet(false, now: t0.addingTimeInterval(200))
-        #expect(a.held && a.activity == 2)
+        #expect(a.held && a.display && a.activity == 2)
+    }
+
+    /// Display off from the phone, then "Toujours actif": the Mac stays
+    /// awake and the display stays dark until someone wakes it.
+    @Test func presenceTurnedOnAfterTheDisplayWentOffHoldsTheSystem() throws {
+        let a = FakeAsserter()
+        let p = PresenceController(asserter: a)
+        p.setQuiet(true, now: t0)
+        try p.start(until: nil, now: t0)
+        #expect(a.held && !a.display && a.activity == 0)
+        p.stop(.user)
+        #expect(!a.held)
     }
 }

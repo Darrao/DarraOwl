@@ -60,24 +60,37 @@ public final class CoreAudioControl: AudioControlling {
         )
     }
 
-    /// The default microphone is in use by some app: a call is likely going on.
+    /// Some app records from a microphone, any of them: a call is likely
+    /// going on. Read per process, so music on a headset that is also a
+    /// microphone does not count, and a call on a second microphone does.
     public func inputInUse() -> Bool {
+        let system = AudioObjectID(kAudioObjectSystemObject)
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mSelector: kAudioHardwarePropertyProcessObjectList,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        var device = AudioObjectID(kAudioObjectUnknown)
-        var size = UInt32(MemoryLayout<AudioObjectID>.size)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device) == noErr,
-              device != kAudioObjectUnknown else { return false }
-        var running: UInt32 = 0
-        let runningAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        return (try? get(device, runningAddress, &running, "micro")) != nil && running != 0
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(system, &address, 0, nil, &size) == noErr, size > 0 else { return false }
+        var processes = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &processes) == noErr else { return false }
+        let me = getpid()
+        return processes.contains { process in
+            var running: UInt32 = 0
+            let input = AudioObjectPropertyAddress(
+                mSelector: kAudioProcessPropertyIsRunningInput,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            guard (try? get(process, input, &running, "micro")) != nil, running != 0 else { return false }
+            var pid: pid_t = 0
+            let pidAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioProcessPropertyPID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            return (try? get(process, pidAddress, &pid, "pid")) == nil || pid != me
+        }
     }
 
     private func defaultOutputDevice() throws -> AudioObjectID {

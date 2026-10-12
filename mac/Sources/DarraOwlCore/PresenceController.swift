@@ -5,8 +5,11 @@ import Foundation
 /// them when the process exits, so nothing ever needs restoring: unlike a
 /// session, presence changes no system setting.
 public protocol PresenceAsserting: AnyObject {
-    /// Keeps the display, hence the system, awake while the lid is open.
-    func hold() throws
+    /// `display` true: keeps the display, hence the system, awake while the
+    /// lid is open. false: keeps only the system awake, the display may
+    /// sleep. Switching from one to the other takes the new assertion before
+    /// dropping the old one; on failure the old one stays.
+    func hold(display: Bool) throws
     func release()
     /// Resets the system idle time, as a key press would. Apps that mark the
     /// user away after some idle time (Teams) then see an active user.
@@ -44,12 +47,15 @@ public final class PresenceController {
     /// presence is on (it can be turned on with the lid closed, from the phone).
     public private(set) var suspended = false
     /// The display was turned off on purpose (from the phone): activity is
-    /// not declared again until it wakes, or it would light up at once.
+    /// not declared again until it wakes, or it would light up at once. The
+    /// Mac itself stays awake.
     public private(set) var quiet = false
+
+    private enum Hold { case none, display, system }
 
     private let asserter: any PresenceAsserting
     private var lastActivity: Date?
-    private var holding = false
+    private var holding = Hold.none
 
     public init(asserter: any PresenceAsserting) {
         self.asserter = asserter
@@ -76,6 +82,8 @@ public final class PresenceController {
     }
 
     /// The display was put to sleep from the phone (true) or woke (false).
+    /// Kept while presence is off too: presence turned on afterwards does
+    /// not light the display either.
     public func setQuiet(_ quiet: Bool, now: Date = Date()) {
         guard quiet != self.quiet else { return }
         self.quiet = quiet
@@ -91,19 +99,22 @@ public final class PresenceController {
         try? apply(now: Date())
     }
 
-    /// Holds and declares only while active, the lid open and the display
-    /// not put to sleep on purpose.
+    /// Active with the lid open: the display is held and activity declared,
+    /// or, with the display put to sleep on purpose, only the system is held.
     private func apply(now: Date) throws {
-        let wanted = isActive && !suspended && !quiet
-        if wanted, !holding {
-            try asserter.hold()
-            holding = true
+        let wanted: Hold = !isActive || suspended ? .none : quiet ? .system : .display
+        guard wanted != holding else { return }
+        switch wanted {
+        case .none:
+            asserter.release()
+        case .display:
+            try asserter.hold(display: true)
             asserter.declareActivity()
             lastActivity = now
-        } else if !wanted, holding {
-            asserter.release()
-            holding = false
+        case .system:
+            try asserter.hold(display: false)
         }
+        holding = wanted
     }
 
     /// Called about every second. `power` is nil when unknown: presence then
@@ -121,7 +132,7 @@ public final class PresenceController {
             default: break
             }
         }
-        guard holding else { return }
+        guard holding == .display else { return }
         if let last = lastActivity, now.timeIntervalSince(last) < Self.activityInterval { return }
         asserter.declareActivity()
         lastActivity = now

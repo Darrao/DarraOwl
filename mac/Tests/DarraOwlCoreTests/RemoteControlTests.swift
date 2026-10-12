@@ -12,7 +12,7 @@ import Testing
         let rig = LidRig()
         try await rig.startSession()
 
-        try await rig.coordinator.setMuted(true, sessionActive: true, saved: [])
+        try await rig.coordinator.setMuted(true, saved: [])
 
         let events = rig.h.events.all
         let save = try #require(events.firstIndex(of: "save journal"))
@@ -25,7 +25,7 @@ import Testing
         let rig = LidRig()
         _ = await rig.h.engine.reconcile()
 
-        try await rig.coordinator.setMuted(true, sessionActive: false, saved: [])
+        try await rig.coordinator.setMuted(true, saved: [])
 
         #expect(rig.audio.devices["spk"]?.muted == true)
         #expect(!rig.h.events.all.contains("save journal"))
@@ -34,10 +34,10 @@ import Testing
     @Test func unmuteGivesBackTheSavedLevelAndClearsIt() async throws {
         let rig = LidRig()
         try await rig.startSession()
-        try await rig.coordinator.setMuted(true, sessionActive: true, saved: [])
+        try await rig.coordinator.setMuted(true, saved: [])
         let saved = await rig.h.engine.status().userChanges.audio
 
-        try await rig.coordinator.setMuted(false, sessionActive: true, saved: saved)
+        try await rig.coordinator.setMuted(false, saved: saved)
 
         #expect(rig.audio.devices["spk"]?.muted == false)
         #expect(rig.audio.devices["spk"]?.volume == 0.6)
@@ -47,7 +47,7 @@ import Testing
     @Test func unmuteAtVolumeZeroIsAudible() async throws {
         let rig = LidRig()
         rig.audio.devices["spk"] = AudioOutput(deviceUID: "spk", name: nil, volume: 0, muted: true)
-        try await rig.coordinator.setMuted(false, sessionActive: false, saved: [])
+        try await rig.coordinator.setMuted(false, saved: [])
         #expect(rig.audio.devices["spk"]?.volume == LidCoordinator.audibleVolume)
     }
 
@@ -140,14 +140,15 @@ import Testing
         #expect(!rig.h.events.all.contains { $0.hasPrefix("display") || $0.hasPrefix("mute") || $0.hasPrefix("SIGSTOP") })
     }
 
-    @Test func noAppIsPausedDuringACall() async throws {
+    @Test func neitherSoundNorAppsAreTouchedDuringACall() async throws {
         let rig = LidRig()
         try await rig.startSession()
         rig.addApp("com.tinyspeck.slackmacgap", name: "Slack", pid: 100)
         rig.environment.microphone = true
         await rig.coordinator.lidClosed(settings: LidSettings())
         #expect(rig.h.processes.state(100)?.stopped == false)
-        #expect(rig.h.events.all.contains("mute spk"), "the rest still happens")
+        #expect(!rig.h.events.all.contains("mute spk"), "the call stays audible")
+        #expect(rig.h.events.all.contains { $0.hasPrefix("display") }, "the panel under the lid still goes dark")
     }
 
     @Test func anAppRunningAnAgentIsNeverPaused() async throws {
@@ -164,7 +165,7 @@ import Testing
     @Test func soundMutedFromThePhoneStaysMutedWhenTheLidOpens() async throws {
         let rig = LidRig()
         try await rig.startSession()
-        try await rig.coordinator.setMuted(true, sessionActive: true, saved: [])
+        try await rig.coordinator.setMuted(true, saved: [])
         await rig.coordinator.lidClosed(settings: LidSettings())
         await rig.coordinator.lidOpened(sessionActive: true)
         #expect(rig.audio.devices["spk"]?.muted == true)

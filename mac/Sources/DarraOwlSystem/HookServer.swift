@@ -3,7 +3,7 @@ import Foundation
 import Network
 
 /// Claude Code's HTTP hooks endpoint: 127.0.0.1 only, one path, a bearer
-/// token. Nothing but the event name and the folder is read.
+/// token. Nothing but the event name, its type and the folder is read.
 @MainActor
 public final class HookServer {
     public static let port: UInt16 = 52_526
@@ -25,12 +25,23 @@ public final class HookServer {
         params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .init(rawValue: Self.port)!)
         params.allowLocalEndpointReuse = true
         guard let l = try? NWListener(using: params) else { return }
-        l.stateUpdateHandler = { [weak self] state in
+        l.stateUpdateHandler = { [weak self, weak l] state in
             Task { @MainActor in
+                guard let self, let l, self.listener === l else { return }
                 switch state {
-                case .ready: self?.isListening = true
-                case .failed, .cancelled: self?.isListening = false
-                default: break
+                case .ready:
+                    self.isListening = true
+                case .failed:
+                    // Port taken, for instance: dropped, so the next start()
+                    // really tries again.
+                    self.isListening = false
+                    l.cancel()
+                    self.listener = nil
+                case .cancelled:
+                    self.isListening = false
+                    self.listener = nil
+                default:
+                    break
                 }
             }
         }
@@ -44,6 +55,7 @@ public final class HookServer {
     public func stop() {
         listener?.cancel()
         listener = nil
+        isListening = false
     }
 
     private func serve(_ c: NWConnection) {

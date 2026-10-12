@@ -30,9 +30,12 @@ public final class KeychainPairingStore: PairingStore {
 
     public func identity() throws -> MacIdentity {
         if let cachedIdentity { return cachedIdentity }
-        if let data = try read(service: Self.identityService, account: "mac"),
-           let stored = try? JSONDecoder().decode(StoredIdentity.self, from: data),
-           let key = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: stored.privateKey) {
+        if let data = try read(service: Self.identityService, account: "mac") {
+            // There but unreadable: never replaced silently, or every paired
+            // phone would lose this Mac without a word.
+            guard let stored = try? JSONDecoder().decode(StoredIdentity.self, from: data),
+                  let key = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: stored.privateKey)
+            else { throw KeychainError(status: errSecDecode, what: "identité du Mac illisible") }
             let identity = MacIdentity(macID: stored.macID, agreementKey: key)
             cachedIdentity = identity
             return identity

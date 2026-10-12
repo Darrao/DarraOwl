@@ -7,7 +7,10 @@ struct MenuBarLabel: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Image(nsImage: OwlIcon.image(awake: model.session != nil || model.presenceActive))
+            Image(nsImage: OwlIcon.image(
+                awake: model.session != nil || model.presenceActive,
+                label: model.session != nil ? "DarraOwl, session en cours" : model.presenceActive ? "DarraOwl, toujours actif" : nil
+            ))
             if let remaining = model.remaining {
                 Text(DurationText.countdown(remaining))
                     .monospacedDigit()
@@ -114,8 +117,10 @@ struct MenuView: View {
             Text("Garder éveillé").font(.callout)
             HStack {
                 ForEach(Policy.quickDurations, id: \.self) { duration in
+                    // Return starts 2 h, unless a free duration is typed: then
+                    // Return is for that one.
                     Button(DurationText.short(duration)) { model.startSession(seconds: duration) }
-                        .keyboardShortcut(duration == Policy.defaultSessionDuration ? .defaultAction : nil)
+                        .keyboardShortcut(duration == Policy.defaultSessionDuration && freeIsEmpty ? .defaultAction : nil)
                 }
             }
             Text("Durée libre").font(.callout).padding(.top, 4)
@@ -182,13 +187,20 @@ struct MenuView: View {
             }
             if !model.lidClosed || status.session == nil {
                 ForEach(status.userChanges.audio, id: \.deviceUID) { entry in
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("Son de \(entry.name ?? "la sortie audio") coupé, rétabli à sa reconnexion.")
-                            .font(.caption).foregroundStyle(.orange)
+                    if entry.held, status.session != nil {
+                        // Muted from the phone: the end of the session brings it back.
+                        Text("Son coupé depuis l'iPhone, rétabli à la fin de la session.")
+                            .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        Spacer()
-                        Button("Oublier") { model.forgetAudio(deviceUID: entry.deviceUID) }
-                            .controlSize(.small)
+                    } else {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text("Son de \(entry.name ?? "la sortie audio") coupé, rétabli à sa reconnexion.")
+                                .font(.caption).foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer()
+                            Button("Oublier") { model.forgetAudio(deviceUID: entry.deviceUID) }
+                                .controlSize(.small)
+                        }
                     }
                 }
             }
@@ -308,6 +320,10 @@ struct MenuView: View {
     }
 
     /// A duration the helper will accept: at least 1 min, at most the cap.
+    private var freeIsEmpty: Bool {
+        [freeDays, freeHours, freeMinutes].allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+
     private var freeDuration: TimeInterval? {
         guard let d = typedDuration, d >= Policy.minimumSessionDuration, d <= maxDuration else { return nil }
         return d

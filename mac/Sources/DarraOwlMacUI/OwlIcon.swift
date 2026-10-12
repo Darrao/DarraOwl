@@ -3,7 +3,8 @@ import AppKit
 /// The monochrome owl of the menu bar, drawn as a template image so macOS
 /// tints it. Eyes open during a session, closed otherwise.
 enum OwlIcon {
-    static func image(awake: Bool) -> NSImage {
+    /// `label`: what VoiceOver says, "DarraOwl" when nil.
+    static func image(awake: Bool, label: String? = nil) -> NSImage {
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size, flipped: false) { _ in
             NSColor.black.set()
@@ -48,7 +49,7 @@ enum OwlIcon {
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = awake ? "DarraOwl, session en cours" : "DarraOwl"
+        image.accessibilityDescription = label ?? "DarraOwl"
         return image
     }
 }

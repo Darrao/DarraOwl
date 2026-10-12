@@ -70,6 +70,11 @@ public enum ClaudeHookConfig {
         return try encode(root)
     }
 
+    /// One of our hooks is in the file, whatever its token.
+    public static func hasOurs(_ data: Data, port: UInt16) -> Bool {
+        state(data, port: port, token: "") != .absent
+    }
+
     static func isOurs(_ hook: [String: Any], port: UInt16) -> Bool {
         hook["type"] as? String == "http" && hook["url"] as? String == url(port: port)
     }

@@ -51,10 +51,13 @@ enum ClaudeCodeSetup {
     }
 
     /// Takes out exactly DarraOwl's hooks; needs no token.
-    static func remove() throws {
-        guard let current = try read() else { return }
+    /// Returns false when none was there: the file is then left untouched.
+    @discardableResult
+    static func remove() throws -> Bool {
+        guard let current = try read(), ClaudeHookConfig.hasOurs(current, port: HookServer.port) else { return false }
         let new = try ClaudeHookConfig.remove(current, port: HookServer.port)
-        if new != current { try write(new, to: file, permissionsOf: file) }
+        try write(new, to: file, permissionsOf: file)
+        return true
     }
 
     /// Written to a temporary file that already has the final permissions,

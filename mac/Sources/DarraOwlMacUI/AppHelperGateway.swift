@@ -28,7 +28,7 @@ final class AppHelperGateway: LidHelperGateway {
     private func send(_ request: HelperRequest) async throws -> EngineStatus {
         let response = try await client.send(request)
         if let status = response.status { onStatus(status) }
-        if let error = response.error { throw HelperRefusal(message: error) }
+        if let error = response.error { throw LidHelperRefusal(message: error, status: response.status) }
         guard let status = response.status else { throw HelperClientError.badReply }
         return status
     }

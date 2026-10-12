@@ -9,36 +9,45 @@ struct PresenceAssertionError: Error, LocalizedError {
 
 /// Public IOKit power assertions, as Caffeine and Amphetamine use them.
 final class IOPMPresenceAsserter: PresenceAsserting {
-    private var displayAssertion: IOPMAssertionID = 0
+    /// The display or the system-only assertion, whichever is held.
+    private var held: (id: IOPMAssertionID, display: Bool)?
     private var activityAssertion: IOPMAssertionID = 0
 
-    func hold() throws {
-        guard displayAssertion == 0 else { return }
+    func hold(display: Bool) throws {
+        if let held, held.display == display { return }
         var id: IOPMAssertionID = 0
+        let type = display ? kIOPMAssertPreventUserIdleDisplaySleep : kIOPMAssertPreventUserIdleSystemSleep
         let r = IOPMAssertionCreateWithName(
-            kIOPMAssertPreventUserIdleDisplaySleep as CFString,
+            type as CFString,
             IOPMAssertionLevel(kIOPMAssertionLevelOn),
             "DarraOwl : mode présence" as CFString,
             &id
         )
         guard r == kIOReturnSuccess else { throw PresenceAssertionError(code: r) }
-        displayAssertion = id
+        if let held { IOPMAssertionRelease(held.id) }
+        held = (id, display)
+        // The display may sleep now: no declared activity keeps it lit.
+        if !display { releaseActivity() }
     }
 
     func release() {
-        if displayAssertion != 0 {
-            IOPMAssertionRelease(displayAssertion)
-            displayAssertion = 0
+        if let held {
+            IOPMAssertionRelease(held.id)
+            self.held = nil
         }
-        if activityAssertion != 0 {
-            IOPMAssertionRelease(activityAssertion)
-            activityAssertion = 0
-        }
+        releaseActivity()
     }
 
     func declareActivity() {
         // Passing the previous id back updates that assertion instead of
         // creating a new one each minute.
         _ = IOPMAssertionDeclareUserActivity("DarraOwl : mode présence" as CFString, kIOPMUserActiveLocal, &activityAssertion)
+    }
+
+    private func releaseActivity() {
+        if activityAssertion != 0 {
+            IOPMAssertionRelease(activityAssertion)
+            activityAssertion = 0
+        }
     }
 }

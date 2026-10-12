@@ -153,10 +153,13 @@ public final class CloudKitMailbox: CloudMailbox {
         for key in [Self.eventsKey, Self.resultsKey] {
             var sent = UserDefaults.standard.dictionary(forKey: key) as? [String: Date] ?? [:]
             let old = sent.filter { $0.value < date }.map(\.key)
-            guard !old.isEmpty else { continue }
-            // Gone already (read by the phone) counts as deleted.
-            if (try? await delete(old.map { CKRecord.ID(recordName: $0, zoneID: zoneID) })) != nil {
-                old.forEach { sent[$0] = nil }
+            // CloudKit takes 400 items per request at most: by 300, so a long
+            // list shrinks even when one batch fails.
+            for start in stride(from: 0, to: old.count, by: 300) {
+                let batch = Array(old[start..<min(start + 300, old.count)])
+                // Gone already (read by the phone) counts as deleted.
+                guard (try? await delete(batch.map { CKRecord.ID(recordName: $0, zoneID: zoneID) })) != nil else { break }
+                batch.forEach { sent[$0] = nil }
                 UserDefaults.standard.set(sent, forKey: key)
             }
         }
