@@ -14,7 +14,9 @@ Les deux utilisent la base CloudKit **Production** du conteneur
 ## Avant chaque version
 
 1. Tests : `swift test --package-path shared`, `swift test --package-path mac`,
-   `swift test --package-path ios`, et `swift run --package-path tools/link-e2e`.
+   `swift test --package-path ios`. Puis la vérification de bout en bout
+   `swift run --package-path tools/link-e2e` : elle ouvre de vraies connexions
+   sur ce Mac (réseau local, Bonjour), ce n'est pas un test unitaire.
 2. Si un type ou un champ CloudKit a changé : sur icloud.developer.apple.com,
    déploie le schéma de Development vers Production (Deploy Schema Changes).
 3. Augmente `MARKETING_VERSION` dans `project.yml` (0.1.0, 0.2.0…).

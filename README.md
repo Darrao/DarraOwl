@@ -58,16 +58,16 @@ dans DarraOwl > Réglages.
 ## Utilisation
 
 - **Démarrer** : clique sur 30 min, 1 h, 2 h (Entrée) ou 4 h, ou tape une
-  durée libre (`90`, `1h30`, `2:15`).
+  durée libre en jours, heures et minutes.
 - **Prolonger** : clique sur +30 min ou +1 h pendant la session. La fin
   ne dépasse jamais la durée maximale (12 h par défaut, 24 h au plus).
 - **Arrêter** : maintiens le bouton enfoncé 1,5 s.
-- **Quitter** l'app arrête aussi la session.
+- **Quitter** l'app arrête aussi la session et remet le son et la luminosité.
 
 Pendant une session, sur batterie :
 
-- sous 40 %, le mode économie d'énergie s'active, puis se désactive au
-  retour du chargeur ;
+- sous 40 %, le mode économie d'énergie s'active (sur les Mac qui le
+  proposent), puis se désactive au retour du chargeur ;
 - sous 15 %, ou si la batterie devient illisible, la session s'arrête.
 
 Une température critique arrête la session, une température élevée active le
@@ -80,16 +80,20 @@ Pendant une session, fermer le capot :
 
 - éteint l'écran et le rétroéclairage du clavier ;
 - coupe le son ;
-- active le mode économie d'énergie ;
+- active le mode économie d'énergie, sur les Mac qui le proposent ;
 - met en pause Slack, WhatsApp et Discord ;
 - met en pause Docker Desktop, si deux vérifications de suite ne trouvent
   aucun conteneur en marche.
 
 Tout est rétabli à l'ouverture du capot. Si la session se termine capot
-fermé, ou après un plantage, la restauration a lieu au retour. Les apps
-d'appel, de visio, d'enregistrement et de dictée (Teams, Zoom, Webex,
-FaceTime, etc.) ne sont jamais mises en pause. Tu peux changer chacun de ces
-réglages dans DarraOwl > Réglages > Capot fermé.
+fermé, la restauration a lieu au retour. Les apps d'appel, de visio,
+d'enregistrement et de dictée (Teams, Zoom, Webex, FaceTime, etc.) ne sont
+jamais mises en pause. Tu peux changer chacun de ces réglages dans DarraOwl >
+Réglages > Capot fermé.
+
+L'écran, le son et les apps sont gérés par l'app DarraOwl : elle doit être
+ouverte (elle démarre avec ta session). Une session lancée depuis le Terminal
+juste avant de fermer le capot est prise en compte dès que l'app la voit.
 
 Comment ça marche :
 
@@ -100,22 +104,27 @@ Comment ça marche :
   de démarrage, démarrage du Mac) n'a pas changé.
 - Le composant système relance lui-même les apps en pause à la fin de la
   session, même sans l'app.
-- La luminosité et le son ne peuvent être rétablis que par l'app. Elle le
-  fait à son prochain lancement si besoin.
+- Le composant système relance aussi les apps en pause à l'ouverture du
+  capot, même si l'app a planté entre-temps.
+- La luminosité et le son ne peuvent être rétablis que par l'app. Après un
+  plantage, elle le fait à son prochain lancement.
 - Une sortie audio débranchée garde son réglage, rétabli quand elle
   revient. Le menu propose aussi **Oublier**.
 - Pour l'écran et le clavier, DarraOwl utilise des API privées de macOS. Le
   moyen public (`pmset displaysleepnow`) ne tient pas : fermer le capot
-  rallume l'écran. Ces API ne sont appelées que sur macOS 26, la version sur
-  laquelle elles ont été mesurées. Sur une autre version, l'écran et le
-  clavier sont laissés tels quels, et les Réglages l'indiquent.
+  rallume l'écran. Ces API ne sont appelées que sur macOS 26 et 27, les
+  versions sur lesquelles elles ont été mesurées. Sur une autre version,
+  l'écran et le clavier sont laissés tels quels, et les Réglages l'indiquent.
 
-Deux cas où rien n'est éteint ni mis en pause à la fermeture du capot :
+Deux cas où DarraOwl en fait moins à la fermeture du capot :
 
 - **un écran externe est branché** : le Mac est sur un bureau, tu travailles
-  dessus ;
-- **un appel est en cours** (le micro est utilisé) : aucune app n'est mise en
-  pause, pour ne pas couper l'appel.
+  dessus. Rien n'est éteint, coupé ni mis en pause, et le mode économie
+  d'énergie n'est pas activé. Brancher l'écran capot fermé rétablit tout ; le
+  débrancher (le Mac part dans un sac) applique les actions du capot fermé ;
+- **un appel est en cours** (un micro est utilisé) : le son n'est pas coupé
+  et aucune app n'est mise en pause, pour ne pas couper l'appel. L'écran
+  s'éteint quand même.
 
 Une app dans laquelle tourne un agent (Terminal, iTerm, VS Code…) n'est
 jamais mise en pause, même si elle est dans la liste.
@@ -129,6 +138,9 @@ est ouvert :
 - le Mac ne se met pas en veille et l'écran reste allumé ;
 - une activité est déclarée chaque minute, pour que Teams te garde
   « Disponible ».
+
+**Éteindre l'écran** depuis l'iPhone le laisse éteint : le Mac reste éveillé,
+mais ton statut peut passer en absent tant que personne n'y touche.
 
 **Sans limite** reste actif après un redémarrage, jusqu'à ce que tu cliques
 sur **Arrêter**. Sur batterie, le mode s'arrête sous le seuil de fin de
@@ -154,7 +166,7 @@ session, qui a toujours une heure de fin.
 - **Contrôles** : « Toujours actif » (sans limite ou 1 à 8 h), éteindre
   l'écran, verrouiller le Mac, couper ou remettre le son, mettre en pause ou
   relancer Slack, WhatsApp et Discord (pendant une session), arrêter un agent
-  (comme un Ctrl-C). Pendant une session, le son coupé à distance est noté
+  (un Ctrl-C, puis l'arrêt s'il tourne encore 3 s après). Pendant une session, le son coupé à distance est noté
   dans le journal et rétabli à la fin.
 - **Face ID** est demandé pour mettre en veille, arrêter un conteneur et
   arrêter un agent.
@@ -175,7 +187,11 @@ session, qui a toujours une heure de fin.
   Wi-Fi, sur le partage de connexion de l'iPhone ou via Tailscale, elle est
   directe. Sinon, elle passe par ta base iCloud privée. Chaque commande est
   signée, expire au bout de 60 s et ne s'exécute qu'une fois.
-- **Désappairer**, depuis le Mac, coupe l'accès de l'iPhone immédiatement.
+- **Désappairer** depuis le Mac coupe aussitôt les commandes et la connexion
+  directe de cet iPhone, qui oublie ce Mac dès qu'il reçoit son état suivant.
+  Depuis l'iPhone, le Mac est prévenu et oublie ses clés. L'état publié dans
+  ta base iCloud reste lisible par les appareils connectés à ton compte
+  iCloud, comme le reste de tes données iCloud.
 
 ## Apple Watch
 
@@ -241,13 +257,15 @@ fini » ou « Claude attend ta validation », avec le nom du projet, quand
 personne n'est devant le Mac (capot fermé ou une minute sans activité).
 
 Le bouton ajoute deux « hooks » (Stop et Notification) dans
-`~/.claude/settings.json`, sans toucher au reste du fichier. Il en garde
-d'abord une copie dans `~/.claude/settings.json.darraowl-backup`.
+`~/.claude/settings.json`. Le reste du fichier est gardé, réécrit avec les
+clés dans l'ordre alphabétique. Ta version d'avant DarraOwl est d'abord copiée
+dans `~/.claude/settings.json.darraowl-backup`.
 **Désactiver** retire exactement ces deux entrées. Les sessions de Claude
 déjà ouvertes en tiennent compte à leur prochain lancement.
 
 Le Mac n'écoute que sur `127.0.0.1:52526` et exige un jeton, rangé dans le
-trousseau. Seuls l'événement et le nom du dossier sont lus, jamais le contenu.
+trousseau. Seuls l'événement, son type et le nom du dossier sont lus, jamais
+le contenu.
 
 Les noms de projets peuvent être masqués dans les réglages des alertes.
 
@@ -256,7 +274,7 @@ Les noms de projets peuvent être masqués dans les réglages des alertes.
 | Réglage | Pendant la session | Retour |
 |---|---|---|
 | `pmset -a disablesleep` | 1 | la valeur d'avant |
-| `pmset -b/-c lowpowermode` | 1, seulement sous le seuil de batterie ou en cas de chaleur | la valeur d'avant, pour chaque profil |
+| `pmset -b/-c lowpowermode` | 1, sous le seuil de batterie, en cas de chaleur ou capot fermé (réglable, jamais avec un écran externe), sur les Mac qui le proposent | la valeur d'avant, pour chaque profil |
 
 Chaque changement est écrit dans
 `/Library/Application Support/DarraOwl/journal.json` avant d'être appliqué.
@@ -275,6 +293,10 @@ Relance `scripts/install-mac.sh`. Le script refuse de continuer pendant
 une session : arrête-la d'abord. Une fois l'app remplacée, le composant
 système redémarre seul sur la nouvelle version dès qu'il n'a plus rien en
 cours. Cela prend au plus 30 s.
+
+Avec une version téléchargée : arrête la session, quitte DarraOwl, remplace
+l'app dans Applications, puis rouvre-la. Remplacée pendant une session, l'app
+ne pourrait plus piloter le composant système jusqu'à la fin de la session.
 
 ## Dépannage
 
@@ -296,20 +318,33 @@ scripts/uninstall.sh --purge  # supprime aussi les préférences
 ```
 
 La désinstallation supprime aussi les clés d'appairage, les données
-iCloud de DarraOwl, ses hooks dans `~/.claude/settings.json` et le lien
-`~/.local/bin/darraowl`. Le script ne lance jamais `sudo`. Si la veille n'a pas pu être rétablie, il
-affiche la commande exacte à lancer.
+iCloud de DarraOwl, ses hooks dans `~/.claude/settings.json`, le lien
+`~/.local/bin/darraowl` et les fichiers du composant système. Le script ne
+lance jamais `sudo`. Si la veille n'a pas pu être rétablie, il affiche la
+commande exacte à lancer.
+
+Sans le code source (version téléchargée), lance dans le Terminal :
+
+```bash
+/Applications/DarraOwl.app/Contents/MacOS/DarraOwl --uninstall
+```
+
+puis mets l'app à la corbeille. Ne la mets pas à la corbeille directement :
+le composant système resterait installé.
 
 ## Développement
 
 ```bash
 swift test --package-path shared
 swift test --package-path mac
+swift test --package-path ios
 scripts/build-mac.sh Debug
 ```
 
 Les tests utilisent des faux : ils ne lancent jamais `pmset`, iCloud ni le
-réseau.
+réseau. À part, `swift run --package-path tools/link-e2e` vérifie la liaison
+de bout en bout sur ce Mac, avec la vraie pile réseau (sockets locales et
+Bonjour) : ce n'est pas un test unitaire.
 
 ## Licence
 

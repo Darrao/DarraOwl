@@ -18,7 +18,9 @@ xcodebuild \
   -quiet \
   build
 APP="build/DerivedData/Build/Products/Debug-iphonesimulator/DarraOwl.app"
-if xcrun simctl list devices booted | grep -q Booted; then
-  xcrun simctl install booted "$APP"
+# A booted iPhone simulator (a paired watch can be booted too).
+SIM="$(xcrun simctl list devices booted 2>/dev/null | awk '!found && /iPhone/ && /Booted/ { if (match($0, /[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}/)) found = substr($0, RSTART, RLENGTH) } END { if (found) print found }' || true)"
+if [ -n "$SIM" ]; then
+  xcrun simctl install "$SIM" "$APP"
 fi
 echo "$APP"

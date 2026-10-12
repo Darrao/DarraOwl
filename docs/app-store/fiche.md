@@ -59,7 +59,9 @@ Nécessite l'app DarraOwl pour Mac (macOS 26 ou plus récent, Mac Apple Silicon)
 
 ## Mots-clés (100 car. max, séparés par des virgules)
 
-veille,mac,macbook,capot,caffeine,amphetamine,claude,agent,code,batterie,session,docker,éveillé,widget
+veille,mac,macbook,capot,éveil,éveillé,agent,code,ia,terminal,batterie,session,docker,widget
+
+Pas de noms d'autres apps ni de marques (règle 2.3.7 d'Apple).
 
 ## Nouveautés (première version)
 
@@ -105,7 +107,14 @@ Les captures viennent de la démonstration (`-DarraOwlDemo`, en français).
 > Pour évaluer l'app sans Mac : sur l'écran d'accueil, touchez « Pas encore de
 > Mac prêt ? Voir une démonstration ». L'app affiche alors un Mac de
 > démonstration, avec une session, des agents, Docker et les réglages. Les
-> boutons y fonctionnent. Aucun compte n'est nécessaire.
+> boutons y fonctionnent et changent ce qui est affiché. Aucun compte n'est
+> nécessaire.
+>
+> Apple Watch : ouvrez la démonstration sur l'iPhone, puis DarraOwl sur la
+> montre. Elle affiche le même Mac de démonstration et ses boutons le pilotent.
+>
+> La Live Activity, les widgets et les notifications suivent un vrai Mac
+> appairé : la démonstration n'en crée pas.
 >
 > Avec un Mac : installez l'app Mac, cliquez sur la chouette dans la barre des
 > menus, puis iPhone…, puis Afficher le code d'appairage, et scannez le code

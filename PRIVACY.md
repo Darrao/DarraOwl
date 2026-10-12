@@ -1,6 +1,6 @@
 # Politique de confidentialité de DarraOwl
 
-Dernière mise à jour : 11 octobre 2026
+Dernière mise à jour : 12 octobre 2026
 
 DarraOwl se compose d'une app pour Mac et d'une app pour iPhone. Elles
 communiquent directement entre elles, ou via ta propre base de données iCloud
@@ -22,11 +22,14 @@ Seulement quand un iPhone est appairé. L'état du Mac y est publié à chaque
 changement et au moins chaque minute, pour que l'iPhone le voie même loin du
 Mac ; les commandes y passent quand la connexion directe ne répond pas :
 
-- l'état du Mac : session en cours, batterie, température, type de réseau et
-  data consommée, noms des agents de code en cours (claude, codex, gemini) et
-  de leurs dossiers de projet, noms des conteneurs Docker en cours (le masquage
-  des noms de projets, dans les réglages, les remplace aussi), et en mode agent
-  le nom de la commande suivie (jamais ses arguments) ;
+- l'état du Mac : son nom, session en cours, batterie, température, capot,
+  type de réseau et data consommée, noms des agents de code en cours (claude,
+  codex, gemini) et de leurs dossiers de projet, noms des conteneurs Docker en
+  cours (le masquage des noms de projets, dans les réglages, les remplace
+  aussi), en mode agent le nom de la commande suivie (jamais ses arguments),
+  noms des apps mises en pause, « Toujours actif » et son coupé ou non,
+  réglages de DarraOwl (dont la liste des apps à mettre en pause) et
+  identifiants des iPhone appairés ;
 - les adresses réseau du Mac (locale, Tailscale), pour la connexion directe ;
 - les commandes envoyées par l'iPhone, signées, et leurs résultats ;
 - le titre et le texte des notifications (par exemple « Claude a fini », avec
@@ -38,7 +41,7 @@ chiffré par iCloud. Le développeur n'y a pas accès.
 
 DarraOwl n'envoie **jamais** le contenu de tes fichiers, tes prompts ni ce que
 produisent tes agents de code. Pour les hooks de Claude Code, seuls le nom de
-l'événement et le nom du dossier sont lus. Ces hooks ne sont ajoutés à
+l'événement, son type et le nom du dossier sont lus. Ces hooks ne sont ajoutés à
 `~/.claude/settings.json` que si tu cliques sur Activer.
 
 ## Apple Watch
@@ -60,9 +63,14 @@ elle demande à l'iPhone d'envoyer les commandes.
 
 ## Supprimer tes données
 
-- Sur l'iPhone : « Désappairer cet iPhone », ou supprime l'app.
+- Sur l'iPhone : « Désappairer cet iPhone ». Les clés sont effacées du
+  trousseau et le Mac est prévenu. Supprimer l'app sans désappairer laisse
+  ses clés dans le trousseau de l'iPhone (iOS les garde) et le Mac continue de
+  publier son état : désappaire d'abord, ou retire l'iPhone sur le Mac
+  (DarraOwl > iPhone…).
 - Sur le Mac : `scripts/uninstall.sh`. Il supprime les clés d'appairage et les
-  données iCloud de DarraOwl.
+  données iCloud de DarraOwl. Le Mac ne publie plus rien dans iCloud dès
+  qu'aucun iPhone n'est appairé.
 - Tu peux aussi effacer les données d'iCloud dans Réglages > [ton nom] >
   iCloud > Gérer le stockage.
 

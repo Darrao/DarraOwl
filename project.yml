@@ -65,6 +65,11 @@ targets:
     sources:
       - path: mac/Sources/DarraOwlMac
       - path: mac/Resources/App/Assets.xcassets
+      # MIT: the notices travel with every copy of the app.
+      - path: LICENSE
+        buildPhase: resources
+      - path: THIRD_PARTY_NOTICES.md
+        buildPhase: resources
       - path: mac/Resources/Helper/com.darrao.darraowl.mac.helper.plist
         buildPhase:
           copyFiles:

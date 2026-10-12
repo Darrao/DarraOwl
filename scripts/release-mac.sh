@@ -73,7 +73,8 @@ Installation :
 2. Ouvre DarraOwl, puis suis la fenêtre de bienvenue (composant système, iCloud, iPhone).
 
 Nécessite macOS 26 ou plus récent sur un Mac Apple Silicon. App iPhone : TestFlight / App Store.
-Désinstallation : scripts/uninstall.sh du dépôt.
+Désinstallation : dans le Terminal, /Applications/DarraOwl.app/Contents/MacOS/DarraOwl --uninstall, puis mets l'app à la corbeille (pas directement à la corbeille : le composant système resterait).
+Mise à jour : arrête la session, quitte DarraOwl, remplace l'app, rouvre-la.
 NOTES
 )"
   echo "Release publiée : v$VERSION"

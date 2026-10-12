@@ -28,6 +28,13 @@ else
 fi
 
 echo "==> Vérification de l'état du Mac"
+# The system component deletes its own folder once everything is restored.
+# Left behind (it was unreachable), it is only reported: root owns it.
+if [ -d "/Library/Application Support/DarraOwl" ]; then
+  echo "Le dossier du composant système est resté : /Library/Application Support/DarraOwl."
+  echo "Pour le supprimer, lance toi-même :"
+  echo "  sudo rm -rf \"/Library/Application Support/DarraOwl\""
+fi
 # DarraOwl puts back the values it found: a "disablesleep 1" set before it
 # stays. This is only reported, with the command to change it.
 if pmset -g | awk '$1 == "SleepDisabled" { v = $2 } END { exit (v == "1") ? 0 : 1 }'; then

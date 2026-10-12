@@ -14,25 +14,31 @@ if [ -e /etc/sudoers.d/insomnia ] || [ -e "$HOME/Library/LaunchAgents/com.insomn
 fi
 
 # Replacing the app during a session would leave the running helper
-# unverifiable by the new app until the session ends. The installed CLI
-# knows; without it, a disabled sleep is taken as a session.
+# unverifiable by the new app until the session ends, and quitting the app
+# ends the session. The installed CLI knows; without it, a disabled sleep is
+# taken as a session.
 CLI="/Applications/DarraOwl.app/Contents/Helpers/darraowl"
-if [ -x "$CLI" ] && STATUS="$("$CLI" status 2>/dev/null)"; then
-  if grep -q "^Éveillé" <<<"$STATUS"; then
-    echo "Une session DarraOwl est en cours : arrête-la (menu ou darraowl stop), puis relance l'installation." >&2
+refuse_during_session() {
+  if [ -x "$CLI" ] && STATUS="$("$CLI" status 2>/dev/null)"; then
+    if grep -q "^Éveillé" <<<"$STATUS"; then
+      echo "Une session DarraOwl est en cours : arrête-la (menu ou darraowl stop), puis relance l'installation." >&2
+      exit 1
+    fi
+  elif pmset -g | awk '$1 == "SleepDisabled" { v = $2 } END { exit (v == "1") ? 0 : 1 }'; then
+    echo "La veille est désactivée : une session semble en cours." >&2
+    echo "Arrête-la depuis le menu de DarraOwl, puis relance l'installation." >&2
     exit 1
   fi
-elif pmset -g | awk '$1 == "SleepDisabled" { v = $2 } END { exit (v == "1") ? 0 : 1 }'; then
-  echo "La veille est désactivée : une session semble en cours." >&2
-  echo "Arrête-la depuis le menu de DarraOwl, puis relance l'installation." >&2
-  exit 1
-fi
+}
 
+refuse_during_session
 APP="$(scripts/build-mac.sh Release | tail -n 1)"
 DEST="/Applications/DarraOwl.app"
+# The build takes minutes: a session may have started meanwhile.
+refuse_during_session
 
 if pgrep -x DarraOwl >/dev/null; then
-  # A running session lives in the helper and survives this.
+  # No session (checked just above): quitting ends nothing.
   osascript -e 'tell application id "com.darrao.darraowl.mac" to quit' >/dev/null 2>&1 || true
   for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -x DarraOwl >/dev/null || break; sleep 0.5; done
 fi
