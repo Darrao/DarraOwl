@@ -128,6 +128,26 @@ struct SettingsView: View {
             if let setupProblem {
                 Text(setupProblem).font(.caption).foregroundStyle(.red)
             }
+            Section("Mises à jour") {
+                Toggle("Vérifier et installer automatiquement", isOn: Binding(
+                    get: { model.updater.automatic },
+                    set: { model.updater.automatic = $0 }
+                ))
+                HStack {
+                    Text(updateText).foregroundStyle(.secondary)
+                    Spacer()
+                    if case .ready = model.updater.phase {
+                        Button("Installer") { model.updater.installNow() }
+                            .disabled(model.session != nil)
+                    } else {
+                        Button("Vérifier maintenant") { Task { await model.updater.checkAndDownload() } }
+                            .disabled(isUpdating)
+                    }
+                }
+                Text("Une fois par jour, DarraOwl regarde sur GitHub s'il existe une nouvelle version. Elle n'est installée que si elle est signée par le développeur de DarraOwl, et jamais pendant une session.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Section("Système") {
                 Toggle("Ouvrir DarraOwl à la connexion", isOn: Binding(
                     get: { model.loginItemEnabled },
@@ -207,6 +227,25 @@ struct SettingsView: View {
     }
 
     // MARK: Claude Code and Terminal
+
+    private var updateText: String {
+        switch model.updater.phase {
+        case .idle: "Version \(model.updater.currentVersion)"
+        case .checking: "Recherche…"
+        case .upToDate: "À jour (\(model.updater.currentVersion))"
+        case let .downloading(v): "Téléchargement de la version \(v)…"
+        case let .ready(v): model.session == nil ? "Version \(v) prête" : "Version \(v) prête, installée après la session"
+        case let .installing(v): "Installation de la version \(v)…"
+        case let .failed(why): "Mise à jour impossible : \(why)"
+        }
+    }
+
+    private var isUpdating: Bool {
+        switch model.updater.phase {
+        case .checking, .downloading, .installing: true
+        default: false
+        }
+    }
 
     private var claudeStateText: String {
         if !ClaudeCodeSetup.claudeInstalled { return "Claude Code n'est pas installé" }

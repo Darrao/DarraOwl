@@ -67,6 +67,8 @@ public final class AppModel {
     @ObservationIgnored private let powerSource = IOPSPowerSource()
     /// Phone link: pairing, direct server, iCloud.
     public private(set) var remote: RemoteController!
+    /// New versions of the app, from its GitHub releases.
+    let updater = Updater()
 
     private let client = HelperClient()
     private let log = Logger(subsystem: "com.darrao.darraowl", category: "app")
@@ -111,6 +113,7 @@ public final class AppModel {
     public func start() {
         guard loop == nil else { return }
         configureLoginItemOnFirstLaunch()
+        updater.cleanUpAfterUpdate()
         lidObserver.onChange = { [weak self] closed in
             Task { await self?.handleLid(closed: closed) }
         }
@@ -146,6 +149,10 @@ public final class AppModel {
                 self.now = Date()
                 self.tickPresence()
                 if tick % 30 == 0 { self.sampleBrightnessIfPresent() }
+                if tick % 60 == 30 {
+                    let mayInstall = self.mayInstallUpdate
+                    Task { await self.updater.tick(mayInstall: mayInstall) }
+                }
                 if self.reachable { self.remote.start() }
                 self.remote.everySecond()
                 // Ask the helper every 2 s during a session, every 10 s otherwise.
@@ -411,6 +418,12 @@ public final class AppModel {
             lastError = "Mode présence : \(error.localizedDescription)"
         }
         syncPresence()
+    }
+
+    /// An update may replace the app now: nothing it would end runs, and
+    /// nobody is using the Mac.
+    var mayInstallUpdate: Bool {
+        UpdatePolicy.mayInstall(sessionRunning: session != nil, timedPresence: presenceActive && presenceUntil != nil, userIdle: UserIdle.seconds())
     }
 
     /// The option to stay available with the lid closed (during a session).

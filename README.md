@@ -306,9 +306,13 @@ une session : arrête-la d'abord. Une fois l'app remplacée, le composant
 système redémarre seul sur la nouvelle version dès qu'il n'a plus rien en
 cours. Cela prend au plus 30 s.
 
-Avec une version téléchargée : arrête la session, quitte DarraOwl, remplace
-l'app dans Applications, puis rouvre-la. Remplacée pendant une session, l'app
-ne pourrait plus piloter le composant système jusqu'à la fin de la session.
+Avec une version téléchargée, rien à faire : une fois par jour, DarraOwl
+regarde sur GitHub s'il existe une nouvelle version. Il la télécharge, vérifie
+qu'elle est signée par son développeur (Developer ID), puis la met en place et
+redémarre dès qu'aucune session ne tourne et que personne n'utilise le Mac
+depuis deux minutes. Réglages > Mises à jour permet de vérifier tout de suite
+ou de couper ces mises à jour. Pour remplacer l'app à la main : arrête la
+session, quitte DarraOwl, remplace l'app dans Applications, puis rouvre-la.
 
 ## Dépannage
 

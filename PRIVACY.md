@@ -44,6 +44,14 @@ produisent tes agents de code. Pour les hooks de Claude Code, seuls le nom de
 l'événement, son type et le nom du dossier sont lus. Ces hooks ne sont ajoutés à
 `~/.claude/settings.json` que si tu cliques sur Activer.
 
+## Mises à jour de l'app Mac
+
+Une fois par jour, l'app Mac demande à GitHub
+(github.com/Darrao/DarraOwl) s'il existe une nouvelle version, et la
+télécharge s'il y en a une. GitHub voit alors l'adresse IP du Mac, comme pour
+toute visite d'une page web. Rien d'autre n'est envoyé. Tu peux couper cette
+vérification dans DarraOwl > Réglages > Mises à jour.
+
 ## Apple Watch
 
 L'iPhone transmet à ta montre l'état du Mac par la liaison Bluetooth et Wi-Fi
