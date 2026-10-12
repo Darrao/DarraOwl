@@ -16,7 +16,7 @@ settings:
     # The Mac app's version (GitHub releases), apart from the iPhone's: a
     # local build carries the last released one, so the updater does not
     # replace it with that release.
-    MAC_VERSION: "0.1.0"
+    MAC_VERSION: "0.2.0"
     CURRENT_PROJECT_VERSION: "1"
     DEAD_CODE_STRIPPING: YES
 packages:
