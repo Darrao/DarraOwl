@@ -298,7 +298,7 @@ public final class AppModel {
     /// Quitting ends the session first: the phone and the agent mode need the
     /// app, so a session never outlives it.
     public func quit() {
-        NSApp.terminate(nil)
+        AppDelegate.quit()
     }
 
     /// Called by the app delegate however the app is quit. The helper is

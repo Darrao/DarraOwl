@@ -15,6 +15,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in AppDelegate.onCloudPush?() }
     }
 
+    /// Quits from the app itself (menu, update): the session is stopped
+    /// first, then the app quits at once. Called from a task on the main
+    /// actor, `terminate` would otherwise wait in a nested loop for an
+    /// answer that the same main actor can never give, for good.
+    @MainActor
+    static func quit() {
+        Task { @MainActor in
+            if let stop = stopSessionBeforeQuitting {
+                stopSessionBeforeQuitting = nil
+                await stop()
+            }
+            NSApp.terminate(nil)
+        }
+    }
+
     /// However the app is quit (menu, Apple Event, logout), the session ends
     /// with it, as the menu promises.
     @MainActor

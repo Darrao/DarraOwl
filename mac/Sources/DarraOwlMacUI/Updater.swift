@@ -61,7 +61,20 @@ final class Updater {
 
     /// At launch: the copy an earlier update set aside goes.
     func cleanUpAfterUpdate() {
-        try? FileManager.default.removeItem(at: Self.previousURL(for: Bundle.main.bundleURL))
+        let previous = Self.previousURL(for: Bundle.main.bundleURL)
+        guard FileManager.default.fileExists(atPath: previous.path) else { return }
+        try? FileManager.default.removeItem(at: previous)
+        // The copy that installed this one may still run, stuck in its quit
+        // (versions up to 0.2.2): a few seconds for it, then it goes. Right
+        // after an update, any other DarraOwl is that copy.
+        let me = ProcessInfo.processInfo.processIdentifier
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID)
+            .filter { $0.processIdentifier != me }
+        guard !others.isEmpty else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(8))
+            for app in others where !app.isTerminated { app.forceTerminate() }
+        }
     }
 
     /// About every minute, from the app model. `mayInstall` is asked only
@@ -207,7 +220,7 @@ final class Updater {
                 if let reason {
                     self.putBack(current: current, previous: previous, reason: reason)
                 } else {
-                    NSApp.terminate(nil)
+                    AppDelegate.quit()
                 }
             }
         }
