@@ -482,12 +482,19 @@ public final class AppModel {
         let sleeper = PublicDisplaySleep()
         sleeper.requestSleep()
         // powerd puts off a display sleep asked right after activity: asked
-        // again at 3 s and 35 s while it is still meant to be off.
+        // again at 3 s and 35 s while it is still meant to be off. Still on
+        // after that, presence takes it back: a display that never slept
+        // would leave "Toujours actif" quiet for good (no wake to end it).
         Task { [weak self] in
-            for wait in [3, 32] {
+            for wait in [3, 32, 10] {
                 try? await Task.sleep(for: .seconds(wait))
                 guard let self, self.presence.quiet, CGDisplayIsAsleep(CGMainDisplayID()) == 0 else { return }
-                sleeper.requestSleep()
+                if wait == 10 {
+                    self.presence.setQuiet(false)
+                    UserDefaults.standard.set(false, forKey: Self.displayOffFromPhoneKey)
+                } else {
+                    sleeper.requestSleep()
+                }
             }
         }
     }
