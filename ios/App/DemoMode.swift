@@ -41,6 +41,8 @@ enum DemoMode {
         var pausedApps = ["Slack", "WhatsApp"]
         var dockerPaused = false
         var settings = PowerSettings.default
+        /// A Claude request to show what answering one looks like.
+        var requests = [MacState.AgentRequest(id: UUID(), tool: "Bash", detail: "npm run test", project: "DarraOwl", at: Date())]
 
         var state: MacState {
             let now = Date()
@@ -57,7 +59,7 @@ enum DemoMode {
                 network: .init(kind: .hotspot, name: "iPhone", sessionBytes: 184_000_000),
                 agents: agents, containers: containers,
                 dockerPaused: end != nil && dockerPaused, settings: settings, presence: presence, muted: muted,
-                dockerRunning: true
+                dockerRunning: true, agentRequests: requests.isEmpty ? nil : requests
             )
         }
 
@@ -111,6 +113,9 @@ enum DemoMode {
                 settings.endFloor = endFloor
             case let .updateAlerts(alerts):
                 settings.alerts = alerts
+            case let .answerAgentRequest(id, _):
+                guard requests.contains(where: { $0.id == id }) else { return "Cette demande n'attend plus de réponse." }
+                requests.removeAll { $0.id == id }
             case .displayOff, .lockScreen, .forgetThisDevice:
                 break
             }

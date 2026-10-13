@@ -275,16 +275,29 @@ DarraOwl > Réglages > Claude Code > **Activer**. Tu reçois alors « Claude a
 fini » ou « Claude attend ta validation », avec le nom du projet, quand
 personne n'est devant le Mac (capot fermé ou une minute sans activité).
 
-Le bouton ajoute deux « hooks » (Stop et Notification) dans
-`~/.claude/settings.json`. Le reste du fichier est gardé, réécrit avec les
-clés dans l'ordre alphabétique. Ta version d'avant DarraOwl est d'abord copiée
-dans `~/.claude/settings.json.darraowl-backup`.
-**Désactiver** retire exactement ces deux entrées. Les sessions de Claude
-déjà ouvertes en tiennent compte à leur prochain lancement.
+Quand Claude demande une autorisation (lancer une commande, modifier un
+fichier…) et que personne n'est devant le Mac, l'iPhone affiche la demande,
+avec ce que Claude veut faire : **Accepter** (avec Face ID) ou **Refuser**,
+dans l'app ou depuis la notification. Sans réponse au bout d'une heure, ou dès
+que tu reviens devant le Mac, Claude pose la question dans le terminal, comme
+d'habitude.
+
+Le bouton ajoute trois « hooks » (Stop, Notification et PermissionRequest)
+dans `~/.claude/settings.json`. Le reste du fichier est gardé, réécrit avec
+les clés dans l'ordre alphabétique. Ta version d'avant DarraOwl est d'abord
+copiée dans `~/.claude/settings.json.darraowl-backup`.
+**Désactiver** retire exactement ces trois entrées. Les sessions de Claude
+déjà ouvertes en tiennent compte à leur prochain lancement. Activé avec une
+version précédente, le réglage affiche « À mettre à jour » : clique sur
+**Mettre à jour** pour ajouter les demandes d'autorisation.
 
 Le Mac n'écoute que sur `127.0.0.1:52526` et exige un jeton, rangé dans le
-trousseau. Seuls l'événement, son type et le nom du dossier sont lus, jamais
-le contenu.
+trousseau. Sont lus : l'événement, son type et le nom du dossier ; pour une
+demande d'autorisation, aussi l'outil et ce que Claude veut faire (la
+commande, le chemin du fichier ou l'adresse), coupé à 300 caractères. Ce
+détail passe par ta base iCloud privée tant que la demande attend, puis en
+est retiré. Rien d'autre : ni tes fichiers, ni tes prompts, ni les réponses
+de Claude.
 
 Les noms de projets peuvent être masqués dans les réglages des alertes.
 

@@ -38,11 +38,16 @@ public enum CommandKind: Codable, Equatable, Sendable {
     case forgetThisDevice
     /// "Toujours actif" goes on with the lid closed, during a session.
     case setPresenceWhileClosed(Bool)
+    /// Answers a permission request of Claude Code that the Mac published
+    /// (by its id): the phone never sends what to run, only yes or no.
+    /// Accepting is sensitive.
+    case answerAgentRequest(id: UUID, allow: Bool)
 
     /// Needs a Face ID signature from the phone's Secure Enclave key.
     public var isSensitive: Bool {
         switch self {
         case .sleepNow, .stopContainer, .stopAgent: true
+        case let .answerAgentRequest(_, allow): allow
         default: false
         }
     }
@@ -70,6 +75,7 @@ public enum CommandKind: Codable, Equatable, Sendable {
         case .resumeApps: "Relancer les apps"
         case .forgetThisDevice: "Désappairer cet iPhone"
         case let .setPresenceWhileClosed(on): on ? "Rester disponible capot fermé" : "Ne plus rester disponible capot fermé"
+        case let .answerAgentRequest(_, allow): allow ? "Accepter la demande de Claude" : "Refuser la demande de Claude"
         }
     }
 
@@ -123,7 +129,7 @@ public enum CommandKind: Codable, Equatable, Sendable {
         case let .startPresence(m):
             if let m { guard (1...Self.maxPresenceMinutes).contains(m) else { throw .duration } }
         case .stopSession, .sleepNow, .pauseDocker, .resumeDocker, .stopPresence, .displayOff, .lockScreen,
-             .setMuted, .pauseApps, .resumeApps, .forgetThisDevice, .setPresenceWhileClosed:
+             .setMuted, .pauseApps, .resumeApps, .forgetThisDevice, .setPresenceWhileClosed, .answerAgentRequest:
             break
         }
     }

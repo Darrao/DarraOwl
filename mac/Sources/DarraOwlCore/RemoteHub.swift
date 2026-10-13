@@ -49,6 +49,8 @@ public protocol CommandTarget: AnyObject {
     func pauseApps() async throws
     func resumeApps() async throws
     func setPresenceWhileClosed(_ on: Bool) async throws
+    /// Claude Code's request `id`, held for the phone: accepted or refused.
+    func answerAgentRequest(id: UUID, allow: Bool) async throws
     /// Settings now, to merge a partial change into.
     var currentSettings: PowerSettings? { get }
     /// Containers now running, to check a stop request against.
@@ -68,6 +70,8 @@ public protocol CloudMailbox: AnyObject {
     func post(_ event: MacEvent) async throws
     /// Deletes this Mac's events older than `date`.
     func removeEvents(before date: Date) async
+    /// Deletes one event (a Claude request answered: its detail goes).
+    func removeEvent(id: UUID) async
 }
 
 public struct CloudInbox: Sendable {
@@ -373,6 +377,7 @@ public final class RemoteHub {
             // Only ever the signer itself.
             try unpair(deviceID: deviceID)
         case let .setPresenceWhileClosed(on): try await target.setPresenceWhileClosed(on)
+        case let .answerAgentRequest(id, allow): try await target.answerAgentRequest(id: id, allow: allow)
         case let .updateBatteryFloors(lowPower, end):
             guard var s = target.currentSettings else { throw RemoteError.helperUnavailable }
             s.lowPowerFloor = lowPower
@@ -615,6 +620,7 @@ public enum RemoteError: Error, LocalizedError, Sendable {
     case unknownAgent
     case agentStillRunning
     case lockUnavailable
+    case requestGone
 
     public var errorDescription: String? {
         switch self {
@@ -624,6 +630,7 @@ public enum RemoteError: Error, LocalizedError, Sendable {
         case .unknownAgent: "Cet agent ne tourne plus sur le Mac."
         case .agentStillRunning: "L'agent ne s'est pas arrêté."
         case .lockUnavailable: "Verrouillage indisponible sur cette version de macOS."
+        case .requestGone: "Cette demande de Claude n'attend plus de réponse : elle est passée dans le terminal ou a été retirée."
         }
     }
 }

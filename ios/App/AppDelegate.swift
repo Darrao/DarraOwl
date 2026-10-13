@@ -13,9 +13,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         center.delegate = self
         let extend = UNNotificationAction(identifier: MacEvent.extendAction, title: "Prolonger d'1 h", options: [.authenticationRequired])
         let stop = UNNotificationAction(identifier: MacEvent.stopAction, title: "Arrêter la session", options: [.authenticationRequired, .destructive])
+        // Accepting asks Face ID, which needs the app in front.
+        let allow = UNNotificationAction(identifier: MacEvent.allowAction, title: "Accepter", options: [.authenticationRequired, .foreground])
+        let deny = UNNotificationAction(identifier: MacEvent.denyAction, title: "Refuser", options: [.destructive])
         center.setNotificationCategories([
             UNNotificationCategory(identifier: MacEvent.sessionCategory, actions: [extend, stop], intentIdentifiers: []),
             UNNotificationCategory(identifier: MacEvent.infoCategory, actions: [], intentIdentifiers: []),
+            UNNotificationCategory(identifier: MacEvent.agentRequestCategory, actions: [allow, deny], intentIdentifiers: []),
         ])
         application.registerForRemoteNotifications()
         WatchBridge.shared.activate()
@@ -31,8 +35,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let action = response.actionIdentifier
-        let (macID, kind) = Self.eventFields(response.notification.request.content.userInfo)
-        await PhoneRuntime.shared.handleNotificationAction(action, eventMacID: macID, eventKind: kind)
+        let userInfo = response.notification.request.content.userInfo
+        let (macID, kind) = Self.eventFields(userInfo)
+        await PhoneRuntime.shared.handleNotificationAction(action, eventMacID: macID, eventKind: kind, requestID: Self.requestID(userInfo))
     }
 
     /// Which Mac and which kind of event a notification is about, from the
@@ -42,6 +47,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
               let fields = note.recordFields
         else { return (nil, nil) }
         return ((fields["macID"] as? String).flatMap(UUID.init(uuidString:)), (fields["kind"] as? String).flatMap(MacEvent.Kind.init(rawValue:)))
+    }
+
+    /// A Claude request's event is named after the request: "event-<id>".
+    nonisolated static func requestID(_ userInfo: [AnyHashable: Any]) -> UUID? {
+        guard let note = CKNotification(fromRemoteNotificationDictionary: userInfo) as? CKQueryNotification,
+              let name = note.recordID?.recordName, name.hasPrefix("event-")
+        else { return nil }
+        return UUID(uuidString: String(name.dropFirst("event-".count)))
     }
 
     /// Silent part of an event push: refresh what the app shows, from

@@ -147,6 +147,17 @@ public final class CloudKitMailbox: CloudMailbox {
         remember(record.recordID.recordName, at: event.at, key: Self.eventsKey)
     }
 
+    /// One event, by id. A Claude request's event has the request's id: once
+    /// answered, its detail leaves iCloud.
+    public func removeEvent(id: UUID) async {
+        let name = "event-\(id.uuidString)"
+        // Gone already counts as deleted.
+        guard (try? await delete([CKRecord.ID(recordName: name, zoneID: zoneID)])) != nil else { return }
+        var sent = UserDefaults.standard.dictionary(forKey: Self.eventsKey) as? [String: Date] ?? [:]
+        sent[name] = nil
+        UserDefaults.standard.set(sent, forKey: Self.eventsKey)
+    }
+
     /// Deletes this Mac's events, and the results the phone did not read
     /// (Siri and Live Activity commands do not wait for them), older than `date`.
     public func removeEvents(before date: Date) async {

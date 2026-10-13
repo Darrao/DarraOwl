@@ -3,7 +3,10 @@ import Foundation
 /// Adds DarraOwl's hooks to Claude Code's settings.json and takes them out
 /// again, leaving everything else as it was. Works on the file's bytes. Pure.
 public enum ClaudeHookConfig {
-    public static let events = ["Stop", "Notification"]
+    public static let events = ["Stop", "Notification", "PermissionRequest"]
+    /// A permission request waits for the phone, an hour at most; the
+    /// others are answered at once.
+    public static let permissionTimeout = 3600
 
     public enum State: Equatable, Sendable {
         case absent
@@ -28,8 +31,9 @@ public enum ClaudeHookConfig {
         "http://127.0.0.1:\(port)/hooks/claude"
     }
 
-    static func entry(port: UInt16, token: String) -> [String: Any] {
-        ["type": "http", "url": url(port: port), "timeout": 5, "headers": ["Authorization": "Bearer \(token)"]]
+    static func entry(port: UInt16, token: String, event: String) -> [String: Any] {
+        let timeout = event == "PermissionRequest" ? permissionTimeout : 5
+        return ["type": "http", "url": url(port: port), "timeout": timeout, "headers": ["Authorization": "Bearer \(token)"]]
     }
 
     public static func state(_ data: Data?, port: UInt16, token: String) -> State {
@@ -56,7 +60,7 @@ public enum ClaudeHookConfig {
         var hooks = root["hooks"] as? [String: Any] ?? [:]
         for event in events {
             var groups = hooks[event] as? [[String: Any]] ?? []
-            groups.append(["hooks": [entry(port: port, token: token)]])
+            groups.append(["hooks": [entry(port: port, token: token, event: event)]])
             hooks[event] = groups
         }
         root["hooks"] = hooks

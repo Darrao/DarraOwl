@@ -48,7 +48,9 @@ public enum WatchLink {
     /// Commands the watch may ask for: everything that does not need Face
     /// ID, except unpairing the iPhone.
     public static func allowed(_ kind: CommandKind) -> Bool {
-        !kind.isSensitive && kind != .forgetThisDevice
+        // Claude's requests are answered where their detail can be read.
+        if case .answerAgentRequest = kind { return false }
+        return !kind.isSensitive && kind != .forgetThisDevice
     }
 
     public static let needsPhone = "Depuis l'iPhone uniquement : cette commande demande Face ID."

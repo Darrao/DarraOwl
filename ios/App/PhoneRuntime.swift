@@ -93,9 +93,9 @@ final class PhoneRuntime {
     }
 
     /// A notification's button: shown at once like the Live Activity's own.
-    func handleNotificationAction(_ id: String, eventMacID: UUID?, eventKind: MacEvent.Kind?) async {
+    func handleNotificationAction(_ id: String, eventMacID: UUID?, eventKind: MacEvent.Kind?, requestID: UUID? = nil) async {
         let baseline = liveActivity.currentEnd
-        guard let kind = await model.handleNotificationAction(id, eventMacID: eventMacID, eventKind: eventKind) else { return }
+        guard let kind = await model.handleNotificationAction(id, eventMacID: eventMacID, eventKind: eventKind, requestID: requestID) else { return }
         afterFire(kind, baseline: baseline)
     }
 

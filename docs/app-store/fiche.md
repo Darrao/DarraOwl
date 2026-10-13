@@ -31,6 +31,7 @@ Pensé pour les longues tâches de Claude Code, Codex ou Gemini : tu lances l'ag
 SUR L'IPHONE
 • État du Mac en direct : session, temps restant, batterie, autonomie, température, capot, réseau
 • Agents de code en cours, avec leur projet et s'ils attendent ta validation
+• Demandes d'autorisation de Claude Code : vois ce que Claude veut faire, accepte ou refuse depuis l'iPhone
 • Mode agent : le Mac reste éveillé tant que l'agent tourne, puis se rendort
 • Démarrer, prolonger ou arrêter une session, mettre le Mac en veille
 • Docker : conteneurs actifs, pause de Docker Desktop, arrêt d'un conteneur

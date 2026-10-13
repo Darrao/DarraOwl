@@ -3,7 +3,9 @@ import Foundation
 import Network
 
 /// Claude Code's HTTP hooks endpoint: 127.0.0.1 only, one path, a bearer
-/// token. Nothing but the event name, its type and the folder is read.
+/// token. Read: the event name, its type, the folder, and for a permission
+/// request the tool and what it would do. A permission request's connection
+/// is held until the phone answers (or not), then gets the decision.
 @MainActor
 public final class HookServer {
     public static let port: UInt16 = 52_526
@@ -13,10 +15,23 @@ public final class HookServer {
     private var listener: NWListener?
     private let token: String
     private let onHook: (ClaudeHook.Parsed) -> Void
+    /// A permission request (id, tool, detail, folder): the decision once
+    /// known, nil for none.
+    private let onPermission: (UUID, String, String, String?) async -> AgentApprovals.Decision?
+    /// Claude stopped waiting for request `id` (answered in the terminal, quit).
+    private let onWithdraw: (UUID) -> Void
+    /// Connections held for a permission request: not cut after 5 s.
+    private var held: Set<ObjectIdentifier> = []
 
-    public init(token: String, onHook: @escaping (ClaudeHook.Parsed) -> Void) {
+    public init(
+        token: String, onHook: @escaping (ClaudeHook.Parsed) -> Void,
+        onPermission: @escaping (UUID, String, String, String?) async -> AgentApprovals.Decision? = { _, _, _, _ in nil },
+        onWithdraw: @escaping (UUID) -> Void = { _ in }
+    ) {
         self.token = token
         self.onHook = onHook
+        self.onPermission = onPermission
+        self.onWithdraw = onWithdraw
     }
 
     public func start() {
@@ -66,9 +81,10 @@ public final class HookServer {
         }
         c.start(queue: .main)
         read(c, buffer: Data())
-        Task { [weak c] in
+        Task { [weak self, weak c] in
             try? await Task.sleep(for: .seconds(5))
-            c?.cancel()
+            guard let c, self?.held.contains(ObjectIdentifier(c)) != true else { return }
+            c.cancel()
         }
     }
 
@@ -95,11 +111,47 @@ public final class HookServer {
         guard LocalHTTP.authorized(r, token: token) else { return reply(c, 401, "Unauthorized") }
         guard let parsed = ClaudeHook.parse(r.body) else { return reply(c, 400, "Bad Request") }
         lastSignal = Date()
+        if case let .permission(tool, detail, cwd) = parsed {
+            hold(c, tool: tool, detail: detail, cwd: cwd)
+            return
+        }
         onHook(parsed)
         reply(c, 200, "OK")
     }
 
-    private func reply(_ c: NWConnection, _ status: Int, _ text: String) {
-        c.send(content: LocalHTTP.response(status, text), completion: .contentProcessed { _ in c.cancel() })
+    /// Answered once the phone has, or not: the connection stays open
+    /// meanwhile, and its closing withdraws the request.
+    private func hold(_ c: NWConnection, tool: String, detail: String, cwd: String?) {
+        let id = UUID()
+        let key = ObjectIdentifier(c)
+        held.insert(key)
+        watchClose(c, key: key, id: id)
+        Task {
+            // Closed before the request was registered: nothing would withdraw it.
+            guard held.contains(key) else { return }
+            let decision = await onPermission(id, tool, detail, cwd)
+            guard held.remove(key) != nil else { return }
+            reply(c, 200, "OK", body: AgentApprovals.hookAnswer(decision))
+        }
+    }
+
+    /// A read that only ends when Claude closes its side.
+    private func watchClose(_ c: NWConnection, key: ObjectIdentifier, id: UUID) {
+        c.receive(minimumIncompleteLength: 1, maximumLength: 1024) { [weak self] _, _, complete, error in
+            Task { @MainActor in
+                guard let self, self.held.contains(key) else { return }
+                if complete || error != nil {
+                    self.held.remove(key)
+                    c.cancel()
+                    self.onWithdraw(id)
+                } else {
+                    self.watchClose(c, key: key, id: id)
+                }
+            }
+        }
+    }
+
+    private func reply(_ c: NWConnection, _ status: Int, _ text: String, body: Data = Data("{}".utf8)) {
+        c.send(content: LocalHTTP.response(status, text, body: body), completion: .contentProcessed { _ in c.cancel() })
     }
 }

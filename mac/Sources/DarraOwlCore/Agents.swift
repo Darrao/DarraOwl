@@ -141,6 +141,8 @@ public enum ClaudeHook {
         /// "permission_prompt", "elicitation_dialog", "idle_prompt",
         /// "auth_success"… Absent in older Claude Code versions.
         public var notification_type: String?
+        /// PermissionRequest: the tool Claude wants to use.
+        public var tool_name: String?
     }
 
     /// Notifications that mean Claude needs the user to answer.
@@ -149,12 +151,20 @@ public enum ClaudeHook {
     public enum Parsed: Equatable, Sendable {
         case finished(cwd: String?)
         case waiting(cwd: String?)
+        /// Claude is about to ask for a permission: what it wants to do,
+        /// cut short for the phone.
+        case permission(tool: String, detail: String, cwd: String?)
         case ignored
     }
 
     public static func parse(_ body: Data) -> Parsed? {
         guard let p = try? JSONDecoder().decode(Payload.self, from: body) else { return nil }
         switch p.hook_event_name {
+        case "PermissionRequest":
+            guard let tool = p.tool_name, !tool.isEmpty else { return .ignored }
+            let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+            let input = root?["tool_input"] as? [String: Any] ?? [:]
+            return .permission(tool: tool, detail: AgentApprovals.detail(tool: tool, input: input), cwd: p.cwd)
         case "Stop": return .finished(cwd: p.cwd)
         case "Notification":
             // "idle_prompt" (a minute after a finished turn) is not a question.
@@ -211,8 +221,8 @@ public enum LocalHTTP {
         return zip(given, expected).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
-    public static func response(_ status: Int, _ text: String) -> Data {
-        let body = Data("{}".utf8)
-        return Data("HTTP/1.1 \(status) \(text)\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8) + body
+    /// `body`: a JSON object, "{}" for "nothing to say".
+    public static func response(_ status: Int, _ text: String, body: Data = Data("{}".utf8)) -> Data {
+        Data("HTTP/1.1 \(status) \(text)\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8) + body
     }
 }

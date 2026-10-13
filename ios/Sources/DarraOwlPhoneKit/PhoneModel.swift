@@ -136,7 +136,7 @@ public final class PhoneModel {
     /// the app may have been launched for it.
     /// Returns the command it sent, if any.
     @discardableResult
-    public func handleNotificationAction(_ id: String, eventMacID: UUID? = nil, eventKind: MacEvent.Kind? = nil) async -> CommandKind? {
+    public func handleNotificationAction(_ id: String, eventMacID: UUID? = nil, eventKind: MacEvent.Kind? = nil, requestID: UUID? = nil) async -> CommandKind? {
         if mac == nil { mac = deps.store.pairedMac() }
         guard let mac, eventMacID.map({ $0 == mac.macID }) ?? true else { return nil }
         switch id {
@@ -160,6 +160,17 @@ public final class PhoneModel {
             // "Session terminée": nothing left to stop.
             guard eventKind != .ended else { return nil }
             return await fire(.stopSession) ? .stopSession : nil
+        case MacEvent.allowAction, MacEvent.denyAction:
+            guard let requestID else { return nil }
+            let allow = id == MacEvent.allowAction
+            let kind = CommandKind.answerAgentRequest(id: requestID, allow: allow)
+            // Accepting asks Face ID, with the app open (the button brings
+            // it forward), and shows the Mac's answer; refusing goes as is.
+            if allow {
+                await send(kind)
+                return kind
+            }
+            return await fire(kind) ? kind : nil
         default:
             return nil
         }

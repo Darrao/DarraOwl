@@ -79,6 +79,7 @@ final class FakeTarget: CommandTarget {
     func pauseApps() async throws { try await record("pauseApps") }
     func resumeApps() async throws { try await record("resumeApps") }
     func setPresenceWhileClosed(_ on: Bool) async throws { try await record("whileClosed \(on)") }
+    func answerAgentRequest(id: UUID, allow: Bool) async throws { try await record("agent \(allow ? "allow" : "deny")") }
 }
 
 @MainActor
@@ -114,6 +115,8 @@ final class FakeCloud: CloudMailbox {
         events.append(event)
     }
     func removeEvents(before date: Date) async {}
+    var removedEvents: [UUID] = []
+    func removeEvent(id: UUID) async { removedEvents.append(id) }
 }
 
 @MainActor

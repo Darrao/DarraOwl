@@ -108,13 +108,37 @@ public struct MacState: Codable, Equatable, Sendable {
     /// The devices paired with this Mac: a phone missing from a state
     /// published after its pairing was unpaired on the Mac (nil: older Mac).
     public var pairedDevices: [UUID]?
+    /// Claude Code's permission requests waiting for the phone's answer.
+    public var agentRequests: [AgentRequest]?
+
+    /// A permission request of Claude Code, held while nobody is at the
+    /// Mac. `detail` is what Claude wants to do (a command, a file), cut
+    /// short; it goes through iCloud while the request waits (the user's
+    /// choice, see PRIVACY.md).
+    public struct AgentRequest: Codable, Equatable, Sendable, Identifiable {
+        public var id: UUID
+        /// Bash, Edit, Write, WebFetch…
+        public var tool: String
+        public var detail: String
+        /// Nil when project names are masked.
+        public var project: String?
+        public var at: Date
+
+        public init(id: UUID, tool: String, detail: String, project: String?, at: Date) {
+            self.id = id
+            self.tool = tool
+            self.detail = detail
+            self.project = project
+            self.at = at
+        }
+    }
 
     public init(
         macID: UUID, macName: String, updatedAt: Date, power: Power, session: Session?,
         powerSnapshot: PowerSnapshot?, lowPowerActive: Bool, pausedApps: [String], network: Network?,
         agents: [Agent] = [], containers: [Container] = [], dockerPaused: Bool, settings: PowerSettings,
         protocolVersion: Int = LinkProtocol.version, presence: Presence? = nil, muted: Bool? = nil, dockerRunning: Bool? = nil,
-        pairedDevices: [UUID]? = nil
+        pairedDevices: [UUID]? = nil, agentRequests: [AgentRequest]? = nil
     ) {
         self.macID = macID
         self.macName = macName
@@ -134,6 +158,7 @@ public struct MacState: Codable, Equatable, Sendable {
         self.muted = muted
         self.dockerRunning = dockerRunning
         self.pairedDevices = pairedDevices
+        self.agentRequests = agentRequests
     }
 }
 

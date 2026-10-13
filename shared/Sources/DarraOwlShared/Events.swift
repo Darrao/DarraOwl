@@ -18,6 +18,8 @@ public struct MacEvent: Codable, Equatable, Sendable, Identifiable {
         case agentWaiting
         /// The Mac locked itself: Teams shows its user Away.
         case macLocked
+        /// Claude Code asks for a permission; the phone may answer.
+        case agentRequest
     }
 
     public var id: UUID
@@ -25,13 +27,16 @@ public struct MacEvent: Codable, Equatable, Sendable, Identifiable {
     public var title: String
     public var body: String
     public var at: Date
+    /// The permission request an `agentRequest` event is about.
+    public var requestID: UUID?
 
-    public init(id: UUID = UUID(), kind: Kind, title: String, body: String, at: Date) {
+    public init(id: UUID = UUID(), kind: Kind, title: String, body: String, at: Date, requestID: UUID? = nil) {
         self.id = id
         self.kind = kind
         self.title = title
         self.body = body
         self.at = at
+        self.requestID = requestID
     }
 
     /// Notification category: session events carry the +1 h and Arrêter buttons.
@@ -41,13 +46,19 @@ public struct MacEvent: Codable, Equatable, Sendable, Identifiable {
             Self.sessionCategory
         case .ended, .agentDone, .agentWaiting, .macLocked:
             Self.infoCategory
+        case .agentRequest:
+            Self.agentRequestCategory
         }
     }
 
     public static let sessionCategory = "DARRAOWL_SESSION"
     public static let infoCategory = "DARRAOWL_INFO"
+    /// Accepter (Face ID) and Refuser.
+    public static let agentRequestCategory = "DARRAOWL_AGENT_REQUEST"
     public static let extendAction = "EXTEND_1H"
     public static let stopAction = "STOP"
+    public static let allowAction = "AGENT_ALLOW"
+    public static let denyAction = "AGENT_DENY"
 }
 
 public enum ByteText {

@@ -274,6 +274,7 @@ struct MacView: View {
                     header
                     sessionBlock
                     if let state = model.state {
+                        if let requests = state.agentRequests, !requests.isEmpty { requestsBlock(requests) }
                         if !state.agents.isEmpty { agentsBlock(state) }
                         if state.presence != nil { controlsBlock(state) }
                         macBlock(state)
@@ -426,6 +427,46 @@ struct MacView: View {
         let total = s.endsAt.timeIntervalSince(s.startedAt)
         guard total > 0 else { return 1 }
         return min(1, max(0, date.timeIntervalSince(s.startedAt) / total))
+    }
+
+    // MARK: Claude's requests
+
+    /// Claude asks for a permission while nobody is at the Mac: what it
+    /// wants to do, and yes or no (Face ID to accept). Back at the Mac, or
+    /// after an hour, the question goes to the terminal instead.
+    private func requestsBlock(_ requests: [MacState.AgentRequest]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle("Claude demande ton accord")
+            ForEach(requests) { request in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "hand.raised").foregroundStyle(.orange)
+                        Text(request.project.map { "\(request.tool) · \($0)" } ?? request.tool).font(.body.weight(.medium))
+                        Spacer()
+                        Text(request.at.formatted(date: .omitted, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if !request.detail.isEmpty {
+                        Text(request.detail)
+                            .font(.callout.monospaced())
+                            .lineLimit(6)
+                            .textSelection(.enabled)
+                    }
+                    HStack {
+                        Button("Refuser", role: .destructive) {
+                            Task { await model.send(.answerAgentRequest(id: request.id, allow: false)) }
+                        }
+                        .buttonStyle(.glass)
+                        Spacer()
+                        Button("Accepter") {
+                            Task { await model.send(.answerAgentRequest(id: request.id, allow: true)) }
+                        }
+                        .buttonStyle(.glassProminent)
+                        .accessibilityHint("Demande Face ID")
+                    }
+                    .disabled(model.isBusy || !online)
+                }
+            }
+        }
     }
 
     // MARK: Agents

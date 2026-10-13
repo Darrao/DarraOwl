@@ -55,6 +55,8 @@ public final class RemoteController: CommandTarget {
     @ObservationIgnored private var signals = AgentSignals()
     @ObservationIgnored private var agentsSeenInSession: (session: UUID?, tools: [String]) = (nil, [])
     @ObservationIgnored private(set) var hookServer: HookServer?
+    /// Claude Code's permission requests waiting for the phone.
+    @ObservationIgnored let approvals = AgentApprovals(clock: SystemClock(), sleep: { try? await Task.sleep(for: .seconds($0)) })
     public private(set) var agents: [AgentProcess] = []
     @ObservationIgnored private var dataMeter = DataMeter()
     public private(set) var sessionBytes: Int64?
@@ -138,8 +140,9 @@ public final class RemoteController: CommandTarget {
             if self.network.isUp { self.hub?.retryNow() }
             self.publishSoon()
         }
+        approvals.onChange = { [weak self] change in self?.approvalChanged(change) }
         if let token = HookToken.current() {
-            let hooks = HookServer(token: token) { [weak self] parsed in self?.handleHook(parsed) }
+            let hooks = makeHookServer(token: token)
             hooks.start()
             hookServer = hooks
         }
@@ -188,8 +191,10 @@ public final class RemoteController: CommandTarget {
         if connected != connectedDevices { connectedDevices = connected }
         let listening = hookServer?.isListening ?? false
         if listening != hookListening { hookListening = listening }
+        // Back at the Mac: Claude's requests go to the terminal.
+        if !approvals.pending.isEmpty, !nobodyAtTheMac { approvals.releaseAll() }
         if hookServer == nil, tick % 30 == 0, let token = HookToken.current() {
-            let hooks = HookServer(token: token) { [weak self] parsed in self?.handleHook(parsed) }
+            let hooks = makeHookServer(token: token)
             hooks.start()
             hookServer = hooks
         } else if tick % 30 == 0, hookServer?.isListening == false {
@@ -219,6 +224,43 @@ public final class RemoteController: CommandTarget {
         }
     }
 
+    private func makeHookServer(token: String) -> HookServer {
+        HookServer(
+            token: token,
+            onHook: { [weak self] parsed in self?.handleHook(parsed) },
+            onPermission: { [weak self] id, tool, detail, cwd in await self?.permission(id: id, tool: tool, detail: detail, cwd: cwd) },
+            onWithdraw: { [weak self] id in self?.approvals.withdraw(id) }
+        )
+    }
+
+    /// A permission request of Claude: held for the phone when nobody is at
+    /// the Mac and a phone is paired; otherwise Claude asks in the terminal.
+    private func permission(id: UUID, tool: String, detail: String, cwd: String?) async -> AgentApprovals.Decision? {
+        guard nobodyAtTheMac, hub != nil, !devices.isEmpty else { return nil }
+        let mask = model.status?.settings.alerts.maskProjectNames ?? false
+        let name = cwd.map { URL(fileURLWithPath: $0).lastPathComponent }
+        let project = mask ? nil : name.flatMap { $0.isEmpty || $0 == "/" ? nil : $0 }
+        return await approvals.decide(id: id, tool: tool, detail: detail, project: project)
+    }
+
+    /// A request appeared: the phone hears of it (state, notification with
+    /// its detail). Gone: the state follows, and the notification's record
+    /// leaves iCloud with the detail.
+    private func approvalChanged(_ change: AgentApprovals.Change) {
+        publishSoon()
+        guard let hub else { return }
+        switch change {
+        case let .added(request):
+            let head = request.project.map { "\(request.tool) · \($0)" } ?? request.tool
+            let body = request.detail.isEmpty ? head : "\(head)\n\(request.detail)"
+            let event = MacEvent(id: request.id, kind: .agentRequest, title: "Claude demande ton accord", body: body, at: request.at, requestID: request.id)
+            Task { await hub.post([event]) }
+        case let .removed(id):
+            let cloud = self.cloud
+            Task { await cloud?.removeEvent(id: id) }
+        }
+    }
+
     /// Claude Code hook: "finished" or "waiting for approval". Notifies the
     /// phone only when nobody is at the Mac (lid closed or 60 s idle).
     private func handleHook(_ parsed: ClaudeHook.Parsed) {
@@ -235,8 +277,11 @@ public final class RemoteController: CommandTarget {
             event = MacEvent(kind: .agentDone, title: "Claude a fini", body: project(cwd), at: now)
         case let .waiting(cwd):
             if let cwd { signals.record(.waiting, cwd: cwd, at: now) }
-            event = MacEvent(kind: .agentWaiting, title: "Claude attend ta validation", body: project(cwd), at: now)
-        case .ignored:
+            // A request held for the phone already has its own notification.
+            if approvals.pending.isEmpty {
+                event = MacEvent(kind: .agentWaiting, title: "Claude attend ta validation", body: project(cwd), at: now)
+            }
+        case .permission, .ignored:
             break
         }
         publishSoon()
@@ -406,7 +451,8 @@ public final class RemoteController: CommandTarget {
             presence: MacState.Presence(active: model.presenceActive, until: model.presenceUntil, whileClosed: model.presenceWhileClosed),
             muted: (try? audio.readDefaultOutput())?.muted,
             dockerRunning: NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == PausePolicy.dockerBundleID },
-            pairedDevices: devices.map(\.id)
+            pairedDevices: devices.map(\.id),
+            agentRequests: approvals.pending.isEmpty ? nil : approvals.pending
         )
     }
 
@@ -582,6 +628,10 @@ public final class RemoteController: CommandTarget {
     public func setPresenceWhileClosed(_ on: Bool) async throws {
         model.setPresenceWhileClosed(on)
         publishSoon()
+    }
+
+    public func answerAgentRequest(id: UUID, allow: Bool) async throws {
+        guard approvals.answer(id, allow: allow) else { throw RemoteError.requestGone }
     }
 
     public func displayOff() async throws {
