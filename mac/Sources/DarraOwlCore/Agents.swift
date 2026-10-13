@@ -132,8 +132,9 @@ public struct AgentSignals: Sendable {
     }
 }
 
-/// Claude Code HTTP hook payloads. Only the event name and the folder are
-/// read: the message, prompt and transcript are ignored (safety rule 8).
+/// Claude Code HTTP hook payloads. Read: the event name, its type, the
+/// folder and who asked; for a permission request, the tool and what it
+/// would do. The prompt, transcript and answers are ignored (safety rule 8).
 public enum ClaudeHook {
     public struct Payload: Decodable, Sendable {
         public var hook_event_name: String
@@ -143,33 +144,67 @@ public enum ClaudeHook {
         public var notification_type: String?
         /// PermissionRequest: the tool Claude wants to use.
         public var tool_name: String?
+        public var session_id: String?
+        /// Set when the hook fires inside a subagent.
+        public var agent_id: String?
+    }
+
+    /// Which Claude sent a hook: its session, and the subagent in it (nil
+    /// for the main agent). Older versions send neither.
+    public struct Asker: Hashable, Sendable {
+        public var session: String?
+        public var agent: String?
+
+        public init(session: String? = nil, agent: String? = nil) {
+            self.session = session
+            self.agent = agent
+        }
+    }
+
+    /// Claude is about to ask for a permission.
+    public struct Permission: Equatable, Sendable {
+        public var tool: String
+        /// What it wants to do, in full: the command, the file, the address…
+        public var detail: String
+        public var cwd: String?
+        public var asker: Asker
+
+        public init(tool: String, detail: String, cwd: String?, asker: Asker = Asker()) {
+            self.tool = tool
+            self.detail = detail
+            self.cwd = cwd
+            self.asker = asker
+        }
     }
 
     /// Notifications that mean Claude needs the user to answer.
     static let waitingTypes: Set<String> = ["permission_prompt", "elicitation_dialog"]
 
+    /// Tools that Claude Code only lets its own dialog answer: a hook's bare
+    /// "allow" is ignored for them (a question, a plan to approve).
+    static let dialogOnlyTools: Set<String> = ["AskUserQuestion", "ExitPlanMode", "ShowOnboardingRolePicker"]
+
     public enum Parsed: Equatable, Sendable {
-        case finished(cwd: String?)
-        case waiting(cwd: String?)
-        /// Claude is about to ask for a permission: what it wants to do,
-        /// cut short for the phone.
-        case permission(tool: String, detail: String, cwd: String?)
+        case finished(cwd: String?, asker: Asker)
+        case waiting(cwd: String?, asker: Asker)
+        case permission(Permission)
         case ignored
     }
 
     public static func parse(_ body: Data) -> Parsed? {
         guard let p = try? JSONDecoder().decode(Payload.self, from: body) else { return nil }
+        let asker = Asker(session: p.session_id, agent: p.agent_id)
         switch p.hook_event_name {
         case "PermissionRequest":
-            guard let tool = p.tool_name, !tool.isEmpty else { return .ignored }
+            guard let tool = p.tool_name, !tool.isEmpty, !dialogOnlyTools.contains(tool) else { return .ignored }
             let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
             let input = root?["tool_input"] as? [String: Any] ?? [:]
-            return .permission(tool: tool, detail: AgentApprovals.detail(tool: tool, input: input), cwd: p.cwd)
-        case "Stop": return .finished(cwd: p.cwd)
+            return .permission(Permission(tool: tool, detail: AgentApprovals.describe(tool: tool, input: input), cwd: p.cwd, asker: asker))
+        case "Stop": return .finished(cwd: p.cwd, asker: asker)
         case "Notification":
             // "idle_prompt" (a minute after a finished turn) is not a question.
-            guard let type = p.notification_type else { return .waiting(cwd: p.cwd) }
-            return waitingTypes.contains(type) ? .waiting(cwd: p.cwd) : .ignored
+            guard let type = p.notification_type else { return .waiting(cwd: p.cwd, asker: asker) }
+            return waitingTypes.contains(type) ? .waiting(cwd: p.cwd, asker: asker) : .ignored
         default: return .ignored
         }
     }
@@ -178,7 +213,9 @@ public enum ClaudeHook {
 /// The local hook endpoint's HTTP, minimal and strict: POST, one path, a
 /// bearer token compared in constant time, a small body. Pure.
 public enum LocalHTTP {
-    public static let maxBody = 64 * 1024
+    /// A permission request carries the tool's whole input: a file Claude
+    /// wants to write, for one.
+    public static let maxBody = 8 * 1024 * 1024
 
     public struct Request: Equatable, Sendable {
         public var method: String

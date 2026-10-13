@@ -139,6 +139,8 @@ public final class PhoneModel {
     public func handleNotificationAction(_ id: String, eventMacID: UUID? = nil, eventKind: MacEvent.Kind? = nil, requestID: UUID? = nil) async -> CommandKind? {
         if mac == nil { mac = deps.store.pairedMac() }
         guard let mac, eventMacID.map({ $0 == mac.macID }) ?? true else { return nil }
+        // A Claude request's notification has no session to touch.
+        if eventKind == .agentRequest, id == MacEvent.extendAction || id == MacEvent.stopAction { return nil }
         switch id {
         case MacEvent.extendAction:
             // Read first, unless fresh: a session still running is extended,

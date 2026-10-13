@@ -228,19 +228,20 @@ public final class RemoteController: CommandTarget {
         HookServer(
             token: token,
             onHook: { [weak self] parsed in self?.handleHook(parsed) },
-            onPermission: { [weak self] id, tool, detail, cwd in await self?.permission(id: id, tool: tool, detail: detail, cwd: cwd) },
+            onPermission: { [weak self] id, request in await self?.permission(id: id, request) },
             onWithdraw: { [weak self] id in self?.approvals.withdraw(id) }
         )
     }
 
     /// A permission request of Claude: held for the phone when nobody is at
     /// the Mac and a phone is paired; otherwise Claude asks in the terminal.
-    private func permission(id: UUID, tool: String, detail: String, cwd: String?) async -> AgentApprovals.Decision? {
+    private func permission(id: UUID, _ request: ClaudeHook.Permission) async -> AgentApprovals.Decision? {
         guard nobodyAtTheMac, hub != nil, !devices.isEmpty else { return nil }
         let mask = model.status?.settings.alerts.maskProjectNames ?? false
-        let name = cwd.map { URL(fileURLWithPath: $0).lastPathComponent }
+        let name = request.cwd.map { URL(fileURLWithPath: $0).lastPathComponent }
         let project = mask ? nil : name.flatMap { $0.isEmpty || $0 == "/" ? nil : $0 }
-        return await approvals.decide(id: id, tool: tool, detail: detail, project: project)
+        let detail = AgentApprovals.shown(request.detail, cwd: request.cwd, mask: mask)
+        return await approvals.decide(id: id, tool: request.tool, detail: detail, project: project, asker: request.asker, cwd: request.cwd)
     }
 
     /// A request appeared: the phone hears of it (state, notification with
@@ -254,15 +255,16 @@ public final class RemoteController: CommandTarget {
             let head = request.project.map { "\(request.tool) · \($0)" } ?? request.tool
             let body = request.detail.isEmpty ? head : "\(head)\n\(request.detail)"
             let event = MacEvent(id: request.id, kind: .agentRequest, title: "Claude demande ton accord", body: body, at: request.at, requestID: request.id)
-            Task { await hub.post([event]) }
+            // Queued now: a request gone a moment later is taken back before it is sent.
+            hub.enqueue([event])
+            Task { await hub.post([]) }
         case let .removed(id):
-            let cloud = self.cloud
-            Task { await cloud?.removeEvent(id: id) }
+            hub.withdrawEvent(id)
         }
     }
 
     /// Claude Code hook: "finished" or "waiting for approval". Notifies the
-    /// phone only when nobody is at the Mac (lid closed or 60 s idle).
+    /// phone only when nobody is at the Mac.
     private func handleHook(_ parsed: ClaudeHook.Parsed) {
         let now = Date()
         let mask = model.status?.settings.alerts.maskProjectNames ?? false
@@ -272,13 +274,15 @@ public final class RemoteController: CommandTarget {
         }
         var event: MacEvent?
         switch parsed {
-        case let .finished(cwd):
+        case let .finished(cwd, asker):
             if let cwd { signals.record(.finished, cwd: cwd, at: now) }
+            // Its turn is over: whatever it asked was answered elsewhere.
+            approvals.finished(asker)
             event = MacEvent(kind: .agentDone, title: "Claude a fini", body: project(cwd), at: now)
-        case let .waiting(cwd):
+        case let .waiting(cwd, asker):
             if let cwd { signals.record(.waiting, cwd: cwd, at: now) }
             // A request held for the phone already has its own notification.
-            if approvals.pending.isEmpty {
+            if !approvals.waits(asker, cwd: cwd) {
                 event = MacEvent(kind: .agentWaiting, title: "Claude attend ta validation", body: project(cwd), at: now)
             }
         case .permission, .ignored:
@@ -289,8 +293,10 @@ public final class RemoteController: CommandTarget {
         Task { await hub.post([event]) }
     }
 
+    /// Lid closed (docked to an external display, the Mac is in use), or a
+    /// minute without the user's input.
     private var nobodyAtTheMac: Bool {
-        model.lidClosed || UserIdle.seconds() >= 60
+        (model.lidClosed && !ExternalDisplays.anyActive()) || UserIdle.seconds() >= 60
     }
 
     // MARK: Events

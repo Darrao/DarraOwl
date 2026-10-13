@@ -15,17 +15,16 @@ public final class HookServer {
     private var listener: NWListener?
     private let token: String
     private let onHook: (ClaudeHook.Parsed) -> Void
-    /// A permission request (id, tool, detail, folder): the decision once
-    /// known, nil for none.
-    private let onPermission: (UUID, String, String, String?) async -> AgentApprovals.Decision?
-    /// Claude stopped waiting for request `id` (answered in the terminal, quit).
+    /// A permission request and its id: the decision once known, nil for none.
+    private let onPermission: (UUID, ClaudeHook.Permission) async -> AgentApprovals.Decision?
+    /// Claude stopped waiting for request `id` (interrupted, quit).
     private let onWithdraw: (UUID) -> Void
     /// Connections held for a permission request: not cut after 5 s.
     private var held: Set<ObjectIdentifier> = []
 
     public init(
         token: String, onHook: @escaping (ClaudeHook.Parsed) -> Void,
-        onPermission: @escaping (UUID, String, String, String?) async -> AgentApprovals.Decision? = { _, _, _, _ in nil },
+        onPermission: @escaping (UUID, ClaudeHook.Permission) async -> AgentApprovals.Decision? = { _, _ in nil },
         onWithdraw: @escaping (UUID) -> Void = { _ in }
     ) {
         self.token = token
@@ -89,7 +88,7 @@ public final class HookServer {
     }
 
     private func read(_ c: NWConnection, buffer: Data) {
-        c.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [weak self] data, _, complete, error in
+        c.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [weak self] data, _, complete, error in
             Task { @MainActor in
                 guard let self else { return }
                 var buffer = buffer
@@ -111,8 +110,8 @@ public final class HookServer {
         guard LocalHTTP.authorized(r, token: token) else { return reply(c, 401, "Unauthorized") }
         guard let parsed = ClaudeHook.parse(r.body) else { return reply(c, 400, "Bad Request") }
         lastSignal = Date()
-        if case let .permission(tool, detail, cwd) = parsed {
-            hold(c, tool: tool, detail: detail, cwd: cwd)
+        if case let .permission(request) = parsed {
+            hold(c, request)
             return
         }
         onHook(parsed)
@@ -121,7 +120,7 @@ public final class HookServer {
 
     /// Answered once the phone has, or not: the connection stays open
     /// meanwhile, and its closing withdraws the request.
-    private func hold(_ c: NWConnection, tool: String, detail: String, cwd: String?) {
+    private func hold(_ c: NWConnection, _ request: ClaudeHook.Permission) {
         let id = UUID()
         let key = ObjectIdentifier(c)
         held.insert(key)
@@ -129,7 +128,7 @@ public final class HookServer {
         Task {
             // Closed before the request was registered: nothing would withdraw it.
             guard held.contains(key) else { return }
-            let decision = await onPermission(id, tool, detail, cwd)
+            let decision = await onPermission(id, request)
             guard held.remove(key) != nil else { return }
             reply(c, 200, "OK", body: AgentApprovals.hookAnswer(decision))
         }

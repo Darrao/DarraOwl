@@ -70,7 +70,8 @@ public protocol CloudMailbox: AnyObject {
     func post(_ event: MacEvent) async throws
     /// Deletes this Mac's events older than `date`.
     func removeEvents(before date: Date) async
-    /// Deletes one event (a Claude request answered: its detail goes).
+    /// Deletes one event (a Claude request ended: its detail goes), now or,
+    /// when iCloud fails, at a later read of the inbox.
     func removeEvent(id: UUID) async
 }
 
@@ -446,26 +447,58 @@ public final class RemoteHub {
     /// (at most 20, the oldest dropped). One sender at a time: a call made
     /// while another one sends only adds its events to the queue.
     public func post(_ events: [MacEvent]) async {
-        pendingEvents += events
-        if pendingEvents.count > Self.maxPendingEvents { pendingEvents.removeFirst(pendingEvents.count - Self.maxPendingEvents) }
+        enqueue(events)
         guard let cloud, !posting, !pendingEvents.isEmpty, !isBackingOff(.events) else { return }
         posting = true
         defer { posting = false }
         while let event = pendingEvents.first {
+            sending = event.id
             do {
                 try await cloud.post(event)
+                sending = nil
                 pendingEvents.removeAll { $0.id == event.id }
                 succeeded(.events)
                 log.info("event \(event.kind.rawValue) sent")
+                if withdrawnWhileSending.remove(event.id) != nil { await cloud.removeEvent(id: event.id) }
             } catch {
+                sending = nil
                 failed(error, .events, "iCloud event")
+                if withdrawnWhileSending.remove(event.id) != nil {
+                    // Not sent again; deleted in case the save went through.
+                    pendingEvents.removeAll { $0.id == event.id }
+                    await cloud.removeEvent(id: event.id)
+                }
                 return
             }
         }
     }
 
+    /// Queues events for the next `post`, at once: an event queued then
+    /// withdrawn in the same breath is never sent.
+    public func enqueue(_ events: [MacEvent]) {
+        pendingEvents += events
+        if pendingEvents.count > Self.maxPendingEvents { pendingEvents.removeFirst(pendingEvents.count - Self.maxPendingEvents) }
+    }
+
+    /// Takes back event `id` (a Claude request that ended): a queued one is
+    /// never sent, one being sent is deleted once saved, a sent one now (in
+    /// the background).
+    public func withdrawEvent(_ id: UUID) {
+        if sending == id {
+            withdrawnWhileSending.insert(id)
+            return
+        }
+        pendingEvents.removeAll { $0.id == id }
+        guard let cloud else { return }
+        // Even when it was only queued: an earlier failed save may have gone through.
+        Task { await cloud.removeEvent(id: id) }
+    }
+
     static let maxPendingEvents = 20
     public private(set) var pendingEvents: [MacEvent] = []
+    /// The event whose save is under way.
+    private var sending: UUID?
+    private var withdrawnWhileSending: Set<UUID> = []
 
     /// Seconds between two reads of iCloud, see `fastPoll`.
     public func cloudPollInterval(sessionRunning: Bool) -> Int {

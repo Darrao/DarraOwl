@@ -64,13 +64,58 @@ import Testing
     }
 
     @Test func theDetailIsWhatClaudeWouldDoCutShort() {
-        #expect(AgentApprovals.detail(tool: "Bash", input: ["command": "  npm run build\n", "description": "Build"]) == "npm run build")
-        #expect(AgentApprovals.detail(tool: "Edit", input: ["file_path": "/Users/me/app/main.swift", "new_string": "secret"]) == "/Users/me/app/main.swift")
-        #expect(AgentApprovals.detail(tool: "WebFetch", input: ["url": "https://example.com"]) == "https://example.com")
-        #expect(AgentApprovals.detail(tool: "mcp__x__y", input: ["b": 1, "a": "z"]) == #"{"a":"z","b":1}"#)
-        let long = AgentApprovals.detail(tool: "Bash", input: ["command": String(repeating: "x", count: 1000)])
+        #expect(AgentApprovals.describe(tool: "Bash", input: ["command": "  npm run build\n", "description": "Build"]) == "npm run build")
+        #expect(AgentApprovals.describe(tool: "Edit", input: ["file_path": "/Users/me/app/main.swift", "new_string": "secret"]) == "/Users/me/app/main.swift")
+        #expect(AgentApprovals.describe(tool: "WebFetch", input: ["url": "https://example.com"]) == "https://example.com")
+        #expect(AgentApprovals.describe(tool: "mcp__x__y", input: ["b": 1, "a": "z"]) == #"{"a":"z","b":1}"#)
+        let long = AgentApprovals.shown(String(repeating: "x", count: 1000), cwd: nil, mask: false)
         #expect(long.count == AgentApprovals.detailLimit)
         #expect(long.hasSuffix("…"))
+        #expect(AgentApprovals.shown("cd /Users/me/Dev/api && npm test", cwd: "/Users/me/Dev/api", mask: false) == "cd /Users/me/Dev/api && npm test")
+    }
+
+    /// "Masquer les noms de projets" covers the detail too: the project's
+    /// folder and its name, not other words that contain it.
+    @Test func maskedProjectNamesLeaveTheDetail() {
+        let cwd = "/Users/me/Dev/api"
+        #expect(AgentApprovals.shown("cat /Users/me/Dev/api/src/main.ts", cwd: cwd, mask: true) == "cat ./src/main.ts")
+        #expect(AgentApprovals.shown("cd ~/Dev/API && npm run rapid", cwd: cwd + "/", mask: true) == "cd ~/Dev/[projet] && npm run rapid")
+        #expect(AgentApprovals.shown("ls /Users/me/Dev/api-old", cwd: cwd, mask: true) == "ls /Users/me/Dev/api-old")
+        #expect(AgentApprovals.shown("git clone x/api.git", cwd: cwd, mask: true) == "git clone x/[projet].git")
+        #expect(AgentApprovals.shown("echo $1 \\1", cwd: "/p/$1", mask: true) == "echo [projet] \\1", "no regex nor template syntax")
+    }
+
+    /// The questions and plans of Claude: its dialog alone answers them, a
+    /// hook's "allow" would be ignored.
+    @Test func questionsAndPlansStayInTheTerminal() {
+        for tool in ["AskUserQuestion", "ExitPlanMode"] {
+            let body = Data(#"{"hook_event_name":"PermissionRequest","cwd":"/p","tool_name":"\#(tool)","tool_input":{}}"#.utf8)
+            #expect(ClaudeHook.parse(body) == .ignored)
+        }
+    }
+
+    /// A session that ended its turn waits for none of its requests; a
+    /// subagent's request is its own.
+    @Test func aFinishedTurnTakesItsRequestsBack() async {
+        let a = approvals()
+        let main = ClaudeHook.Asker(session: "s1"), sub = ClaudeHook.Asker(session: "s1", agent: "a1")
+        let first = Task { await a.decide(id: UUID(), tool: "Bash", detail: "ls", project: nil, asker: main, cwd: "/p") }
+        let second = Task { await a.decide(id: UUID(), tool: "Bash", detail: "make", project: nil, asker: sub, cwd: "/p") }
+        let other = Task { await a.decide(id: UUID(), tool: "Bash", detail: "pwd", project: nil, asker: ClaudeHook.Asker(session: "s2"), cwd: "/q") }
+        while a.pending.count < 3 { await Task.yield() }
+        #expect(a.waits(ClaudeHook.Asker(session: "s1"), cwd: nil))
+        #expect(!a.waits(ClaudeHook.Asker(session: "s3"), cwd: "/p"), "another session's notification is not one of these")
+        #expect(a.waits(ClaudeHook.Asker(), cwd: "/q"), "without a session, by folder")
+        #expect(!a.waits(ClaudeHook.Asker(), cwd: nil))
+        a.finished(ClaudeHook.Asker())
+        #expect(a.pending.count == 3, "a hook without a session takes nothing back")
+        a.finished(main)
+        #expect(await first.value == nil)
+        #expect(a.pending.count == 2)
+        a.finished(sub)
+        #expect(await second.value == nil)
+        a.releaseAll()
+        #expect(await other.value == nil)
     }
 
     @Test func claudeGetsADecisionOrNothing() throws {
@@ -87,7 +132,9 @@ import Testing
 
     @Test func aPermissionRequestHookIsRead() {
         let body = Data(#"{"hook_event_name":"PermissionRequest","cwd":"/Users/me/portfolio","tool_name":"Bash","tool_input":{"command":"git push"}}"#.utf8)
-        #expect(ClaudeHook.parse(body) == .permission(tool: "Bash", detail: "git push", cwd: "/Users/me/portfolio"))
+        #expect(ClaudeHook.parse(body) == .permission(ClaudeHook.Permission(tool: "Bash", detail: "git push", cwd: "/Users/me/portfolio")))
+        let withSession = Data(#"{"hook_event_name":"PermissionRequest","session_id":"s","agent_id":"a","tool_name":"Write","tool_input":{"file_path":"/x","content":"…"}}"#.utf8)
+        #expect(ClaudeHook.parse(withSession) == .permission(ClaudeHook.Permission(tool: "Write", detail: "/x", cwd: nil, asker: ClaudeHook.Asker(session: "s", agent: "a"))))
         let noTool = Data(#"{"hook_event_name":"PermissionRequest"}"#.utf8)
         #expect(ClaudeHook.parse(noTool) == .ignored)
     }

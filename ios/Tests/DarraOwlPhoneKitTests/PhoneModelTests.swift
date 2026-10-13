@@ -331,6 +331,18 @@ struct PhoneRig {
         #expect(try sentKinds(rig) == [.startSession(minutes: 60)])
     }
 
+    /// A Claude request's notification touches no session, whatever button
+    /// an older setup gave it; "Refuser" answers the request.
+    @Test func aClaudeRequestsNotificationOnlyAnswersIt() async throws {
+        let rig = PhoneRig()
+        rig.store.mac = rig.pairedMac
+        let request = UUID()
+        #expect(await rig.model.handleNotificationAction(MacEvent.extendAction, eventMacID: rig.macID, eventKind: .agentRequest, requestID: request) == nil)
+        #expect(await rig.model.handleNotificationAction(MacEvent.stopAction, eventMacID: rig.macID, eventKind: .agentRequest, requestID: request) == nil)
+        await rig.model.handleNotificationAction(MacEvent.denyAction, eventMacID: rig.macID, eventKind: .agentRequest, requestID: request)
+        #expect(try sentKinds(rig) == [.answerAgentRequest(id: request, allow: false)])
+    }
+
     @Test func anotherMacsNotificationDoesNothing() async throws {
         let rig = await PhoneRig().paired()
         await rig.model.handleNotificationAction(MacEvent.stopAction, eventMacID: UUID(), eventKind: .endingSoon)

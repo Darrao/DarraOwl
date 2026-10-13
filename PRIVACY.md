@@ -37,8 +37,10 @@ Mac ; les commandes y passent quand la connexion directe ne répond pas :
 - si tu as activé les hooks de Claude Code, ses demandes d'autorisation en
   attente : l'outil (par exemple Bash ou Edit), ce que Claude veut faire (la
   commande, le chemin du fichier ou l'adresse, coupé à 300 caractères) et le
-  nom du projet. Une demande est retirée d'iCloud dès que tu as répondu,
-  qu'elle est passée dans le terminal, ou au plus tard au bout d'une heure.
+  nom du projet (masquer les noms de projets les retire aussi du détail).
+  Une demande est retirée d'iCloud dès que tu as répondu, qu'elle est passée
+  dans le terminal, ou au plus tard au bout d'une heure ; si DarraOwl est
+  quitté entre-temps, à son prochain lancement.
 
 Ces données sont enregistrées dans ta base de données iCloud **privée**, que
 seul ton compte Apple peut lire. Le contenu des états et des commandes est

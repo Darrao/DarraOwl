@@ -260,6 +260,8 @@ public final class CloudKitPhoneLink: CloudLink {
     private let container = CKContainer(identifier: CloudKitPhoneLink.containerID)
     private var database: CKDatabase { container.privateCloudDatabase }
     private let zoneID = CKRecordZone.ID(zoneName: "DarraOwl")
+    /// Claude's permission requests, apart so their notification has its own buttons.
+    private let requestsZoneID = CKRecordZone.ID(zoneName: "DarraOwlRequests")
 
     public init() {}
 
@@ -319,28 +321,37 @@ public final class CloudKitPhoneLink: CloudLink {
     }
 
     public func unsubscribeFromEvents() async throws {
-        _ = try await database.modifySubscriptions(saving: [], deleting: ["events"])
+        _ = try await database.modifySubscriptions(saving: [], deleting: ["events", "requests"])
     }
 
-    /// One query subscription on `Event` records in the DarraOwl zone. The
-    /// alert text comes from the record's plain `title` and `body` fields.
+    /// Query subscriptions on `Event` records: the DarraOwl zone's, with
+    /// the session buttons, and the DarraOwlRequests zone's, with Accepter /
+    /// Refuser. The alert text comes from the record's plain `title` and
+    /// `body` fields.
     public func subscribeToEvents() async throws {
+        _ = try await database.modifySubscriptions(saving: [Self.subscription("events", zone: zoneID, category: MacEvent.sessionCategory)], deleting: [])
+        // The Mac makes the zone with its first request; the subscription needs it now.
+        _ = try await database.modifyRecordZones(saving: [CKRecordZone(zoneID: requestsZoneID)], deleting: [])
+        _ = try await database.modifySubscriptions(saving: [Self.subscription("requests", zone: requestsZoneID, category: MacEvent.agentRequestCategory)], deleting: [])
+    }
+
+    private static func subscription(_ id: String, zone: CKRecordZone.ID, category: String) -> CKQuerySubscription {
         let subscription = CKQuerySubscription(recordType: "Event", predicate: NSPredicate(value: true),
-                                               subscriptionID: "events", options: [.firesOnRecordCreation])
-        subscription.zoneID = zoneID
+                                               subscriptionID: id, options: [.firesOnRecordCreation])
+        subscription.zoneID = zone
         let info = CKSubscription.NotificationInfo()
         info.titleLocalizationKey = "%1$@"
         info.titleLocalizationArgs = ["title"]
         info.alertLocalizationKey = "%1$@"
         info.alertLocalizationArgs = ["body"]
         info.soundName = "default"
-        info.category = MacEvent.sessionCategory
+        info.category = category
         // Read when a button is tapped: another Mac's notification, or one
         // with nothing to stop, does nothing.
         info.desiredKeys = ["macID", "kind"]
         info.shouldSendContentAvailable = true
         subscription.notificationInfo = info
-        _ = try await database.modifySubscriptions(saving: [subscription], deleting: [])
+        return subscription
     }
 
     public func pairingResponse(requestID: String) async throws -> PairingResponse? {

@@ -39,9 +39,11 @@ import Testing
 @Suite struct ClaudeHookTests {
     @Test func parsesOnlyEventAndFolder() {
         let stop = Data(#"{"hook_event_name":"Stop","cwd":"/p/x","session_id":"s","transcript_path":"/secret"}"#.utf8)
-        #expect(ClaudeHook.parse(stop) == .finished(cwd: "/p/x"))
+        #expect(ClaudeHook.parse(stop) == .finished(cwd: "/p/x", asker: ClaudeHook.Asker(session: "s")))
         let note = Data(#"{"hook_event_name":"Notification","cwd":"/p/x","message":"Claude needs your permission to use Bash"}"#.utf8)
-        #expect(ClaudeHook.parse(note) == .waiting(cwd: "/p/x"))
+        #expect(ClaudeHook.parse(note) == .waiting(cwd: "/p/x", asker: ClaudeHook.Asker()))
+        let inSubagent = Data(#"{"hook_event_name":"Notification","cwd":"/p/x","session_id":"s","agent_id":"a1"}"#.utf8)
+        #expect(ClaudeHook.parse(inSubagent) == .waiting(cwd: "/p/x", asker: ClaudeHook.Asker(session: "s", agent: "a1")))
         #expect(ClaudeHook.parse(Data(#"{"hook_event_name":"PreToolUse"}"#.utf8)) == .ignored)
         #expect(ClaudeHook.parse(Data("nope".utf8)) == nil)
     }
@@ -66,7 +68,8 @@ import Testing
     }
 
     @Test func refusesOversizeAndGarbage() {
-        #expect(LocalHTTP.parse(raw("POST / HTTP/1.1\r\nContent-Length: 999999\r\n\r\n")) == .invalid)
+        #expect(LocalHTTP.parse(raw("POST / HTTP/1.1\r\nContent-Length: 99999999\r\n\r\n")) == .invalid)
+        #expect(LocalHTTP.parse(raw("POST / HTTP/1.1\r\nContent-Length: 999999\r\n\r\n")) == .incomplete, "a big file Claude wants to write")
         #expect(LocalHTTP.parse(raw("hello\r\n\r\n")) == .invalid)
         #expect(LocalHTTP.parse(raw("POST / HTTP/1.1\r\nbad header\r\n\r\n")) == .invalid)
     }
@@ -107,11 +110,11 @@ import Testing
     }
 
     @Test func onlyQuestionsCountAsWaiting() {
-        #expect(ClaudeHook.parse(payload("permission_prompt")) == .waiting(cwd: "/p/x"))
-        #expect(ClaudeHook.parse(payload("elicitation_dialog")) == .waiting(cwd: "/p/x"))
+        #expect(ClaudeHook.parse(payload("permission_prompt")) == .waiting(cwd: "/p/x", asker: ClaudeHook.Asker()))
+        #expect(ClaudeHook.parse(payload("elicitation_dialog")) == .waiting(cwd: "/p/x", asker: ClaudeHook.Asker()))
         #expect(ClaudeHook.parse(payload("idle_prompt")) == .ignored)
         #expect(ClaudeHook.parse(payload("auth_success")) == .ignored)
-        #expect(ClaudeHook.parse(payload(nil)) == .waiting(cwd: "/p/x"), "older versions send no type")
+        #expect(ClaudeHook.parse(payload(nil)) == .waiting(cwd: "/p/x", asker: ClaudeHook.Asker()), "older versions send no type")
     }
 }
 

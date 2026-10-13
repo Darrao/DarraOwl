@@ -15,23 +15,36 @@ import Foundation
 ///   `status`, `at`, encrypted `message`.
 /// - `PairingRequest` (phone → Mac): `macID`, encrypted `payload`.
 /// - `PairingResponse` (name = "pairing-<request record name>"): encrypted `payload`.
+/// - `Event` (name = "event-<id>"): `macID`, `kind`, `category`, `at`, and
+///   plain `title` and `body` for the notification. Claude's permission
+///   requests go to their own zone, `DarraOwlRequests`: the phone's
+///   subscription there gives their notification Accepter / Refuser.
 @MainActor
 public final class CloudKitMailbox: CloudMailbox {
     public static let containerID = "iCloud.com.darrao.darraowl"
     public static let zoneName = "DarraOwl"
+    public static let requestsZoneName = "DarraOwlRequests"
     static let tokenKey = "cloudZoneChangeToken"
     static let subscriptionID = "mac-inbox"
 
     private let container: CKContainer
     private let database: CKDatabase
     private let zoneID = CKRecordZone.ID(zoneName: CloudKitMailbox.zoneName)
+    private let requestsZoneID = CKRecordZone.ID(zoneName: CloudKitMailbox.requestsZoneName)
     private let macID: UUID
     private var zoneReady = false
+    private var requestsZoneReady = false
 
     public init(macID: UUID) {
         self.macID = macID
         container = CKContainer(identifier: Self.containerID)
         database = container.privateCloudDatabase
+        // No request outlives the app: those of its last run go.
+        let left = Self.names(Self.requestsKey)
+        if !left.isEmpty {
+            Self.setNames(Self.names(Self.removalsKey).union(left), Self.removalsKey)
+            Self.setNames([], Self.requestsKey)
+        }
     }
 
     /// nil when iCloud can be used, otherwise why not (French).
@@ -80,6 +93,7 @@ public final class CloudKitMailbox: CloudMailbox {
 
     private func fetchInboxOnce() async throws -> CloudInbox {
         try await ensureZone()
+        await flushRemovals()
         var inbox = CloudInbox()
         var token = savedToken()
         var more = true
@@ -134,8 +148,10 @@ public final class CloudKitMailbox: CloudMailbox {
     }
 
     public func post(_ event: MacEvent) async throws {
-        try await ensureZone()
-        let record = CKRecord(recordType: "Event", recordID: CKRecord.ID(recordName: "event-\(event.id.uuidString)", zoneID: zoneID))
+        let request = event.kind == .agentRequest
+        if request { try await ensureRequestsZone() } else { try await ensureZone() }
+        let name = "event-\(event.id.uuidString)"
+        let record = CKRecord(recordType: "Event", recordID: CKRecord.ID(recordName: name, zoneID: request ? requestsZoneID : zoneID))
         record["macID"] = macID.uuidString
         record["kind"] = event.kind.rawValue
         record["category"] = event.category
@@ -143,19 +159,40 @@ public final class CloudKitMailbox: CloudMailbox {
         record["title"] = event.title
         record["body"] = event.body
         record["at"] = event.at
-        try await save(record)
-        remember(record.recordID.recordName, at: event.at, key: Self.eventsKey)
+        if request {
+            // Known before the save: a save that fails after reaching iCloud is cleaned up too.
+            Self.setNames(Self.names(Self.requestsKey).union([name]), Self.requestsKey)
+            try await save(record)
+        } else {
+            try await save(record)
+            remember(name, at: event.at, key: Self.eventsKey)
+        }
     }
 
-    /// One event, by id. A Claude request's event has the request's id: once
-    /// answered, its detail leaves iCloud.
+    /// A Claude request's event, by the request's id: once the request
+    /// ended, its detail leaves iCloud. Kept on disk until deleted, retried
+    /// at each read of the inbox.
     public func removeEvent(id: UUID) async {
         let name = "event-\(id.uuidString)"
-        // Gone already counts as deleted.
-        guard (try? await delete([CKRecord.ID(recordName: name, zoneID: zoneID)])) != nil else { return }
-        var sent = UserDefaults.standard.dictionary(forKey: Self.eventsKey) as? [String: Date] ?? [:]
-        sent[name] = nil
-        UserDefaults.standard.set(sent, forKey: Self.eventsKey)
+        Self.setNames(Self.names(Self.removalsKey).union([name]), Self.removalsKey)
+        Self.setNames(Self.names(Self.requestsKey).subtracting([name]), Self.requestsKey)
+        await flushRemovals()
+    }
+
+    private func flushRemovals() async {
+        let names = Array(Self.names(Self.removalsKey))
+        guard !names.isEmpty else { return }
+        for start in stride(from: 0, to: names.count, by: 300) {
+            let batch = Array(names[start..<min(start + 300, names.count)])
+            do {
+                try await delete(batch.map { CKRecord.ID(recordName: $0, zoneID: requestsZoneID) })
+            } catch let error as CKError where error.code == .zoneNotFound || error.code == .userDeletedZone {
+                // No zone, nothing in it.
+            } catch {
+                return
+            }
+            Self.setNames(Self.names(Self.removalsKey).subtracting(batch), Self.removalsKey)
+        }
     }
 
     /// Deletes this Mac's events, and the results the phone did not read
@@ -178,6 +215,21 @@ public final class CloudKitMailbox: CloudMailbox {
 
     static let eventsKey = "cloudSentEvents"
     static let resultsKey = "cloudSentResults"
+    /// Claude requests' events posted and not yet taken back, and those to delete.
+    static let requestsKey = "cloudRequestEvents"
+    static let removalsKey = "cloudRequestEventsToDelete"
+
+    private static func names(_ key: String) -> Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+    }
+
+    private static func setNames(_ names: Set<String>, _ key: String) {
+        if names.isEmpty {
+            UserDefaults.standard.removeObject(forKey: key)
+        } else {
+            UserDefaults.standard.set(names.sorted(), forKey: key)
+        }
+    }
 
     /// Deletes this Mac's records (uninstall). The zone is shared with the
     /// user's other Macs and with the phone: it goes only when no other
@@ -202,12 +254,15 @@ public final class CloudKitMailbox: CloudMailbox {
                 token = changes.changeToken
                 more = changes.moreComing
             }
+            let requests = Self.names(Self.requestsKey).union(Self.names(Self.removalsKey))
             if otherMacs {
                 for start in stride(from: 0, to: mine.count, by: 300) {
                     try await delete(Array(mine[start..<min(start + 300, mine.count)]))
                 }
+                _ = try? await delete(requests.map { CKRecord.ID(recordName: $0, zoneID: requestsZoneID) })
             } else {
                 _ = try await database.deleteRecordZone(withID: zoneID)
+                _ = try? await database.deleteRecordZone(withID: requestsZoneID)
                 _ = try? await database.deleteSubscription(withID: Self.subscriptionID)
             }
         } catch let error as CKError where error.code == .zoneNotFound || error.code == .userDeletedZone {
@@ -216,7 +271,10 @@ public final class CloudKitMailbox: CloudMailbox {
             // Best effort: the user can still delete DarraOwl's data in iCloud settings.
         }
         zoneReady = false
-        for key in [Self.tokenKey, Self.eventsKey, Self.resultsKey] { UserDefaults.standard.removeObject(forKey: key) }
+        requestsZoneReady = false
+        for key in [Self.tokenKey, Self.eventsKey, Self.resultsKey, Self.requestsKey, Self.removalsKey] {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
     }
 
     // MARK: Private
@@ -230,7 +288,7 @@ public final class CloudKitMailbox: CloudMailbox {
             if case let .failure(error)? = saved[record.recordID] { throw error }
         } catch let error as CKError where error.code == .zoneNotFound || error.code == .userDeletedZone {
             // Deleted elsewhere (another Mac's uninstall, iCloud settings): made again next time.
-            zoneReady = false
+            if record.recordID.zoneID == requestsZoneID { requestsZoneReady = false } else { zoneReady = false }
             throw error
         }
     }
@@ -260,6 +318,12 @@ public final class CloudKitMailbox: CloudMailbox {
         subscription.notificationInfo = info
         _ = try? await database.modifySubscriptions(saving: [subscription], deleting: [])
         zoneReady = true
+    }
+
+    private func ensureRequestsZone() async throws {
+        guard !requestsZoneReady else { return }
+        _ = try await database.modifyRecordZones(saving: [CKRecordZone(zoneID: requestsZoneID)], deleting: [])
+        requestsZoneReady = true
     }
 
     private func savedToken() -> CKServerChangeToken? {

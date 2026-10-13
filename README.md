@@ -273,14 +273,16 @@ arguments.
 
 DarraOwl > Réglages > Claude Code > **Activer**. Tu reçois alors « Claude a
 fini » ou « Claude attend ta validation », avec le nom du projet, quand
-personne n'est devant le Mac (capot fermé ou une minute sans activité).
+personne n'est devant le Mac (capot fermé sans écran externe, ou une minute
+sans activité).
 
 Quand Claude demande une autorisation (lancer une commande, modifier un
 fichier…) et que personne n'est devant le Mac, l'iPhone affiche la demande,
 avec ce que Claude veut faire : **Accepter** (avec Face ID) ou **Refuser**,
 dans l'app ou depuis la notification. Sans réponse au bout d'une heure, ou dès
 que tu reviens devant le Mac, Claude pose la question dans le terminal, comme
-d'habitude.
+d'habitude. Ses questions et les plans qu'il te soumet restent dans le
+terminal : tu reçois « Claude attend ta validation ».
 
 Le bouton ajoute trois « hooks » (Stop, Notification et PermissionRequest)
 dans `~/.claude/settings.json`. Le reste du fichier est gardé, réécrit avec

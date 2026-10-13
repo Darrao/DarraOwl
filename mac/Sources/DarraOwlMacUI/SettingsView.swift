@@ -105,7 +105,7 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.link)
                 }
-                Text("Ton fichier est d'abord copié dans settings.json.darraowl-backup. Les sessions de Claude déjà ouvertes en tiennent compte à leur prochain lancement. Les notifications et les demandes partent quand personne n'est devant le Mac : capot fermé ou une minute sans activité. Sans réponse au bout d'une heure, ou dès que tu reviens au Mac, Claude pose la question dans le terminal, comme d'habitude.")
+                Text("Ton fichier est d'abord copié dans settings.json.darraowl-backup. Les sessions de Claude déjà ouvertes en tiennent compte à leur prochain lancement. Les notifications et les demandes partent quand personne n'est devant le Mac : capot fermé sans écran externe, ou une minute sans activité. Sans réponse au bout d'une heure, ou dès que tu reviens au Mac, Claude pose la question dans le terminal, comme d'habitude. Ses questions et ses plans restent dans le terminal.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if !model.remote.hookListening {

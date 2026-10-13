@@ -487,6 +487,45 @@ struct HubRig {
         #expect(rig.hub.pendingEvents.isEmpty)
     }
 
+    /// A Claude request that ended leaves no event in iCloud: queued, it
+    /// is never sent; being sent, it is deleted once saved.
+    @Test func anEndedRequestLeavesNoEventBehind() async {
+        let rig = HubRig()
+        let queued = MacEvent(kind: .agentRequest, title: "t", body: "b", at: rig.clock.now())
+        rig.hub.enqueue([queued])
+        rig.hub.withdrawEvent(queued.id)
+        await rig.hub.post([])
+        #expect(rig.cloud.events.isEmpty)
+
+        let gate = AsyncGate()
+        rig.cloud.postGate = gate
+        let sending = MacEvent(kind: .agentRequest, title: "t", body: "b", at: rig.clock.now())
+        let post = Task { await rig.hub.post([sending]) }
+        await gate.waitUntilEntered()
+        rig.hub.withdrawEvent(sending.id)
+        #expect(!rig.cloud.removedEvents.contains(sending.id), "not before its save")
+        gate.open()
+        await post.value
+        #expect(rig.cloud.events.map(\.id) == [sending.id])
+        #expect(rig.cloud.removedEvents.contains(sending.id))
+        #expect(rig.hub.pendingEvents.isEmpty)
+    }
+
+    @Test func anEndedRequestWhoseSaveFailedIsNotSentAgain() async {
+        let rig = HubRig()
+        let gate = AsyncGate()
+        rig.cloud.postGate = gate
+        rig.cloud.failEvents = true
+        let failing = MacEvent(kind: .agentRequest, title: "t", body: "b", at: rig.clock.now())
+        let post = Task { await rig.hub.post([failing]) }
+        await gate.waitUntilEntered()
+        rig.hub.withdrawEvent(failing.id)
+        gate.open()
+        await post.value
+        #expect(rig.hub.pendingEvents.isEmpty)
+        #expect(rig.cloud.removedEvents == [failing.id], "deleted, in case the save went through")
+    }
+
     @Test func inboxCommandsRunAndAnswersGoBackToCloud() async throws {
         let rig = HubRig().paired()
         let cmd = try rig.phone.sign(.stopSession, mac: rig.macID, at: rig.clock.now())
