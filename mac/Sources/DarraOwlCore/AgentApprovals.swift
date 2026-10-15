@@ -3,9 +3,9 @@ import Foundation
 
 /// Claude Code's permission requests, answered from the phone while nobody
 /// is at the Mac. A request waits for the phone, the user coming back to the
-/// Mac, the hook's connection closing, the end of its session's turn, or
-/// about an hour; anything but an answer leaves Claude to ask in the
-/// terminal, as without DarraOwl.
+/// Mac, the hook's connection closing, the end of its asker's turn (the main
+/// agent or a subagent), or about an hour; anything but an answer leaves
+/// Claude to ask in the terminal, as without DarraOwl.
 @MainActor
 public final class AgentApprovals {
     public enum Decision: Equatable, Sendable {

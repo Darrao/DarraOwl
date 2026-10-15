@@ -72,7 +72,7 @@ struct SettingsView: View {
                 }
             }
             Section("Claude Code") {
-                Text("Pour être prévenu sur l'iPhone quand Claude a fini ou attend ta validation, et accepter ou refuser ses demandes depuis l'iPhone. DarraOwl ajoute trois réglages (« hooks ») au fichier de configuration de Claude Code, sur ce Mac : ~/.claude/settings.json, dans un dossier caché de ton dossier personnel. DarraOwl lit de ce que Claude Code lui envoie le nom de l'événement, son type et le nom du dossier ; pour une demande, aussi l'outil et ce que Claude veut faire (la commande, le fichier ou l'adresse, coupé à 300 caractères), qui passent par ton iCloud privé jusqu'à ta réponse.")
+                Text("Pour être prévenu sur l'iPhone quand Claude a fini ou attend ta validation, et accepter ou refuser ses demandes depuis l'iPhone. DarraOwl ajoute quatre réglages (« hooks ») au fichier de configuration de Claude Code, sur ce Mac : ~/.claude/settings.json, dans un dossier caché de ton dossier personnel. DarraOwl lit de ce que Claude Code lui envoie le nom de l'événement, son type et le nom du dossier ; pour une demande, aussi l'outil et ce que Claude veut faire (la commande, le fichier ou l'adresse, coupé à 300 caractères), qui passent par ton iCloud privé jusqu'à ta réponse.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let claudeReadProblem {

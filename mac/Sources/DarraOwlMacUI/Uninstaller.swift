@@ -100,7 +100,7 @@ enum Uninstaller {
                 }
             } catch {
                 // Not a reason to keep DarraOwl installed: said, with what to do.
-                print("Hooks de Claude Code non retirés (\(error.localizedDescription)). Dans \(ClaudeCodeSetup.file.path), retire les deux entrées \"http://127.0.0.1:\(String(HookServer.port))/hooks/claude\".")
+                print("Hooks de Claude Code non retirés (\(error.localizedDescription)). Dans \(ClaudeCodeSetup.file.path), retire les quatre entrées \"http://127.0.0.1:\(String(HookServer.port))/hooks/claude\".")
             }
         }
         HookToken.remove()

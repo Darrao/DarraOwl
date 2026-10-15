@@ -90,6 +90,10 @@ public final class PhoneModel {
     @ObservationIgnored private var lastCloudFetch: Date?
     @ObservationIgnored private var lastDirectState: Date?
     @ObservationIgnored private var lastAccountCheck: Date?
+    /// The Mac's events are subscribed to once per launch, so a subscription
+    /// added by an update (Claude's requests) reaches a phone paired before
+    /// it. Set only once saved: a failure is tried again.
+    @ObservationIgnored private var subscribedThisLaunch = false
     @ObservationIgnored private var outcomeAt: Date?
     @ObservationIgnored private var pairingCancelled = false
     /// Bumped whenever the link to the Mac is reset (unpairing, another
@@ -182,7 +186,11 @@ public final class PhoneModel {
     public func tick() async {
         now = deps.now()
         clearOldOutcome()
-        if cloudProblem != nil, lastAccountCheck.map({ now.timeIntervalSince($0) >= Self.accountCheckInterval }) ?? true {
+        // An iCloud problem, or the events not subscribed to (it failed):
+        // checked again every 30 s. The first check is start()'s, so a tick
+        // at launch does not subscribe a second time.
+        let unsubscribed = mac != nil && !subscribedThisLaunch && lastAccountCheck != nil
+        if cloudProblem != nil || unsubscribed, lastAccountCheck.map({ now.timeIntervalSince($0) >= Self.accountCheckInterval }) ?? true {
             await checkAccount()
         }
         guard let mac else { return }
@@ -217,9 +225,15 @@ public final class PhoneModel {
         lastAccountCheck = deps.now()
         let wasProblem = cloudProblem != nil
         cloudProblem = await deps.cloud.accountProblem()
-        if mac != nil, cloudProblem == nil, wasProblem || lastCloudFetch == nil {
-            try? await deps.cloud.subscribeToEvents()
+        // Once per launch, whatever read iCloud before (a push, a tick);
+        // again after an iCloud problem.
+        if mac != nil, cloudProblem == nil, wasProblem || !subscribedThisLaunch {
+            await subscribe()
         }
+    }
+
+    private func subscribe() async {
+        subscribedThisLaunch = (try? await deps.cloud.subscribeToEvents()) != nil
     }
 
     // MARK: Pairing
@@ -299,7 +313,7 @@ public final class PhoneModel {
         }
         mac = paired
         lastConnectAttempt = nil
-        try? await deps.cloud.subscribeToEvents()
+        await subscribe()
         await tick()
     }
 
@@ -445,12 +459,20 @@ public final class PhoneModel {
 
     static func outcome(for result: CommandResult, kind: CommandKind) -> Outcome {
         switch result.status {
-        case .executed: .done("\(kind.label) : fait.")
+        case .executed: .done(doneText(kind))
         case .duplicate: .done("\(kind.label) : déjà reçue par le Mac.")
         case .failed: .failed(result.message ?? "Échec sur le Mac.")
         case .expired: .failed("Commande expirée. Vérifie que l'iPhone et le Mac sont à l'heure (réglage automatique).")
         case .rejected, .unauthorized: .failed(result.message ?? "Refusé par le Mac.")
         }
+    }
+
+    /// An answer to Claude is sent, not done: an MCP tool that wants its own
+    /// dialog ignores a hook's accept and asks in the terminal, and the hook
+    /// does not say which tools do.
+    private static func doneText(_ kind: CommandKind) -> String {
+        guard case let .answerAgentRequest(_, allow) = kind else { return "\(kind.label) : fait." }
+        return allow ? "Accord envoyé à Claude." : "Refus envoyé à Claude."
     }
 
     // MARK: Private

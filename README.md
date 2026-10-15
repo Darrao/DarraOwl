@@ -279,16 +279,18 @@ sans activité).
 Quand Claude demande une autorisation (lancer une commande, modifier un
 fichier…) et que personne n'est devant le Mac, l'iPhone affiche la demande,
 avec ce que Claude veut faire : **Accepter** (avec Face ID) ou **Refuser**,
-dans l'app ou depuis la notification. Sans réponse au bout d'une heure, ou dès
-que tu reviens devant le Mac, Claude pose la question dans le terminal, comme
-d'habitude. Ses questions et les plans qu'il te soumet restent dans le
-terminal : tu reçois « Claude attend ta validation ».
+dans l'app ou depuis la notification. Exception : un outil MCP qui exige une
+réponse dans Claude lui-même ignore « Accepter » ; la question reste alors
+dans le terminal. Sans réponse au bout d'une heure, ou dès que tu reviens
+devant le Mac, Claude pose la question dans le terminal, comme d'habitude.
+Ses questions et les plans qu'il te soumet restent dans le terminal : tu
+reçois « Claude attend ta validation ».
 
-Le bouton ajoute trois « hooks » (Stop, Notification et PermissionRequest)
-dans `~/.claude/settings.json`. Le reste du fichier est gardé, réécrit avec
-les clés dans l'ordre alphabétique. Ta version d'avant DarraOwl est d'abord
-copiée dans `~/.claude/settings.json.darraowl-backup`.
-**Désactiver** retire exactement ces trois entrées. Les sessions de Claude
+Le bouton ajoute quatre « hooks » (Stop, SubagentStop, Notification et
+PermissionRequest) dans `~/.claude/settings.json`. Le reste du fichier est
+gardé, réécrit avec les clés dans l'ordre alphabétique. Ta version d'avant
+DarraOwl est d'abord copiée dans `~/.claude/settings.json.darraowl-backup`.
+**Désactiver** retire exactement ces quatre entrées. Les sessions de Claude
 déjà ouvertes en tiennent compte à leur prochain lancement. Activé avec une
 version précédente, le réglage affiche « À mettre à jour » : clique sur
 **Mettre à jour** pour ajouter les demandes d'autorisation.

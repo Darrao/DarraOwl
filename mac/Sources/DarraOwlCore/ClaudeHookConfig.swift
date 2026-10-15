@@ -3,7 +3,8 @@ import Foundation
 /// Adds DarraOwl's hooks to Claude Code's settings.json and takes them out
 /// again, leaving everything else as it was. Works on the file's bytes. Pure.
 public enum ClaudeHookConfig {
-    public static let events = ["Stop", "Notification", "PermissionRequest"]
+    /// Stop ends the main agent's turn only; SubagentStop, a subagent's.
+    public static let events = ["Stop", "SubagentStop", "Notification", "PermissionRequest"]
     /// A permission request waits for the phone, an hour at most; the
     /// others are answered at once.
     public static let permissionTimeout = 3600
@@ -11,7 +12,8 @@ public enum ClaudeHookConfig {
     public enum State: Equatable, Sendable {
         case absent
         case installed
-        /// Present with another token, or for one event only.
+        /// Present with another token, or not for every event (an earlier
+        /// version's).
         case outdated
     }
 

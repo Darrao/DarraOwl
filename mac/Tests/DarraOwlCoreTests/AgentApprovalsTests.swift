@@ -118,6 +118,29 @@ import Testing
         #expect(await other.value == nil)
     }
 
+    /// A foreground subagent's request outlives the main agent's Stop, which
+    /// names no subagent: its own end (SubagentStop) takes it back, and only it.
+    @Test func aSubagentsEndTakesOnlyItsRequestBack() async {
+        let a = approvals()
+        let mainID = UUID(), subID = UUID(), otherID = UUID()
+        let fromMain = Task { await a.decide(id: mainID, tool: "Bash", detail: "ls", project: nil, asker: ClaudeHook.Asker(session: "s1"), cwd: "/p") }
+        let fromSub = Task { await a.decide(id: subID, tool: "Bash", detail: "make", project: nil, asker: ClaudeHook.Asker(session: "s1", agent: "a1"), cwd: "/p") }
+        let fromOther = Task { await a.decide(id: otherID, tool: "Bash", detail: "pwd", project: nil, asker: ClaudeHook.Asker(session: "s1", agent: "a2"), cwd: "/p") }
+        while a.pending.count < 3 { await Task.yield() }
+        let end = Data(#"{"hook_event_name":"SubagentStop","cwd":"/p","session_id":"s1","agent_id":"a1"}"#.utf8)
+        guard case let .subagentFinished(asker)? = ClaudeHook.parse(end) else {
+            Issue.record("SubagentStop not read")
+            a.releaseAll()
+            return
+        }
+        a.finished(asker)
+        #expect(await fromSub.value == nil)
+        #expect(Set(a.pending.map(\.id)) == [mainID, otherID])
+        a.releaseAll()
+        #expect(await fromMain.value == nil)
+        #expect(await fromOther.value == nil)
+    }
+
     @Test func claudeGetsADecisionOrNothing() throws {
         let allow = try JSONSerialization.jsonObject(with: AgentApprovals.hookAnswer(.allow)) as? [String: Any]
         let output = allow?["hookSpecificOutput"] as? [String: Any]

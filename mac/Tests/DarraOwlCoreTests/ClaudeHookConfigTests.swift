@@ -34,6 +34,29 @@ import Testing
         #expect(ClaudeHookConfig.state(out, port: port, token: "abc") == .installed)
     }
 
+    /// SubagentStop too, answered at once like Stop.
+    @Test func installWritesTheFourEvents() throws {
+        let hooks = try #require(try json(ClaudeHookConfig.install(nil, port: port, token: "abc"))["hooks"] as? [String: Any])
+        #expect(Set(hooks.keys) == ["Stop", "SubagentStop", "Notification", "PermissionRequest"])
+        let subagent = try #require(((hooks["SubagentStop"] as? [[String: Any]])?.first?["hooks"] as? [[String: Any]])?.first)
+        #expect(subagent["url"] as? String == ClaudeHookConfig.url(port: port))
+        #expect(subagent["timeout"] as? Int == 5)
+    }
+
+    /// Installed by the previous version, without SubagentStop: "À mettre
+    /// à jour", and the update adds it.
+    @Test func anInstallWithoutSubagentStopIsOutdated() throws {
+        var root = try json(try ClaudeHookConfig.install(existing, port: port, token: "abc"))
+        var hooks = try #require(root["hooks"] as? [String: Any])
+        hooks["SubagentStop"] = nil
+        root["hooks"] = hooks
+        let older = try JSONSerialization.data(withJSONObject: root)
+        #expect(ClaudeHookConfig.state(older, port: port, token: "abc") == .outdated)
+        let updated = try ClaudeHookConfig.install(older, port: port, token: "abc")
+        #expect(ClaudeHookConfig.state(updated, port: port, token: "abc") == .installed)
+        #expect(updated == (try ClaudeHookConfig.install(existing, port: port, token: "abc")))
+    }
+
     @Test func installTwiceDoesNotDuplicate() throws {
         let once = try ClaudeHookConfig.install(existing, port: port, token: "abc")
         let twice = try ClaudeHookConfig.install(once, port: port, token: "abc")

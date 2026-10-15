@@ -82,7 +82,19 @@ final class FakeCloudLink: CloudLink {
     var pairingResponse: PairingResponse?
     var pairingRequests: [PairingRequest] = []
 
-    func accountProblem() async -> String? { problem }
+    /// While set, accountProblem() waits for openAccount(): what runs
+    /// meanwhile overlaps a start().
+    var holdAccount = false
+    private(set) var heldAccountChecks: [CheckedContinuation<Void, Never>] = []
+    func accountProblem() async -> String? {
+        if holdAccount { await withCheckedContinuation { heldAccountChecks.append($0) } }
+        return problem
+    }
+    func openAccount() {
+        holdAccount = false
+        heldAccountChecks.forEach { $0.resume() }
+        heldAccountChecks = []
+    }
     func fetchState(macID: UUID) async throws -> (state: MacState, endpoints: Endpoints?)? { state }
     var onSend: (() -> Void)?
     func send(_ command: SignedCommand, macID: UUID) async throws {
@@ -100,8 +112,13 @@ final class FakeCloudLink: CloudLink {
         return "req-1"
     }
     func pairingResponse(requestID: String) async throws -> PairingResponse? { pairingResponse }
+    /// Every try, failed or not.
     var subscribed = 0
-    func subscribeToEvents() async throws { subscribed += 1 }
+    var subscribeFails = false
+    func subscribeToEvents() async throws {
+        subscribed += 1
+        if subscribeFails { throw URLError(.notConnectedToInternet) }
+    }
     var unsubscribed = 0
     func unsubscribeFromEvents() async throws { unsubscribed += 1 }
 }
@@ -270,6 +287,16 @@ struct PhoneRig {
         await rig.model.send(.extendSession(minutes: 30))
         #expect(rig.cloud.sent.first?.biometricSignature == nil)
     }
+
+    /// The Mac passed the answer on, nothing more: Claude ignores an accept
+    /// for an MCP tool that wants its own dialog, and asks in the terminal.
+    @Test func anAnswerToClaudeIsSentNotDone() async throws {
+        let rig = await PhoneRig().paired()
+        await rig.model.send(.answerAgentRequest(id: UUID(), allow: true))
+        #expect(rig.model.outcome == .done("Accord envoyé à Claude."))
+        await rig.model.send(.answerAgentRequest(id: UUID(), allow: false))
+        #expect(rig.model.outcome == .done("Refus envoyé à Claude."))
+    }
 }
 
 @MainActor
@@ -297,6 +324,54 @@ struct PhoneRig {
         rig.pairing.response = PairingResponse(accepted: true, macID: rig.macID, macName: "MacBook", message: nil)
         await rig.model.pair(url: try rig.invite().url())
         #expect(rig.cloud.subscribed == 1)
+    }
+
+    /// Launched in the background by a push, then opened: the push read
+    /// iCloud first, and the events are still subscribed to, once (a phone
+    /// paired before Claude's requests gets their subscription).
+    @Test func aPushBeforeTheStartStillSubscribes() async {
+        let rig = PhoneRig()
+        rig.store.mac = rig.pairedMac
+        await rig.model.refreshFromCloud()
+        await rig.model.start()
+        #expect(rig.cloud.subscribed == 1)
+        rig.clock.advance(PhoneModel.accountCheckInterval)
+        await rig.model.tick()
+        #expect(rig.cloud.subscribed == 1, "once per launch")
+    }
+
+    /// The app starts the model and its ticks together: a tick that reads
+    /// iCloud while start() waits for the account skips nothing.
+    @Test func aTickDuringTheStartStillSubscribes() async {
+        let rig = PhoneRig()
+        rig.store.mac = rig.pairedMac
+        rig.cloud.holdAccount = true
+        let starting = Task { await rig.model.start() }
+        while rig.cloud.heldAccountChecks.isEmpty { await Task.yield() }
+        await rig.model.tick()
+        rig.cloud.openAccount()
+        await starting.value
+        rig.clock.advance(PhoneModel.accountCheckInterval)
+        await rig.model.tick()
+        #expect(rig.cloud.subscribed == 1)
+    }
+
+    /// Not saved: tried again at the next account check, then not again.
+    @Test func aFailedSubscriptionIsTriedAgain() async {
+        let rig = PhoneRig()
+        rig.store.mac = rig.pairedMac
+        rig.cloud.subscribeFails = true
+        await rig.model.start()
+        #expect(rig.cloud.subscribed == 1)
+        rig.cloud.subscribeFails = false
+        await rig.model.tick()
+        #expect(rig.cloud.subscribed == 1, "not before the next check")
+        rig.clock.advance(PhoneModel.accountCheckInterval)
+        await rig.model.tick()
+        #expect(rig.cloud.subscribed == 2)
+        rig.clock.advance(PhoneModel.accountCheckInterval)
+        await rig.model.tick()
+        #expect(rig.cloud.subscribed == 2, "saved this time")
     }
 
     func sentKinds(_ rig: PhoneRig) throws -> [CommandKind] {

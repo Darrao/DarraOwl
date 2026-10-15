@@ -47,6 +47,14 @@ import Testing
         #expect(ClaudeHook.parse(Data(#"{"hook_event_name":"PreToolUse"}"#.utf8)) == .ignored)
         #expect(ClaudeHook.parse(Data("nope".utf8)) == nil)
     }
+
+    /// A subagent's end names it (its last message is not read); without
+    /// its id it is not taken for the main agent's.
+    @Test func aSubagentsEndIsItsOwn() {
+        let end = Data(#"{"hook_event_name":"SubagentStop","cwd":"/p/x","session_id":"s","agent_id":"a1","agent_type":"Explore","last_assistant_message":"secret"}"#.utf8)
+        #expect(ClaudeHook.parse(end) == .subagentFinished(asker: ClaudeHook.Asker(session: "s", agent: "a1")))
+        #expect(ClaudeHook.parse(Data(#"{"hook_event_name":"SubagentStop","session_id":"s"}"#.utf8)) == .ignored)
+    }
 }
 
 @Suite struct LocalHTTPTests {

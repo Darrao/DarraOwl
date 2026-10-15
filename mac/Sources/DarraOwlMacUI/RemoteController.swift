@@ -279,6 +279,10 @@ public final class RemoteController: CommandTarget {
             // Its turn is over: whatever it asked was answered elsewhere.
             approvals.finished(asker)
             event = MacEvent(kind: .agentDone, title: "Claude a fini", body: project(cwd), at: now)
+        case let .subagentFinished(asker):
+            // A subagent's turn is over (the main agent's Stop does not cover
+            // it): only its own requests go. Claude goes on, nothing to tell.
+            approvals.finished(asker)
         case let .waiting(cwd, asker):
             if let cwd { signals.record(.waiting, cwd: cwd, at: now) }
             // A request held for the phone already has its own notification.

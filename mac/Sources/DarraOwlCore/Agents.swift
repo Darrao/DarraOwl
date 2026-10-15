@@ -145,7 +145,8 @@ public enum ClaudeHook {
         /// PermissionRequest: the tool Claude wants to use.
         public var tool_name: String?
         public var session_id: String?
-        /// Set when the hook fires inside a subagent.
+        /// Set when the hook fires inside a subagent; SubagentStop: the
+        /// subagent that ended.
         public var agent_id: String?
     }
 
@@ -186,6 +187,8 @@ public enum ClaudeHook {
 
     public enum Parsed: Equatable, Sendable {
         case finished(cwd: String?, asker: Asker)
+        /// A subagent ended: its own requests are taken back, nothing else.
+        case subagentFinished(asker: Asker)
         case waiting(cwd: String?, asker: Asker)
         case permission(Permission)
         case ignored
@@ -201,6 +204,10 @@ public enum ClaudeHook {
             let input = root?["tool_input"] as? [String: Any] ?? [:]
             return .permission(Permission(tool: tool, detail: AgentApprovals.describe(tool: tool, input: input), cwd: p.cwd, asker: asker))
         case "Stop": return .finished(cwd: p.cwd, asker: asker)
+        case "SubagentStop":
+            // Without its id it would be taken for the main agent.
+            guard p.agent_id != nil else { return .ignored }
+            return .subagentFinished(asker: asker)
         case "Notification":
             // "idle_prompt" (a minute after a finished turn) is not a question.
             guard let type = p.notification_type else { return .waiting(cwd: p.cwd, asker: asker) }
