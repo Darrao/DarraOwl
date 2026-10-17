@@ -54,6 +54,8 @@ final class FakeDirect: DirectLink {
     /// Answers inside send(), as the demonstration does.
     var answerAtOnce = false
     var stateRequests = 0
+    /// What a shell command's result carries.
+    var shellOutput = ShellOutput(status: 0, text: "hello\n", truncated: false, seconds: 0.3)
 
     func connect(to mac: PairedMac, identity: PhoneIdentity) {
         connects += 1
@@ -64,7 +66,7 @@ final class FakeDirect: DirectLink {
     func send(_ command: SignedCommand) throws {
         sent.append(command)
         guard let reply, let env = try? LinkCoding.decoder().decode(CommandEnvelope.self, from: command.payload) else { return }
-        let result = CommandResult(commandID: env.id, status: reply, message: nil, at: Date())
+        let result = CommandResult(commandID: env.id, status: reply, message: nil, at: Date(), output: env.kind.isShell ? shellOutput : nil)
         if answerAtOnce { onResult?(result) } else { Task { @MainActor in self.onResult?(result) } }
     }
     func requestState() { stateRequests += 1 }
@@ -79,6 +81,8 @@ final class FakeCloudLink: CloudLink {
     var answerAfterPolls = 1
     var polls = 0
     var onPoll: (() -> Void)?
+    /// Carried by an executed result, as a shell command's would.
+    var output: ShellOutput?
     var pairingResponse: PairingResponse?
     var pairingRequests: [PairingRequest] = []
 
@@ -105,7 +109,8 @@ final class FakeCloudLink: CloudLink {
         onPoll?()
         polls += 1
         guard let answer, polls >= answerAfterPolls else { return nil }
-        return CommandResult(commandID: commandID, status: answer, message: answer == .executed ? nil : "Refusé", at: Date())
+        return CommandResult(commandID: commandID, status: answer, message: answer == .executed ? nil : "Refusé", at: Date(),
+                             output: answer == .executed ? output : nil)
     }
     func sendPairing(_ request: PairingRequest) async throws -> String {
         pairingRequests.append(request)
@@ -296,6 +301,98 @@ struct PhoneRig {
         #expect(rig.model.outcome == .done("Accord envoyé à Claude."))
         await rig.model.send(.answerAgentRequest(id: UUID(), allow: false))
         #expect(rig.model.outcome == .done("Refus envoyé à Claude."))
+    }
+}
+
+/// A shell command typed on the phone: sent like any sensitive command,
+/// but its wait runs apart, as long as the Mac's time limit, and what the
+/// command printed ends up on screen.
+@MainActor
+@Suite struct PhoneShellTests {
+    /// Turns of the loop until the command is no longer running.
+    private func settle(_ rig: PhoneRig) async {
+        for _ in 0..<400 where rig.model.shell?.phase == .running { await Task.yield() }
+    }
+
+    @Test func aCommandRunsOverTheDirectLinkAndShowsWhatItPrinted() async throws {
+        let rig = PhoneRig()
+        rig.direct.connectTo = .local
+        _ = await rig.paired()
+        let agent = MacState.Agent(tool: "claude", project: "api", since: rig.clock.now, waitingForApproval: false, pid: 4242)
+        await rig.model.runShell("echo hello", agent: agent)
+        #expect(rig.model.shell?.phase == .running)
+        #expect(!rig.model.isBusy, "the other buttons are not held while it runs")
+        await settle(rig)
+        #expect(rig.model.shell?.text == "echo hello")
+        #expect(rig.model.shell?.agent == agent)
+        #expect(rig.model.shell?.phase == .done(rig.direct.shellOutput))
+        let signed = try #require(rig.direct.sent.first)
+        #expect(signed.biometricSignature != nil, "Face ID")
+        let env = try LinkCoding.decoder().decode(CommandEnvelope.self, from: signed.payload)
+        #expect(env.kind == .runCommand(text: "echo hello", inAgent: 4242))
+        #expect(rig.cloud.sent.isEmpty)
+        #expect(rig.direct.stateRequests == 1, "the command may have changed what the Mac shows")
+    }
+
+    /// Through iCloud the wait outlasts a plain command's minute: as long as
+    /// the Mac may run the command.
+    @Test func aCommandWithoutADirectLinkGoesThroughICloudAndIsPolledLonger() async throws {
+        let rig = await PhoneRig().paired()
+        rig.cloud.answerAfterPolls = 40
+        rig.cloud.output = ShellOutput(status: 1, text: "FAIL\n", truncated: false, seconds: 95)
+        await rig.model.runShell("npm test")
+        await settle(rig)
+        #expect(rig.cloud.sent.count == 1)
+        #expect(rig.cloud.polls == 40)
+        #expect(rig.model.shell?.phase == .done(rig.cloud.output!))
+        #expect(rig.model.shell?.agent == nil)
+    }
+
+    @Test func theMacsRefusalIsShownOnTheCommand() async throws {
+        let rig = await PhoneRig().paired()
+        rig.cloud.answer = .failed
+        await rig.model.runShell("ls")
+        await settle(rig)
+        #expect(rig.model.shell?.phase == .failed("Refusé"))
+        #expect(rig.model.outcome == nil, "on the command itself, not in the status line")
+    }
+
+    @Test func noAnswerEndsTheWaitOnceTheMacWouldHaveStoppedTheCommand() async throws {
+        let rig = await PhoneRig().paired()
+        rig.cloud.answer = nil
+        await rig.model.runShell("sleep 1000")
+        await settle(rig)
+        #expect(rig.model.shell?.phase == .failed("Pas de réponse du Mac."))
+        #expect(Double(rig.cloud.polls) * PhoneModel.shellPollInterval >= Policy.remoteCommandTimeout)
+    }
+
+    @Test func aSecondCommandWaitsForTheFirst() async throws {
+        let rig = await PhoneRig().paired()
+        rig.cloud.answer = nil
+        await rig.model.runShell("sleep 1000")
+        await rig.model.runShell("ls")
+        #expect(rig.model.shell?.text == "sleep 1000")
+        await settle(rig)
+        #expect(rig.cloud.sent.count == 1)
+    }
+
+    @Test func unpairingDropsTheCommandOnItsWay() async throws {
+        let rig = await PhoneRig().paired()
+        rig.cloud.answer = nil
+        await rig.model.runShell("ls")
+        await rig.model.unpair()
+        await settle(rig)
+        #expect(rig.model.shell == nil)
+    }
+
+    @Test func clearingTakesTheCommandOffTheScreen() async throws {
+        let rig = PhoneRig()
+        rig.direct.connectTo = .local
+        _ = await rig.paired()
+        await rig.model.runShell("ls")
+        await settle(rig)
+        rig.model.clearShell()
+        #expect(rig.model.shell == nil)
     }
 }
 

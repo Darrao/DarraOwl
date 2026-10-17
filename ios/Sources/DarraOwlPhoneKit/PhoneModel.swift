@@ -55,6 +55,9 @@ public final class PhoneModel {
 
     public static let directResultTimeout: Double = 10
     public static let cloudPollInterval: Double = 2
+    /// A shell command's result is looked for in iCloud this often: its
+    /// wait can last minutes.
+    public static let shellPollInterval: Double = 3
     public static let reconnectInterval: TimeInterval = 15
     public static let cloudFetchInterval: TimeInterval = 10
     /// The Mac sends its state at least every 30 s on the direct link: a
@@ -77,7 +80,25 @@ public final class PhoneModel {
     public private(set) var isPairing = false
     /// A command is on its way: the screen disables its controls.
     public private(set) var isBusy = false
+    /// The last shell command sent to the Mac, until cleared or replaced.
+    public private(set) var shell: ShellRun?
     public private(set) var now = Date()
+
+    /// A shell command sent to the Mac, and what came back.
+    public struct ShellRun: Equatable, Sendable {
+        public enum Phase: Equatable, Sendable {
+            case running
+            case done(ShellOutput)
+            case failed(String)
+        }
+
+        public var id: UUID
+        public var text: String
+        /// The agent whose project folder it runs in; nil for the home folder.
+        public var agent: MacState.Agent?
+        public var since: Date
+        public var phase: Phase
+    }
 
     /// Every new Mac state, for the Live Activity and the widgets.
     @ObservationIgnored public var onStateChange: ((MacState) -> Void)?
@@ -374,6 +395,7 @@ public final class PhoneModel {
         directPath = nil
         outcome = nil
         outcomeAt = nil
+        shell = nil
         lastConnectAttempt = nil
         lastCloudFetch = nil
         lastDirectState = nil
@@ -396,20 +418,7 @@ public final class PhoneModel {
         defer { isBusy = false }
         let generation = linkGeneration
         show(.sending(kind.label))
-        let signed: SignedCommand
-        let envelope: CommandEnvelope
-        do {
-            (envelope, signed) = try await loadIdentity().sign(kind, for: mac, at: deps.now())
-        } catch BiometricError.refused {
-            show(.failed("Face ID refusé : commande non envoyée."))
-            return
-        } catch BiometricError.keyInvalidated {
-            show(.failed("Face ID a changé sur cet iPhone : sa clé n'est plus valable. Désappaire cet iPhone, puis appaire-le à nouveau."))
-            return
-        } catch {
-            show(.failed("Signature impossible : \(error.localizedDescription)"))
-            return
-        }
+        guard case let (envelope, signed)? = await sign(kind, for: mac) else { return }
 
         var result: CommandResult?
         if directPath != nil {
@@ -455,6 +464,120 @@ public final class PhoneModel {
         if directPath != nil, (try? deps.direct.send(signed)) != nil { sent = true }
         if (try? await deps.cloud.send(signed, macID: mac.macID)) != nil { sent = true }
         return sent
+    }
+
+    /// Signs `kind` (Face ID for a sensitive one); nil, with why on
+    /// screen, when it cannot be.
+    private func sign(_ kind: CommandKind, for mac: PairedMac) async -> (CommandEnvelope, SignedCommand)? {
+        do {
+            return try await loadIdentity().sign(kind, for: mac, at: deps.now())
+        } catch BiometricError.refused {
+            show(.failed("Face ID refusé : commande non envoyée."))
+        } catch BiometricError.keyInvalidated {
+            show(.failed("Face ID a changé sur cet iPhone : sa clé n'est plus valable. Désappaire cet iPhone, puis appaire-le à nouveau."))
+        } catch {
+            show(.failed("Signature impossible : \(error.localizedDescription)"))
+        }
+        return nil
+    }
+
+    // MARK: Shell commands
+
+    /// Signs (Face ID) and sends a shell command, then waits for what it
+    /// printed in the background: a command may run minutes, and the other
+    /// controls are not held meanwhile. Followed in `shell`.
+    public func runShell(_ text: String, agent: MacState.Agent? = nil) async {
+        guard let mac else {
+            show(.failed("Aucun Mac appairé sur cet iPhone."))
+            return
+        }
+        guard !isBusy, shell?.phase != .running else { return }
+        isBusy = true
+        let signed = await sign(.runCommand(text: text, inAgent: agent?.pid), for: mac)
+        isBusy = false
+        guard case let (envelope, command)? = signed else { return }
+        let generation = linkGeneration
+        shell = ShellRun(id: envelope.id, text: text, agent: agent, since: deps.now(), phase: .running)
+        Task { await self.awaitShell(envelope, command, mac: mac, generation: generation) }
+    }
+
+    /// Takes the last command off the screen.
+    public func clearShell() {
+        shell = nil
+    }
+
+    private func awaitShell(_ envelope: CommandEnvelope, _ signed: SignedCommand, mac: PairedMac, generation: Int) async {
+        // Until the Mac would have stopped the command, and a little more.
+        let patience = Policy.remoteCommandTimeout + 20
+        var result: CommandResult?
+        if directPath != nil {
+            result = await waitDirect(envelope.id, timeout: patience) { try deps.direct.send(signed) }
+        }
+        guard linkGeneration == generation else { return }
+        if result == nil {
+            // No direct answer: the same command through iCloud, where the
+            // Mac leaves a shell command's result whatever path it came by.
+            do {
+                try await deps.cloud.send(signed, macID: mac.macID)
+            } catch {
+                finishShell(envelope.id, .failed("Envoi impossible : \(error.localizedDescription)"))
+                return
+            }
+            guard linkGeneration == generation else { return }
+            result = await waitShellCloud(envelope.id, until: envelope.issuedAt.addingTimeInterval(patience), generation: generation)
+        }
+        guard linkGeneration == generation, self.mac?.macID == mac.macID else { return }
+        guard let result else {
+            finishShell(envelope.id, .failed("Pas de réponse du Mac."))
+            return
+        }
+        switch result.status {
+        case .executed:
+            guard let output = result.output else {
+                finishShell(envelope.id, .failed("Le Mac n'a pas renvoyé ce que la commande a affiché."))
+                return
+            }
+            finishShell(envelope.id, .done(output))
+            // The command may have changed what the Mac shows.
+            if directPath != nil {
+                deps.direct.requestState()
+                // The Mac also left this result in iCloud, a moment after
+                // answering: read, so it goes now rather than in a day.
+                let cloud = deps.cloud
+                let sleeper = deps.sleeper
+                let id = envelope.id
+                Task {
+                    await sleeper.sleep(seconds: 5)
+                    _ = try? await cloud.result(for: id)
+                }
+            } else {
+                await fetchCloudState()
+            }
+        default:
+            if case let .failed(why) = Self.outcome(for: result, kind: envelope.kind) {
+                finishShell(envelope.id, .failed(why))
+            } else {
+                finishShell(envelope.id, .failed(result.message ?? "Réponse inattendue du Mac : \(result.status.label)."))
+            }
+        }
+    }
+
+    /// The command still on screen gets its outcome; a cleared or replaced
+    /// one is left alone.
+    private func finishShell(_ id: UUID, _ phase: ShellRun.Phase) {
+        guard shell?.id == id else { return }
+        shell?.phase = phase
+    }
+
+    /// Polls iCloud for the result until `deadline`, with one read after
+    /// it: back from a long suspension, the result may well be there.
+    private func waitShellCloud(_ id: UUID, until deadline: Date, generation: Int) async -> CommandResult? {
+        while linkGeneration == generation {
+            if let result = try? await deps.cloud.result(for: id) { return result }
+            guard deps.now() <= deadline else { return nil }
+            await deps.sleeper.sleep(seconds: Self.shellPollInterval)
+        }
+        return nil
     }
 
     static func outcome(for result: CommandResult, kind: CommandKind) -> Outcome {
@@ -529,7 +652,7 @@ public final class PhoneModel {
 
     /// Waits for a direct result. The waiter is in place before the command
     /// leaves: an answer that comes back at once is not missed.
-    private func waitDirect(_ id: UUID, sending: () throws -> Void) async -> CommandResult? {
+    private func waitDirect(_ id: UUID, timeout: Double = PhoneModel.directResultTimeout, sending: () throws -> Void) async -> CommandResult? {
         let sleeper = deps.sleeper
         return await withCheckedContinuation { continuation in
             waiters[id] = continuation
@@ -540,7 +663,7 @@ public final class PhoneModel {
                 return
             }
             Task {
-                await sleeper.sleep(seconds: Self.directResultTimeout)
+                await sleeper.sleep(seconds: timeout)
                 self.waiters.removeValue(forKey: id)?.resume(returning: nil)
             }
         }

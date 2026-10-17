@@ -80,6 +80,14 @@ final class FakeTarget: CommandTarget {
     func resumeApps() async throws { try await record("resumeApps") }
     func setPresenceWhileClosed(_ on: Bool) async throws { try await record("whileClosed \(on)") }
     func answerAgentRequest(id: UUID, allow: Bool) async throws { try await record("agent \(allow ? "allow" : "deny")") }
+    /// The Mac's option for shell commands from the phone.
+    var commandsOn = true
+    var output = ShellOutput(status: 0, text: "ok\n", truncated: false, seconds: 1)
+    func runCommand(_ text: String, agentPID: Int32?) async throws -> ShellOutput {
+        guard commandsOn else { throw RemoteError.commandsOff }
+        try await record("run \(text) in \(agentPID.map { String($0) } ?? "~")")
+        return output
+    }
 }
 
 @MainActor
@@ -216,6 +224,8 @@ struct HubRig {
         .stopContainer(id: "../../etc"),
         .updateLidSettings(LidSettings(pausedApps: ["us.zoom.xos"])),
         .updateBatteryFloors(lowPower: 10, end: 15),
+        .runCommand(text: "   ", inAgent: nil),
+        .runCommand(text: "ls", inAgent: 1),
     ])
     func outOfPolicyArgumentsAreRefused(kind: CommandKind) async throws {
         let rig = HubRig().paired()
@@ -255,6 +265,43 @@ struct HubRig {
         let known = try rig.phone.sign(.stopAgent(pid: 4242), mac: rig.macID, at: rig.clock.now(), faceID: true)
         #expect(await rig.hub.handle(known, via: .direct).status == .executed)
         #expect(rig.target.calls == ["stopAgent 4242"])
+    }
+
+    @Test func aShellCommandNeedsFaceIDTheOptionAndAPublishedAgent() async throws {
+        let rig = HubRig().paired()
+        let plain = try rig.phone.sign(.runCommand(text: "npm test", inAgent: 4242), mac: rig.macID, at: rig.clock.now())
+        #expect(await rig.hub.handle(plain, via: .direct).status == .unauthorized)
+        let elsewhere = try rig.phone.sign(.runCommand(text: "ls", inAgent: 777), mac: rig.macID, at: rig.clock.now(), faceID: true)
+        #expect(await rig.hub.handle(elsewhere, via: .direct).status == .failed)
+        rig.target.commandsOn = false
+        let off = try rig.phone.sign(.runCommand(text: "ls", inAgent: nil), mac: rig.macID, at: rig.clock.now(), faceID: true)
+        let refused = await rig.hub.handle(off, via: .direct)
+        #expect(refused.status == .failed)
+        #expect(refused.message == RemoteError.commandsOff.localizedDescription)
+        #expect(rig.target.calls.isEmpty)
+        rig.target.commandsOn = true
+        let cmd = try rig.phone.sign(.runCommand(text: "npm test", inAgent: 4242), mac: rig.macID, at: rig.clock.now(), faceID: true)
+        let result = await rig.hub.handle(cmd, via: .direct)
+        #expect(result.status == .executed)
+        #expect(result.output == rig.target.output, "what it printed comes back with the result")
+        #expect(rig.target.calls == ["run npm test in 4242"])
+    }
+
+    /// The phone may have lost the direct link while the command ran (its
+    /// app suspended): the result waits in iCloud too, and a copy of the
+    /// command sent there later gets the recorded output, not a second run.
+    @Test func aShellCommandsResultGoesToICloudWhateverThePath() async throws {
+        let rig = HubRig().paired()
+        let cmd = try rig.phone.sign(.runCommand(text: "ls", inAgent: nil), mac: rig.macID, at: rig.clock.now(), faceID: true)
+        let direct = await rig.hub.handle(cmd, via: .direct)
+        #expect(direct.status == .executed)
+        #expect(rig.cloud.results == [direct])
+        #expect(await rig.hub.handle(cmd, via: .cloud) == direct)
+        #expect(rig.target.calls == ["run ls in ~"])
+        // Any other command's result only goes to iCloud when its copy came that way.
+        let stop = try rig.phone.sign(.stopSession, mac: rig.macID, at: rig.clock.now())
+        _ = await rig.hub.handle(stop, via: .direct)
+        #expect(rig.cloud.results.count == 1)
     }
 
     @Test func unknownContainerFails() async throws {

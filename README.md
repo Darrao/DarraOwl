@@ -179,7 +179,9 @@ désinstallation te le rappelle si DarraOwl l'a demandée.
   code en cours, les conteneurs Docker.
 - **Ce que l'iPhone peut faire** : démarrer, prolonger ou arrêter une session,
   suivre un agent, mettre le Mac en veille, gérer Docker, changer les réglages
-  capot fermé, les alertes et les seuils de batterie.
+  capot fermé, les alertes et les seuils de batterie, et lancer une commande
+  dans le terminal du Mac (option à activer sur le Mac, voir
+  [Terminal](#terminal)).
 - **Contrôles** : « Toujours actif » (sans limite ou 1 à 8 h), éteindre
   l'écran, verrouiller le Mac, couper ou remettre le son, mettre en pause ou
   relancer Slack, WhatsApp et Discord (pendant une session), arrêter un agent
@@ -268,6 +270,35 @@ et rend son code de sortie. Si DarraOwl ne peut pas garder le Mac éveillé
 (batterie sous le seuil, composant système absent), la commande n'est pas
 lancée. Seul le nom de la commande est affiché sur l'iPhone, jamais ses
 arguments.
+
+### Depuis l'iPhone
+
+Remote Control de Claude Code ne lance aucune commande depuis le téléphone :
+une ligne qui commence par `!` lui est envoyée comme un message. Quand Claude
+refuse ou n'arrive pas à lancer une commande, DarraOwl la lance pour toi.
+
+DarraOwl > Réglages > Terminal > **Lancer des commandes depuis l'iPhone**
+(désactivé par défaut ; l'iPhone ne peut pas l'activer). L'app iPhone montre
+alors une section **Terminal** : choisis le dossier (ton dossier personnel ou
+le projet d'un agent en cours), tape la commande, puis **Lancer**. Face ID
+est demandé à chaque commande.
+
+- La commande s'exécute sous ton compte, avec ton shell de connexion (`zsh -l`
+  d'habitude) : même PATH que dans le Terminal, une fois ton profil lu.
+- Sans terminal ni saisie : `sudo` ou une question interactive échouent au
+  lieu d'attendre. Au plus 5 minutes, puis tout ce qu'elle a lancé est
+  arrêté.
+- Ce qu'elle affiche revient sur l'iPhone : code de sortie, durée et les
+  8 derniers Ko de la sortie, par la connexion directe ou par ta base iCloud
+  privée, d'où le résultat est effacé une fois lu, au plus tard après un
+  jour. Si l'app iPhone passe en arrière-plan pendant une longue commande,
+  elle retrouve le résultat à son retour, tant qu'iOS ne l'a pas fermée.
+- Le Mac note dans son journal la commande et son dossier, jamais sa sortie.
+  Il garde les 100 derniers résultats de commandes de l'iPhone, sorties
+  comprises, dans `~/Library/Application Support/DarraOwl/commands.json`.
+
+Avec cette option, un iPhone appairé peut tout faire sur le Mac : ne
+l'active que si tu le veux vraiment.
 
 ## Claude Code
 

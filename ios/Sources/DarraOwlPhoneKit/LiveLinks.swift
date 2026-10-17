@@ -300,9 +300,10 @@ public final class CloudKitPhoneLink: CloudLink {
         do {
             let record = try await database.record(for: id)
             guard let raw = record["status"] as? String, let status = CommandResult.Status(rawValue: raw) else { return nil }
+            let output = (record.encryptedValues["output"] as? Data).flatMap { try? LinkCoding.decoder().decode(ShellOutput.self, from: $0) }
             let result = CommandResult(commandID: commandID, status: status,
                                        message: record.encryptedValues["message"] as? String,
-                                       at: record["at"] as? Date ?? Date())
+                                       at: record["at"] as? Date ?? Date(), output: output)
             // Read once: tidy up.
             _ = try? await database.modifyRecords(saving: [], deleting: [id])
             return result
