@@ -56,7 +56,9 @@ PLIST
 xcodebuild -exportArchive -archivePath "$OUT/DarraOwl-mac.xcarchive" -exportOptionsPlist "$OUT/ExportOptions.plist" \
   -exportPath "$OUT" -allowProvisioningUpdates ${XCODE_AUTH[@]+"${XCODE_AUTH[@]}"} >/dev/null
 APP="$OUT/DarraOwl.app"
-codesign -dvv "$APP" 2>&1 | grep -q "Authority=Developer ID Application" || {
+# Read whole first: under pipefail, grep -q leaving early fails the pipe (SIGPIPE).
+SIGNATURE="$(codesign -dvv "$APP" 2>&1)"
+grep -q "Authority=Developer ID Application" <<<"$SIGNATURE" || {
   echo "Le build n'est pas signé Developer ID : rien n'a été installé." >&2; exit 1; }
 DEST="/Applications/DarraOwl.app"
 # The build takes minutes: a session may have started meanwhile.
