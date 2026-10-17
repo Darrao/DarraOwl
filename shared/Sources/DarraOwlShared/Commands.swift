@@ -1,7 +1,8 @@
 import Foundation
 
 /// The only things the phone can ask (safety rule 5). A closed list: no
-/// shell command, no file path, every argument validated on the Mac.
+/// file path, every argument validated on the Mac. One exception, off until
+/// the user turns it on, on the Mac: a shell command (`runCommand`).
 public enum CommandKind: Codable, Equatable, Sendable {
     case startSession(minutes: Int)
     /// 30 or 60 minutes.
@@ -42,14 +43,26 @@ public enum CommandKind: Codable, Equatable, Sendable {
     /// (by its id): the phone never sends what to run, only yes or no.
     /// Accepting is sensitive.
     case answerAgentRequest(id: UUID, allow: Bool)
+    /// A shell command, run on the Mac under the user's account with no
+    /// terminal and no input, in the project folder of agent `inAgent` (a
+    /// pid from the list the Mac published) or in the home folder: the
+    /// phone never sends a path. Refused unless the option is on, on the
+    /// Mac. Its output comes back in the result. Sensitive.
+    case runCommand(text: String, inAgent: Int32?)
 
     /// Needs a Face ID signature from the phone's Secure Enclave key.
     public var isSensitive: Bool {
         switch self {
-        case .sleepNow, .stopContainer, .stopAgent: true
+        case .sleepNow, .stopContainer, .stopAgent, .runCommand: true
         case let .answerAgentRequest(_, allow): allow
         default: false
         }
+    }
+
+    /// A shell command: the one kind whose result carries an output.
+    public var isShell: Bool {
+        if case .runCommand = self { return true }
+        return false
     }
 
     public var label: String {
@@ -76,7 +89,22 @@ public enum CommandKind: Codable, Equatable, Sendable {
         case .forgetThisDevice: "Désappairer cet iPhone"
         case let .setPresenceWhileClosed(on): on ? "Rester disponible capot fermé" : "Ne plus rester disponible capot fermé"
         case let .answerAgentRequest(_, allow): allow ? "Accepter la demande de Claude" : "Refuser la demande de Claude"
+        case let .runCommand(text, _): "Lancer « \(Self.shortened(text)) »"
         }
+    }
+
+    /// A command as the label shows it (Face ID's prompt, the screen): one
+    /// line, at most 60 characters.
+    static func shortened(_ text: String) -> String {
+        let line = text.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " ⏎ ")
+        return line.count > 60 ? "\(line.prefix(59))…" : line
+    }
+
+    /// A command's text: something besides blanks, no NUL (the C string the
+    /// shell gets would stop there), at most `Policy.remoteCommandLength`.
+    public static func isWellFormedCommand(_ text: String) -> Bool {
+        text.count <= Policy.remoteCommandLength && !text.contains("\0")
+            && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     public static let extensionMinutes: Set<Int> = [30, 60]
@@ -105,6 +133,7 @@ public enum CommandKind: Codable, Equatable, Sendable {
         case containerID
         case settings
         case process
+        case command
     }
 
     /// Checks the arguments against the policy. The Mac checks again against
@@ -128,6 +157,9 @@ public enum CommandKind: Codable, Equatable, Sendable {
             guard pid > 1 else { throw .process }
         case let .startPresence(m):
             if let m { guard (1...Self.maxPresenceMinutes).contains(m) else { throw .duration } }
+        case let .runCommand(text, pid):
+            guard Self.isWellFormedCommand(text) else { throw .command }
+            if let pid { guard pid > 1 else { throw .process } }
         case .stopSession, .sleepNow, .pauseDocker, .resumeDocker, .stopPresence, .displayOff, .lockScreen,
              .setMuted, .pauseApps, .resumeApps, .forgetThisDevice, .setPresenceWhileClosed, .answerAgentRequest:
             break
@@ -203,12 +235,42 @@ public struct CommandResult: Codable, Equatable, Sendable {
     /// French message for the phone.
     public var message: String?
     public var at: Date
+    /// What a `runCommand` printed (absent for every other command, and
+    /// from a Mac on an older version).
+    public var output: ShellOutput?
 
-    public init(commandID: UUID, status: Status, message: String?, at: Date) {
+    public init(commandID: UUID, status: Status, message: String?, at: Date, output: ShellOutput? = nil) {
         self.commandID = commandID
         self.status = status
         self.message = message
         self.at = at
+        self.output = output
+    }
+}
+
+/// What a command run from the phone printed, and how it ended. The only
+/// agent output that ever leaves the Mac, with the user's consent (the
+/// option on the Mac): it goes back over the direct link, or through the
+/// user's private iCloud database, where its record is deleted once read.
+public struct ShellOutput: Codable, Equatable, Sendable {
+    /// The exit status; nil when the command was stopped at the time limit.
+    public var status: Int32?
+    /// Standard output and error together; the end of them when cut.
+    public var text: String
+    public var truncated: Bool
+    public var seconds: TimeInterval
+
+    public init(status: Int32?, text: String, truncated: Bool, seconds: TimeInterval) {
+        self.status = status
+        self.text = text
+        self.truncated = truncated
+        self.seconds = seconds
+    }
+
+    /// "terminée", "code 1", "arrêtée au bout de 5 min".
+    public var summary: String {
+        guard let status else { return "arrêtée au bout de \(DurationText.short(Policy.remoteCommandTimeout))" }
+        return status == 0 ? "terminée" : "code \(status)"
     }
 }
 

@@ -110,6 +110,9 @@ public struct MacState: Codable, Equatable, Sendable {
     public var pairedDevices: [UUID]?
     /// Claude Code's permission requests waiting for the phone's answer.
     public var agentRequests: [AgentRequest]?
+    /// The Mac runs shell commands sent from the phone (its Réglages >
+    /// Terminal option; nil: older Mac, or off).
+    public var remoteCommands: Bool?
 
     /// A permission request of Claude Code, held while nobody is at the
     /// Mac. `detail` is what Claude wants to do (a command, a file), cut
@@ -138,7 +141,7 @@ public struct MacState: Codable, Equatable, Sendable {
         powerSnapshot: PowerSnapshot?, lowPowerActive: Bool, pausedApps: [String], network: Network?,
         agents: [Agent] = [], containers: [Container] = [], dockerPaused: Bool, settings: PowerSettings,
         protocolVersion: Int = LinkProtocol.version, presence: Presence? = nil, muted: Bool? = nil, dockerRunning: Bool? = nil,
-        pairedDevices: [UUID]? = nil, agentRequests: [AgentRequest]? = nil
+        pairedDevices: [UUID]? = nil, agentRequests: [AgentRequest]? = nil, remoteCommands: Bool? = nil
     ) {
         self.macID = macID
         self.macName = macName
@@ -159,6 +162,7 @@ public struct MacState: Codable, Equatable, Sendable {
         self.dockerRunning = dockerRunning
         self.pairedDevices = pairedDevices
         self.agentRequests = agentRequests
+        self.remoteCommands = remoteCommands
     }
 }
 

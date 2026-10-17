@@ -59,7 +59,7 @@ enum DemoMode {
                 network: .init(kind: .hotspot, name: "iPhone", sessionBytes: 184_000_000),
                 agents: agents, containers: containers,
                 dockerPaused: end != nil && dockerPaused, settings: settings, presence: presence, muted: muted,
-                dockerRunning: true, agentRequests: requests.isEmpty ? nil : requests
+                dockerRunning: true, agentRequests: requests.isEmpty ? nil : requests, remoteCommands: true
             )
         }
 
@@ -116,10 +116,15 @@ enum DemoMode {
             case let .answerAgentRequest(id, _):
                 guard requests.contains(where: { $0.id == id }) else { return "Cette demande n'attend plus de réponse." }
                 requests.removeAll { $0.id == id }
-            case .displayOff, .lockScreen, .forgetThisDevice:
+            case .displayOff, .lockScreen, .forgetThisDevice, .runCommand:
                 break
             }
             return nil
+        }
+
+        /// What the demonstration's shell "prints": nothing runs anywhere.
+        static func shellOutput(for text: String) -> ShellOutput {
+            ShellOutput(status: 0, text: "$ \(text)\nDémonstration : rien n'a été exécuté.", truncated: false, seconds: 0.4)
         }
     }
 
@@ -155,7 +160,9 @@ private final class DemoDirect: DirectLink {
     func send(_ command: SignedCommand) throws {
         guard let env = try? LinkCoding.decoder().decode(CommandEnvelope.self, from: command.payload) else { return }
         let refusal = mac.apply(env.kind)
-        let result = CommandResult(commandID: env.id, status: refusal == nil ? .executed : .failed, message: refusal, at: Date())
+        var output: ShellOutput?
+        if case let .runCommand(text, _) = env.kind { output = DemoMode.Mac.shellOutput(for: text) }
+        let result = CommandResult(commandID: env.id, status: refusal == nil ? .executed : .failed, message: refusal, at: Date(), output: output)
         let state = mac.state
         // Like a real Mac: the answer comes a moment later, not inside send().
         Task { @MainActor in

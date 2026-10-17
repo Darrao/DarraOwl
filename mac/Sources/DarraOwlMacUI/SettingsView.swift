@@ -133,6 +133,13 @@ struct SettingsView: View {
                     Text("Si le Terminal ne trouve pas darraowl, ajoute ~/.local/bin à ton PATH.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                Toggle("Lancer des commandes depuis l'iPhone", isOn: Binding(
+                    get: { model.remoteCommands },
+                    set: { model.setRemoteCommands($0) }
+                ))
+                Text("L'iPhone appairé tape une commande ; elle s'exécute ici, sous ton compte et avec ton shell, dans le dossier d'un agent en cours ou dans ton dossier personnel, sans terminal ni saisie, au plus \(DurationText.short(Policy.remoteCommandTimeout)). Face ID à chaque commande. La fin de ce qu'elle affiche (\(Policy.remoteCommandOutputLimit / 1024) Ko) revient sur l'iPhone, par la connexion directe ou par ton iCloud privé, d'où elle est effacée une fois lue. Désactivé par défaut : avec cette option, un iPhone appairé peut tout faire sur ce Mac.")
+                    .font(.caption).foregroundStyle(model.remoteCommands ? .orange : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let setupProblem {
                 Text(setupProblem).font(.caption).foregroundStyle(.red)

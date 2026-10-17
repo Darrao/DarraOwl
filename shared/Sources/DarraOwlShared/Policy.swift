@@ -23,6 +23,14 @@ public enum Policy {
 
     /// A phone command expires this long after it was issued.
     public static let commandLifetime: TimeInterval = 60
+
+    /// A shell command sent from the phone is stopped after this long.
+    public static let remoteCommandTimeout: TimeInterval = 300
+    /// At most this many characters of its output go back to the phone:
+    /// the end of it, where a failure shows.
+    public static let remoteCommandOutputLimit = 8 * 1024
+    /// Its text, at most.
+    public static let remoteCommandLength = 4000
 }
 
 /// Battery floors and session cap, edited from the Mac or the phone and

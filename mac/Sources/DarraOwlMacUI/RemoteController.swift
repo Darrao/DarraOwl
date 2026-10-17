@@ -462,7 +462,8 @@ public final class RemoteController: CommandTarget {
             muted: (try? audio.readDefaultOutput())?.muted,
             dockerRunning: NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == PausePolicy.dockerBundleID },
             pairedDevices: devices.map(\.id),
-            agentRequests: approvals.pending.isEmpty ? nil : approvals.pending
+            agentRequests: approvals.pending.isEmpty ? nil : approvals.pending,
+            remoteCommands: model.remoteCommands
         )
     }
 
@@ -642,6 +643,26 @@ public final class RemoteController: CommandTarget {
 
     public func answerAgentRequest(id: UUID, allow: Bool) async throws {
         guard approvals.answer(id, allow: allow) else { throw RemoteError.requestGone }
+    }
+
+    /// Only with the option on (Réglages > Terminal), which the phone cannot
+    /// switch. The folder comes from this Mac's own list of agents: the phone
+    /// never names one. The command and the folder are logged, as a record of
+    /// what the phone ran; its output is not.
+    public func runCommand(_ text: String, agentPID: Int32?) async throws -> ShellOutput {
+        guard model.remoteCommands else { throw RemoteError.commandsOff }
+        let directory: String
+        if let agentPID {
+            guard let agent = agents.first(where: { $0.pid == agentPID }) else { throw RemoteError.unknownAgent }
+            guard let cwd = agent.cwd else { throw RemoteError.agentFolderUnreadable }
+            directory = cwd
+        } else {
+            directory = NSHomeDirectory()
+        }
+        log.info("command from the phone in \(directory): \(text)")
+        let output = try await RemoteShell.run(text, in: directory)
+        log.info("command from the phone \(output.summary), \(Int(output.seconds)) s, \(output.text.count) characters\(output.truncated ? " (cut)" : "")")
+        return output
     }
 
     public func displayOff() async throws {

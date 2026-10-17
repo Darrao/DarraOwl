@@ -40,6 +40,10 @@ public final class AppModel {
     static let presenceIndefiniteKey = "presenceIndefinite"
     /// Option: "Toujours actif" goes on with the lid closed, during a session.
     static let presenceWhileClosedKey = "presenceWhileClosed"
+    /// Option: shell commands sent from the phone run on this Mac. Off until
+    /// the user turns it on here; the phone cannot.
+    static let remoteCommandsKey = "remoteCommands"
+    public private(set) var remoteCommands = UserDefaults.standard.bool(forKey: AppModel.remoteCommandsKey)
     /// The lid as the app last saw it, kept across launches.
     static let lidClosedKey = "lidClosedAtLastLook"
 
@@ -567,6 +571,13 @@ public final class AppModel {
         presenceWhileClosed = on
         UserDefaults.standard.set(on, forKey: Self.presenceWhileClosedKey)
         presence.setWhileClosed(on)
+    }
+
+    /// The option to run shell commands sent from the phone. The phone
+    /// learns of it with the next state.
+    public func setRemoteCommands(_ on: Bool) {
+        remoteCommands = on
+        UserDefaults.standard.set(on, forKey: Self.remoteCommandsKey)
     }
 
     public func stopPresence() {
