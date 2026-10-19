@@ -1,14 +1,20 @@
 // Draws the DarraOwl icon (the menu bar owl, white on black) as 1024 px PNGs.
-// Run: swift tools/make-icons.swift <output-dir>
+// Run: swift tools/make-icons.swift <output-dir> [--light]
+// --light: black on light gray, for the Apple Watch, whose round mask a
+// black background would hide against the black screen.
 import AppKit
 
-let out = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ".")
+let arguments = CommandLine.arguments.dropFirst()
+let out = URL(fileURLWithPath: arguments.first { !$0.hasPrefix("--") } ?? ".")
+let light = arguments.contains("--light")
 let size = 1024.0
+let background = CGColor(gray: light ? 0.94 : 0.07, alpha: 1)
+let ink = CGColor(gray: light ? 0.07 : 1, alpha: 1)
 
 func owl(in ctx: CGContext, scale s: Double, origin o: CGPoint) {
     func p(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: o.x + x * s, y: o.y + y * s) }
-    ctx.setStrokeColor(NSColor.white.cgColor)
-    ctx.setFillColor(NSColor.white.cgColor)
+    ctx.setStrokeColor(ink)
+    ctx.setFillColor(ink)
     ctx.setLineJoin(.round)
     ctx.setLineCap(.round)
     ctx.setLineWidth(1.3 * s)
@@ -36,7 +42,7 @@ func render(_ name: String) throws {
     // RGB without alpha: App Store icons must be opaque.
     let ctx = CGContext(data: nil, width: Int(size), height: Int(size), bitsPerComponent: 8, bytesPerRow: 0,
                         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
-    ctx.setFillColor(CGColor(gray: 0.07, alpha: 1))
+    ctx.setFillColor(background)
     ctx.fill(CGRect(x: 0, y: 0, width: size, height: size))
     // The owl spans 18 units; leave a generous margin.
     let s = size * 0.62 / 18
