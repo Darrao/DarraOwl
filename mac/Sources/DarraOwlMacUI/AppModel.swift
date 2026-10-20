@@ -44,6 +44,10 @@ public final class AppModel {
     /// the user turns it on here; the phone cannot.
     static let remoteCommandsKey = "remoteCommands"
     public private(set) var remoteCommands = UserDefaults.standard.bool(forKey: AppModel.remoteCommandsKey)
+    /// Option: Claude's permission requests go to the phone even while
+    /// someone is at the Mac (the terminal then waits for the phone).
+    static let requestsEvenAtTheMacKey = "claudeRequestsEvenAtTheMac"
+    public private(set) var requestsEvenAtTheMac = UserDefaults.standard.bool(forKey: AppModel.requestsEvenAtTheMacKey)
     /// The lid as the app last saw it, kept across launches.
     static let lidClosedKey = "lidClosedAtLastLook"
 
@@ -578,6 +582,14 @@ public final class AppModel {
     public func setRemoteCommands(_ on: Bool) {
         remoteCommands = on
         UserDefaults.standard.set(on, forKey: Self.remoteCommandsKey)
+    }
+
+    /// The option to hold Claude's requests for the phone even with someone
+    /// at the Mac. Turned off, the requests held now go to the terminal.
+    public func setRequestsEvenAtTheMac(_ on: Bool) {
+        requestsEvenAtTheMac = on
+        UserDefaults.standard.set(on, forKey: Self.requestsEvenAtTheMacKey)
+        if !on { remote.releaseRequests() }
     }
 
     public func stopPresence() {

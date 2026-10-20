@@ -317,6 +317,12 @@ devant le Mac, Claude pose la question dans le terminal, comme d'habitude.
 Ses questions et les plans qu'il te soumet restent dans le terminal : tu
 reçois « Claude attend ta validation ».
 
+**Demander sur l'iPhone même devant le Mac** (option, désactivée par
+défaut) : chaque demande d'autorisation part sur l'iPhone, que tu sois devant
+le Mac ou non. Le terminal attend alors la réponse de l'iPhone, jusqu'à une
+heure. Pour reprendre une demande au clavier, clique sur **Répondre dans le
+terminal** dans le menu de DarraOwl ; Échap dans Claude annule l'action.
+
 Le bouton ajoute quatre « hooks » (Stop, SubagentStop, Notification et
 PermissionRequest) dans `~/.claude/settings.json`. Le reste du fichier est
 gardé, réécrit avec les clés dans l'ordre alphabétique. Ta version d'avant

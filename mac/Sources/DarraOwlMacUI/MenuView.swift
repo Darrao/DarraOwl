@@ -61,6 +61,7 @@ struct MenuView: View {
             } else {
                 idle
             }
+            requestsSection
             agentsSection
             lidSection
             Divider()
@@ -160,6 +161,24 @@ struct MenuView: View {
             powerLine
         }
         .disabled(model.busy)
+    }
+
+    /// Claude's requests held for the phone: a way to take them back at the
+    /// keyboard, for whoever is at the Mac after all.
+    @ViewBuilder
+    private var requestsSection: some View {
+        let held = model.remote.heldRequests
+        if !held.isEmpty {
+            HStack {
+                Text(held.count == 1 ? "Une demande de Claude attend sur l'iPhone" : "\(held.count) demandes de Claude attendent sur l'iPhone")
+                    .font(.callout)
+                    .lineLimit(2)
+                Spacer()
+                Button("Répondre dans le terminal") { model.remote.releaseRequests() }
+                    .controlSize(.small)
+                    .help("Claude pose la question dans son terminal, comme d'habitude")
+            }
+        }
     }
 
     /// Coding agents found on the Mac. "Suivre": stay awake while it runs.

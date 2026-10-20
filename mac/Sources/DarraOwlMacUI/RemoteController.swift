@@ -30,6 +30,9 @@ public final class RemoteController: CommandTarget {
     public private(set) var hookListening = false
     public private(set) var containers: [MacState.Container] = []
     public private(set) var lastResult: CommandResult?
+    /// Claude's requests held for the phone right now (a copy for the menu:
+    /// the approvals object is not observable).
+    public private(set) var heldRequests: [MacState.AgentRequest] = []
 
     @ObservationIgnored private unowned let model: AppModel
     @ObservationIgnored private let store = KeychainPairingStore()
@@ -191,8 +194,9 @@ public final class RemoteController: CommandTarget {
         if connected != connectedDevices { connectedDevices = connected }
         let listening = hookServer?.isListening ?? false
         if listening != hookListening { hookListening = listening }
-        // Back at the Mac: Claude's requests go to the terminal.
-        if !approvals.pending.isEmpty, !nobodyAtTheMac { approvals.releaseAll() }
+        // Back at the Mac: Claude's requests go to the terminal, unless the
+        // phone is to get them anyway.
+        if !approvals.pending.isEmpty, !nobodyAtTheMac, !model.requestsEvenAtTheMac { approvals.releaseAll() }
         if hookServer == nil, tick % 30 == 0, let token = HookToken.current() {
             let hooks = makeHookServer(token: token)
             hooks.start()
@@ -234,9 +238,10 @@ public final class RemoteController: CommandTarget {
     }
 
     /// A permission request of Claude: held for the phone when nobody is at
-    /// the Mac and a phone is paired; otherwise Claude asks in the terminal.
+    /// the Mac (or whoever is there wants it on the phone anyway) and a
+    /// phone is paired; otherwise Claude asks in the terminal.
     private func permission(id: UUID, _ request: ClaudeHook.Permission) async -> AgentApprovals.Decision? {
-        guard nobodyAtTheMac, hub != nil, !devices.isEmpty else { return nil }
+        guard nobodyAtTheMac || model.requestsEvenAtTheMac, hub != nil, !devices.isEmpty else { return nil }
         let mask = model.status?.settings.alerts.maskProjectNames ?? false
         let name = request.cwd.map { URL(fileURLWithPath: $0).lastPathComponent }
         let project = mask ? nil : name.flatMap { $0.isEmpty || $0 == "/" ? nil : $0 }
@@ -248,6 +253,7 @@ public final class RemoteController: CommandTarget {
     /// its detail). Gone: the state follows, and the notification's record
     /// leaves iCloud with the detail.
     private func approvalChanged(_ change: AgentApprovals.Change) {
+        heldRequests = approvals.pending
         publishSoon()
         guard let hub else { return }
         switch change {
@@ -295,6 +301,12 @@ public final class RemoteController: CommandTarget {
         publishSoon()
         guard let event, nobodyAtTheMac, let hub, !devices.isEmpty else { return }
         Task { await hub.post([event]) }
+    }
+
+    /// "Répondre dans le terminal": every request held for the phone goes
+    /// back to Claude's own prompt.
+    func releaseRequests() {
+        approvals.releaseAll()
     }
 
     /// Lid closed (docked to an external display, the Mac is in use), or a

@@ -111,6 +111,14 @@ struct SettingsView: View {
                 if !model.remote.hookListening {
                     Text("Le récepteur local (127.0.0.1:\(String(HookServer.port))) ne tourne pas.").font(.caption).foregroundStyle(.orange)
                 }
+                Toggle("Demander sur l'iPhone même devant le Mac", isOn: Binding(
+                    get: { model.requestsEvenAtTheMac },
+                    set: { model.setRequestsEvenAtTheMac($0) }
+                ))
+                .disabled(claudeState == .absent)
+                Text("Chaque demande d'autorisation part sur l'iPhone, que tu sois devant le Mac ou non. Le terminal attend la réponse de l'iPhone, jusqu'à une heure ; le menu de DarraOwl propose « Répondre dans le terminal » pour la reprendre ici, et Échap dans Claude annule l'action.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Section("Terminal") {
                 Text("La commande darraowl garde le Mac éveillé tant qu'une commande tourne, au plus la durée maximale : darraowl run 3h -- claude. Aussi : darraowl status, darraowl stop.")
