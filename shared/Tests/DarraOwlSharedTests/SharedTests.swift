@@ -257,3 +257,15 @@ import Testing
         #expect(Session.extendedEnd(now.addingTimeInterval(-60), by: 1800, now: now, maxDuration: 7200) == now.addingTimeInterval(1800))
     }
 }
+
+@Suite struct TerminalFolderTests {
+    /// An older Mac's output has no folder: still read.
+    @Test func anOutputWithoutAFolderIsStillRead() throws {
+        let old = Data(#"{"status":0,"text":"ok\n","truncated":false,"seconds":0.2}"#.utf8)
+        let output = try LinkCoding.decoder().decode(ShellOutput.self, from: old)
+        #expect(output.directory == nil)
+        #expect(output.text == "ok\n")
+        let now = ShellOutput(status: 0, text: "", truncated: false, seconds: 1, directory: "~/Dev/api")
+        #expect(try LinkCoding.decoder().decode(ShellOutput.self, from: LinkCoding.encoder().encode(now)) == now)
+    }
+}

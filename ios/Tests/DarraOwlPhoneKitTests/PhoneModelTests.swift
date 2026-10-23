@@ -334,6 +334,31 @@ struct PhoneRig {
         #expect(rig.direct.stateRequests == 1, "the command may have changed what the Mac shows")
     }
 
+    /// The terminal's screen: each command with the folder it started in,
+    /// its answer filled in later; clear keeps one still running.
+    @Test func theTerminalKeepsEachCommandWithItsFolder() async throws {
+        let fresh = PhoneRig()
+        var state = fresh.state()
+        state.remoteCommands = true
+        state.terminalDirectory = "~/Dev/api"
+        fresh.cloud.state = (state, nil)
+        let rig = await fresh.paired()
+        rig.cloud.output = ShellOutput(status: 0, text: "ok\n", truncated: false, seconds: 0.1, directory: "~/Dev")
+        await rig.model.runShell("cd .. && echo ok")
+        await settle(rig)
+        #expect(rig.model.shellLog.map(\.directory) == ["~/Dev/api"])
+        #expect(rig.model.shellLog.first?.phase == .done(rig.cloud.output!))
+
+        rig.cloud.answer = nil
+        await rig.model.runShell("sleep 1000")
+        #expect(rig.model.shellLog.count == 2)
+        rig.model.clearShellLog()
+        #expect(rig.model.shellLog.map(\.text) == ["sleep 1000"], "still running: its answer may come")
+        rig.model.clearShell()
+        for _ in 0..<5000 where rig.model.shellLog.first?.phase == .running { await Task.yield() }
+        #expect(rig.model.shellLog.first?.phase == .failed("Pas de réponse du Mac."), "answered on screen though no longer waited for")
+    }
+
     /// The direct link dropped while the command ran (the app suspended):
     /// a few seconds on, the command also went through iCloud, and its
     /// answer comes from there instead of after the whole wait.

@@ -259,12 +259,16 @@ public struct ShellOutput: Codable, Equatable, Sendable {
     public var text: String
     public var truncated: Bool
     public var seconds: TimeInterval
+    /// The folder the shell ended in, as shown ("~/Dev/api"): the next
+    /// command's (nil: older Mac).
+    public var directory: String?
 
-    public init(status: Int32?, text: String, truncated: Bool, seconds: TimeInterval) {
+    public init(status: Int32?, text: String, truncated: Bool, seconds: TimeInterval, directory: String? = nil) {
         self.status = status
         self.text = text
         self.truncated = truncated
         self.seconds = seconds
+        self.directory = directory
     }
 
     /// "terminée", "code 1", "arrêtée au bout de 5 min".

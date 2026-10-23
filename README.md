@@ -286,13 +286,23 @@ refuse ou n'arrive pas à lancer une commande, DarraOwl la lance pour toi.
 
 DarraOwl > Réglages > Terminal > **Lancer des commandes depuis l'iPhone**
 (désactivé par défaut ; l'iPhone ne peut pas l'activer). L'app iPhone montre
-alors une section **Terminal** : choisis le dossier (ton dossier personnel ou
-le projet d'un agent en cours), tape la commande, puis **Lancer**. Face ID
-est demandé à chaque commande. Le bouton **i** propose des commandes toutes
-prêtes (lancer Claude, Git, batterie, tâches longues…) à toucher pour les
-mettre dans le champ, l'horloge rappelle les dernières commandes (gardées sur
-l'iPhone seulement, effacées au désappairage), et un glissement vers le bas
-range le clavier.
+alors **Ouvrir le terminal** : un écran de terminal, avec le dossier dans
+l'invite (`site-vitrine %`), chaque commande et ce qu'elle a affiché, la
+dernière en bas. Tape la commande, puis Entrée ; Face ID est demandé à chaque
+commande.
+
+- `cd` change de dossier, et il reste pour les commandes suivantes : le Mac
+  garde le dossier, l'iPhone n'envoie jamais de chemin. Il repart du dossier
+  personnel au lancement de DarraOwl.
+- `clear` efface l'écran, `exit` ferme le terminal.
+- Au-dessus du clavier : ↑ et ↓ rappellent les dernières commandes (gardées
+  sur l'iPhone seulement, effacées au désappairage), les caractères cachés du
+  clavier (`~ / - | > & * .`) et de quoi ranger le clavier (un glissement vers
+  le bas le range aussi).
+- Le bouton **i** propose des commandes toutes prêtes (lancer Claude, Git,
+  batterie, tâches longues…), à toucher pour les mettre dans la ligne. Le menu
+  **⋯** va dans le dossier d'un agent en cours, rappelle l'historique et
+  efface l'écran.
 
 Pour ouvrir une session Claude que tu continues dans l'app Claude, quand
 aucune ne tourne : `darraowl claude ~/Dev/projet` (voir plus haut).

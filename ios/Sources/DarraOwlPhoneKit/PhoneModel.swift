@@ -85,6 +85,10 @@ public final class PhoneModel {
     public private(set) var isBusy = false
     /// The last shell command sent to the Mac, until cleared or replaced.
     public private(set) var shell: ShellRun?
+    /// The terminal's screen: the commands sent, the latest last, with what
+    /// came back. In memory only.
+    public private(set) var shellLog: [ShellRun] = []
+    public static let shellLogLimit = 100
     public private(set) var now = Date()
 
     /// A shell command sent to the Mac, and what came back.
@@ -97,10 +101,21 @@ public final class PhoneModel {
 
         public var id: UUID
         public var text: String
-        /// The agent whose project folder it runs in; nil for the home folder.
+        /// The agent whose project folder it runs in; nil for the terminal's.
         public var agent: MacState.Agent?
+        /// The folder it started in, as shown ("~/Dev/api").
+        public var directory: String
         public var since: Date
         public var phase: Phase
+
+        public init(id: UUID, text: String, agent: MacState.Agent?, directory: String, since: Date, phase: Phase) {
+            self.id = id
+            self.text = text
+            self.agent = agent
+            self.directory = directory
+            self.since = since
+            self.phase = phase
+        }
     }
 
     /// Every new Mac state, for the Live Activity and the widgets.
@@ -399,6 +414,7 @@ public final class PhoneModel {
         outcome = nil
         outcomeAt = nil
         shell = nil
+        shellLog = []
         lastConnectAttempt = nil
         lastCloudFetch = nil
         lastDirectState = nil
@@ -500,13 +516,23 @@ public final class PhoneModel {
         isBusy = false
         guard case let (envelope, command)? = signed else { return }
         let generation = linkGeneration
-        shell = ShellRun(id: envelope.id, text: text, agent: agent, since: deps.now(), phase: .running)
+        let folder = agent.map { $0.project ?? $0.tool } ?? state?.terminalDirectory ?? "~"
+        let run = ShellRun(id: envelope.id, text: text, agent: agent, directory: folder, since: deps.now(), phase: .running)
+        shell = run
+        shellLog.append(run)
+        if shellLog.count > Self.shellLogLimit { shellLog.removeFirst(shellLog.count - Self.shellLogLimit) }
         Task { await self.awaitShell(envelope, command, mac: mac, generation: generation) }
     }
 
-    /// Takes the last command off the screen.
+    /// Takes the last command off the screen; its wait goes on, and the
+    /// terminal shows its answer when it comes.
     public func clearShell() {
         shell = nil
+    }
+
+    /// `clear`: the screen empties; a command still running stays, for its answer.
+    public func clearShellLog() {
+        shellLog.removeAll { $0.phase != .running }
     }
 
     private func awaitShell(_ envelope: CommandEnvelope, _ signed: SignedCommand, mac: PairedMac, generation: Int) async {
@@ -587,9 +613,10 @@ public final class PhoneModel {
         }
     }
 
-    /// The command still on screen gets its outcome; a cleared or replaced
-    /// one is left alone.
+    /// The command gets its outcome, on the terminal's screen and, still
+    /// the last one, in `shell`.
     private func finishShell(_ id: UUID, _ phase: ShellRun.Phase) {
+        if let index = shellLog.lastIndex(where: { $0.id == id }) { shellLog[index].phase = phase }
         guard shell?.id == id else { return }
         shell?.phase = phase
     }

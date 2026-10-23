@@ -58,6 +58,9 @@ public final class RemoteController: CommandTarget {
     @ObservationIgnored private var signals = AgentSignals()
     @ObservationIgnored private var agentsSeenInSession: (session: UUID?, tools: [String]) = (nil, [])
     @ObservationIgnored private(set) var hookServer: HookServer?
+    /// The phone's terminal's folder: a cd stays for the next command, as in
+    /// a terminal window. The home folder at launch.
+    @ObservationIgnored private var terminalFolder = NSHomeDirectory()
     /// Claude Code's permission requests waiting for the phone.
     @ObservationIgnored let approvals = AgentApprovals(clock: SystemClock(), sleep: { try? await Task.sleep(for: .seconds($0)) })
     public private(set) var agents: [AgentProcess] = []
@@ -475,7 +478,8 @@ public final class RemoteController: CommandTarget {
             dockerRunning: NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == PausePolicy.dockerBundleID },
             pairedDevices: devices.map(\.id),
             agentRequests: approvals.pending.isEmpty ? nil : approvals.pending,
-            remoteCommands: model.remoteCommands
+            remoteCommands: model.remoteCommands,
+            terminalDirectory: model.remoteCommands ? TerminalSession.shown(terminalFolder, home: NSHomeDirectory()) : nil
         )
     }
 
@@ -669,10 +673,19 @@ public final class RemoteController: CommandTarget {
             guard let cwd = agent.cwd else { throw RemoteError.agentFolderUnreadable }
             directory = cwd
         } else {
-            directory = NSHomeDirectory()
+            // The terminal's folder, unless it went away meanwhile.
+            var isFolder: ObjCBool = false
+            let there = FileManager.default.fileExists(atPath: terminalFolder, isDirectory: &isFolder) && isFolder.boolValue
+            directory = there ? terminalFolder : NSHomeDirectory()
         }
         log.info("command from the phone in \(directory): \(text)")
-        let output = try await RemoteShell.run(text, in: directory)
+        var output = try await RemoteShell.run(TerminalSession.wrap(text), in: directory)
+        let (shown, ended) = TerminalSession.split(output.text)
+        output.text = shown
+        // A command that exited early leaves the folder where it started.
+        terminalFolder = ended ?? directory
+        output.directory = TerminalSession.shown(terminalFolder, home: NSHomeDirectory())
+        publishSoon()
         log.info("command from the phone \(output.summary), \(Int(output.seconds)) s, \(output.text.count) characters\(output.truncated ? " (cut)" : "")")
         return output
     }

@@ -11,6 +11,9 @@ struct RootView: View {
         Group {
             if runtime.model.mac == nil {
                 OnboardingView(model: runtime.model) { runtime.enterDemo() }
+            } else if DemoMode.opensTerminal {
+                // Screenshots of the terminal, in the demonstration.
+                NavigationStack { TerminalView(model: runtime.model) }
             } else {
                 MacView(model: runtime.model, demo: runtime.isDemo) { runtime.leaveDemo() }
             }
@@ -257,12 +260,7 @@ struct MacView: View {
     @State private var confirmUnpair = false
     @State private var customHours = 3
     @State private var agentToStop: MacState.Agent?
-    @State private var commandText = ""
-    /// The agent whose project folder the command runs in; nil for the home folder.
-    @State private var commandAgentPID: Int32?
-    @FocusState private var commandFocused: Bool
-    @State private var showCommandHelp = false
-    /// The commands run from this phone, kept on it only.
+    /// The terminal's history, kept on this phone only: cleared when unpairing.
     @AppStorage("shellHistory") private var historyData = Data()
 
     var body: some View {
@@ -309,42 +307,12 @@ struct MacView: View {
                 .padding(.bottom, 40)
             }
             .refreshable { await model.tick() }
-            // Swiping down puts the keyboard away.
-            .scrollDismissesKeyboard(.interactively)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel("Réglages")
                         .disabled(model.state == nil || !online || model.isBusy)
                 }
-                ToolbarItemGroup(placement: .keyboard) {
-                    if commandFocused {
-                        Button { showCommandHelp = true } label: { Image(systemName: "info.circle") }
-                            .accessibilityLabel("Commandes utiles")
-                        Spacer()
-                        Button("Fermer") { commandFocused = false }
-                        Button("Lancer") { runCommand() }
-                            .fontWeight(.semibold)
-                            .disabled(!canRunCommand)
-                    }
-                }
-            }
-            .sheet(isPresented: $showCommandHelp) {
-                CommandHelpSheet { picked in
-                    commandText = picked
-                    // Back in the field, to replace PROJET or COMMANDE.
-                    Task {
-                        try? await Task.sleep(for: .milliseconds(450))
-                        commandFocused = true
-                    }
-                }
-            }
-            .onChange(of: model.shell?.id) {
-                guard let shell = model.shell, shell.phase == .running else { return }
-                var history = CommandHistory(data: historyData)
-                history.record(shell.text)
-                historyData = history.data
-                commandText = ""
             }
             .onChange(of: model.mac == nil) { _, unpaired in
                 if unpaired { historyData = Data() }
@@ -567,67 +535,30 @@ struct MacView: View {
 
     // MARK: Terminal
 
-    /// A command typed here runs on the Mac, with the Mac's option on: what
-    /// `!` does in a terminal, out of an agent's hands.
+    /// The terminal opens on its own screen; here, where it is.
     private func terminalBlock(_ s: MacState) -> some View {
-        let agents = s.agents.filter { $0.pid != nil }
-        let running = model.shell?.phase == .running
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 18) {
-                SectionTitle("Terminal")
-                Spacer()
-                if s.remoteCommands == true {
-                    historyMenu
-                    Button { showCommandHelp = true } label: { Image(systemName: "info.circle") }
-                        .accessibilityLabel("Commandes utiles")
-                }
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle("Terminal")
             if s.remoteCommands == true {
-                VStack(alignment: .leading, spacing: 0) {
-                    Menu {
-                        Picker("Dossier", selection: $commandAgentPID) {
-                            Text("Dossier personnel").tag(Int32?.none)
-                            ForEach(agents, id: \.pid) { agent in
-                                Text(agent.project.map { "\(agent.tool) · \($0)" } ?? agent.tool).tag(agent.pid)
-                            }
+                NavigationLink {
+                    TerminalView(model: model)
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: "apple.terminal").font(.title3).frame(width: 28)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Ouvrir le terminal")
+                            Text("\(s.terminalDirectory ?? "~") %")
+                                .font(.caption.monospaced()).foregroundStyle(.secondary)
+                                .lineLimit(1).truncationMode(.head)
                         }
-                    } label: {
-                        Label(folderTitle(agents), systemImage: "folder")
-                            .font(.subheadline)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Spacer()
+                        if model.shell?.phase == .running { ProgressView() }
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    Divider()
-                    HStack(alignment: .top, spacing: 8) {
-                        Text("$").font(.body.monospaced()).foregroundStyle(.secondary)
-                        TextField("Commande", text: $commandText, axis: .vertical)
-                            .font(.body.monospaced())
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .lineLimit(1...6)
-                            .focused($commandFocused)
-                    }
-                    .padding(12)
+                    .contentShape(Rectangle())
                 }
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 14))
-                HStack(spacing: 10) {
-                    Button("Lancer") { runCommand() }
-                        .buttonStyle(.glassProminent)
-                        .disabled(!canRunCommand)
-                        .accessibilityHint("Demande Face ID")
-                    if !commandText.isEmpty, !running {
-                        Button("Effacer") { commandText = "" }.buttonStyle(.glass)
-                    }
-                    Spacer()
-                    if running, let shell = model.shell {
-                        ProgressView()
-                        Text("en cours depuis \(shell.since.formatted(date: .omitted, time: .shortened))")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                if let shell = model.shell { shellResult(shell) }
-                Text("Avec ton shell, dans le dossier choisi, sans saisie, au plus \(DurationText.short(Policy.remoteCommandTimeout)). Demande Face ID. Le bouton i propose des commandes toutes prêtes.")
+                .buttonStyle(.plain)
+                Text("Les commandes s'exécutent sur le Mac, avec ton shell, au plus \(DurationText.short(Policy.remoteCommandTimeout)), sans saisie. Face ID à chaque commande.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 Text("Désactivé sur le Mac. Pour lancer des commandes d'ici : DarraOwl > Réglages > Terminal, sur le Mac.")
@@ -635,101 +566,6 @@ struct MacView: View {
             }
         }
         .disabled(!online)
-    }
-
-    private var canRunCommand: Bool {
-        CommandKind.isWellFormedCommand(commandText) && model.shell?.phase != .running && !model.isBusy && online
-    }
-
-    /// Face ID, then the command runs on the Mac; the keyboard goes so the
-    /// answer can be seen.
-    private func runCommand() {
-        guard canRunCommand else { return }
-        commandFocused = false
-        let agent = commandAgentPID.flatMap { pid in model.state?.agents.first { $0.pid == pid } }
-        let text = commandText
-        Task { await model.runShell(text, agent: agent) }
-    }
-
-    private func folderTitle(_ agents: [MacState.Agent]) -> String {
-        guard let pid = commandAgentPID, let agent = agents.first(where: { $0.pid == pid }) else { return "Dossier personnel" }
-        return agent.project.map { "\(agent.tool) · \($0)" } ?? agent.tool
-    }
-
-    /// The last commands, to run again or change.
-    private var historyMenu: some View {
-        let history = CommandHistory(data: historyData)
-        return Menu {
-            ForEach(history.commands, id: \.self) { command in
-                Button(command) {
-                    commandText = command
-                    commandFocused = true
-                }
-            }
-            if !history.commands.isEmpty {
-                Divider()
-                Button("Effacer l'historique", role: .destructive) { historyData = Data() }
-            }
-        } label: {
-            Image(systemName: "clock.arrow.circlepath")
-        }
-        .accessibilityLabel("Historique des commandes")
-        .disabled(history.commands.isEmpty)
-    }
-
-    @ViewBuilder
-    private func shellResult(_ shell: PhoneModel.ShellRun) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top) {
-                Text("$ \(shell.text)").font(.callout.monospaced()).lineLimit(3).textSelection(.enabled)
-                Spacer()
-                Text(shell.agent.map { $0.project ?? $0.tool } ?? "~").font(.caption).foregroundStyle(.secondary)
-            }
-            switch shell.phase {
-            case .running:
-                // The Mac goes on with the command; only the wait ends here.
-                Button("Ne plus attendre") { model.clearShell() }.buttonStyle(.glass)
-            case let .done(output):
-                HStack(spacing: 8) {
-                    Image(systemName: output.status == 0 ? "checkmark.circle" : "exclamationmark.triangle")
-                        .foregroundStyle(output.status == 0 ? Color.secondary : Color.orange)
-                    Text("\(output.summary) · \(secondsText(output.seconds))").font(.subheadline).foregroundStyle(.secondary)
-                }
-                if output.text.isEmpty {
-                    Text("Rien affiché.").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    ScrollView {
-                        Text(output.text)
-                            .font(.caption.monospaced())
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxHeight: 280)
-                    .padding(10)
-                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
-                }
-                if output.truncated {
-                    Text("Seule la fin est affichée (\(Policy.remoteCommandOutputLimit / 1024) Ko).").font(.caption).foregroundStyle(.secondary)
-                }
-                HStack {
-                    Button("Copier") { UIPasteboard.general.string = output.text }
-                        .buttonStyle(.glass)
-                        .disabled(output.text.isEmpty)
-                    Spacer()
-                    Button("Fermer") { model.clearShell() }.buttonStyle(.glass)
-                }
-            case let .failed(why):
-                Label(why, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
-                Button("Fermer") { model.clearShell() }.buttonStyle(.glass)
-            }
-        }
-    }
-
-    /// "4 s", "1 min 05".
-    private func secondsText(_ seconds: TimeInterval) -> String {
-        let whole = max(1, Int(seconds.rounded()))
-        guard whole >= 60 else { return "\(whole) s" }
-        return "\(whole / 60) min \(String(format: "%02d", whole % 60))"
     }
 
     // MARK: Controls

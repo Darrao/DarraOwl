@@ -43,3 +43,29 @@ import Testing
         #expect(TerminalPath.prepending("/A/Helpers", to: "/usr/bin:/A/Helpers::/bin") == "/A/Helpers:/usr/bin:/bin")
     }
 }
+
+/// The phone's terminal keeps its folder between commands.
+@Suite struct TerminalSessionTests {
+    @Test func theFolderComesBackAfterWhatTheCommandPrinted() {
+        let wrapped = TerminalSession.wrap("cd ~/Dev && ls")
+        #expect(wrapped.hasPrefix("cd ~/Dev && ls\n"))
+        #expect(wrapped.hasSuffix("exit $__darraowl_status"), "the command's own exit status")
+        let (text, folder) = TerminalSession.split("api\nsite\n\n\(TerminalSession.marker)/Users/me/Dev\n")
+        #expect(text == "api\nsite\n")
+        #expect(folder == "/Users/me/Dev")
+        let (bare, none) = TerminalSession.split("exit 3 left early")
+        #expect(bare == "exit 3 left early" && none == nil)
+        let (late, _) = TerminalSession.split("x\n\(TerminalSession.marker)/tmp\nbackground job\n")
+        #expect(late == "x\nbackground job\n")
+        let (fake, real) = TerminalSession.split("\n\(TerminalSession.marker)/printed\nok\n\(TerminalSession.marker)/Users/me\n")
+        #expect(real == "/Users/me", "the last one is the shell's")
+        #expect(fake.contains("/printed"))
+    }
+
+    @Test func foldersAreShownFromTheHomeFolder() {
+        #expect(TerminalSession.shown("/Users/me", home: "/Users/me") == "~")
+        #expect(TerminalSession.shown("/Users/me/Dev/api", home: "/Users/me") == "~/Dev/api")
+        #expect(TerminalSession.shown("/Users/meow", home: "/Users/me") == "/Users/meow")
+        #expect(TerminalSession.shown("/tmp", home: "/Users/me") == "/tmp")
+    }
+}
