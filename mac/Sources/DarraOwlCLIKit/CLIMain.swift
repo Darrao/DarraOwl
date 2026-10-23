@@ -47,37 +47,157 @@ public enum CLIMain {
             return 0
         case let .run(seconds, arguments):
             return await run(arguments, seconds: seconds, client: client)
-        case let .claude(folder):
-            return openClaude(in: folder)
+        case let .claude(request):
+            switch request {
+            case let .new(folder): return openClaude(in: folder)
+            case let .list(folder): return listConversations(in: folder)
+            case let .latest(folder): return resumeLatest(in: folder)
+            case let .resume(id): return resume(id)
+            }
         }
     }
+
+    // MARK: Claude Code
 
     /// Claude Code's Remote Control server in a new Terminal window, found
     /// then in the Claude app (Code). The folder should be one Claude has
     /// already opened on this Mac: in another, it asks in the window whether
     /// to trust it.
     static func openClaude(in folder: String?) -> Int32 {
-        let files = FileManager.default
-        let here = URL(fileURLWithPath: files.currentDirectoryPath, isDirectory: true)
-        let path = folder.map { ($0 as NSString).expandingTildeInPath } ?? here.path
-        let target = URL(fileURLWithPath: path, relativeTo: here).standardizedFileURL.path
+        let target = absolute(folder)
         var isFolder: ObjCBool = false
-        guard files.fileExists(atPath: target, isDirectory: &isFolder), isFolder.boolValue else {
+        guard FileManager.default.fileExists(atPath: target, isDirectory: &isFolder), isFolder.boolValue else {
             say("darraowl : dossier introuvable : \(target)")
             return 1
         }
-        guard let claude = ClaudeLauncher.findClaude(path: ProcessInfo.processInfo.environment["PATH"], home: NSHomeDirectory(),
-                                                     isExecutable: { files.isExecutableFile(atPath: $0) }) else {
-            say("darraowl : Claude Code est introuvable sur ce Mac (commande claude).")
+        guard let claude = claudePath(), openInTerminal(ClaudeLauncher.script(folder: target, claude: claude)) else { return 1 }
+        print("Claude Code démarre dans une fenêtre Terminal du Mac, dans \(target).")
+        print("Retrouve la session « \(ClaudeLauncher.sessionName(folder: target)) » dans l'app Claude, onglet Code.")
+        return 0
+    }
+
+    /// The latest conversations, the open ones marked. Read from Claude's
+    /// transcripts only: nothing in the folders themselves (macOS would ask
+    /// on the Mac before DarraOwl reads Documents, and nobody is there).
+    static func listConversations(in folder: String?) -> Int32 {
+        let target = folder.map(absolute)
+        let found = ClaudeConversations.recent(in: projectsRoot, folder: target, limit: 12)
+        guard !found.isEmpty else {
+            print(target.map { "Aucune conversation Claude Code dans \($0)." } ?? "Aucune conversation Claude Code sur ce Mac.")
+            return 0
+        }
+        let open = claudePath(quiet: true).flatMap(openConversations) ?? []
+        print(ClaudeConversations.listing(found, open: open, home: NSHomeDirectory(), now: Date(), calendar: .current))
+        return 0
+    }
+
+    static func resumeLatest(in folder: String?) -> Int32 {
+        let target = absolute(folder)
+        guard let latest = ClaudeConversations.recent(in: projectsRoot, folder: target, limit: 1).first else {
+            say("darraowl : aucune conversation Claude Code dans \(target). darraowl claude en commence une.")
             return 1
         }
+        return take(latest)
+    }
+
+    static func resume(_ id: String) -> Int32 {
+        switch ClaudeConversations.find(id, in: projectsRoot) {
+        case let .found(conversation):
+            return take(conversation)
+        case .none:
+            say("darraowl : aucune conversation \(id). darraowl claude --list les montre.")
+        case .several:
+            say("darraowl : plusieurs conversations commencent par \(id) : donne plus de caractères.")
+        }
+        return 1
+    }
+
+    /// In a Terminal window, in its folder, unless it is open already: two
+    /// copies would each go their own way.
+    static func take(_ conversation: ClaudeConversations.Conversation) -> Int32 {
+        guard let folder = conversation.folder else {
+            say("darraowl : le dossier de cette conversation est inconnu.")
+            return 1
+        }
+        guard let claude = claudePath() else { return 1 }
+        if openConversations(claude: claude)?.contains(conversation.id) == true {
+            say("darraowl : cette conversation est déjà ouverte sur le Mac (app Claude ou Terminal) : la reprendre ici en ferait deux. "
+                + "Si Remote Control y est activé, elle est dans l'app Claude, onglet Code.")
+            return 1
+        }
+        let name = conversation.title ?? ClaudeLauncher.sessionName(folder: folder)
+        guard openInTerminal(ClaudeLauncher.resumeScript(folder: folder, claude: claude, id: conversation.id, name: name)) else { return 1 }
+        print("Claude Code reprend « \(name) » dans une fenêtre Terminal du Mac, dans \(ClaudeConversations.shown(folder, home: NSHomeDirectory())).")
+        print("Retrouve-la dans l'app Claude, onglet Code.")
+        return 0
+    }
+
+    /// Claude's transcripts: in CLAUDE_CONFIG_DIR when set, else ~/.claude.
+    static var projectsRoot: URL {
+        let configured = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].flatMap { $0.isEmpty ? nil : $0 }
+        let config = configured.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true) }
+            ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).appending(path: ".claude", directoryHint: .isDirectory)
+        return config.appending(path: "projects", directoryHint: .isDirectory)
+    }
+
+    /// The folder as an absolute path (the current one when nil), unchecked.
+    static func absolute(_ folder: String?) -> String {
+        let here = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let path = folder.map { ($0 as NSString).expandingTildeInPath } ?? here.path
+        return URL(fileURLWithPath: path, relativeTo: here).standardizedFileURL.path
+    }
+
+    static func claudePath(quiet: Bool = false) -> String? {
+        let found = ClaudeLauncher.findClaude(path: ProcessInfo.processInfo.environment["PATH"], home: NSHomeDirectory(),
+                                              isExecutable: { FileManager.default.isExecutableFile(atPath: $0) })
+        if found == nil, !quiet { say("darraowl : Claude Code est introuvable sur ce Mac (commande claude).") }
+        return found
+    }
+
+    /// Ids of the conversations open on this Mac; nil when Claude does not
+    /// say within a few seconds.
+    static func openConversations(claude: String) -> Set<String>? {
+        output(of: claude, ["agents", "--json"], timeout: 15).flatMap(ClaudeConversations.openIDs)
+    }
+
+    /// What a command prints, when it ends well within `timeout`. Into a
+    /// file, not a pipe: nothing it starts can keep the read waiting.
+    static func output(of executable: String, _ arguments: [String], timeout: TimeInterval) -> Data? {
+        let files = FileManager.default
+        let file = files.temporaryDirectory.appending(path: "darraowl-\(UUID().uuidString).out")
+        guard files.createFile(atPath: file.path, contents: nil, attributes: [.posixPermissions: 0o600]),
+              let out = try? FileHandle(forWritingTo: file) else { return nil }
+        defer {
+            try? out.close()
+            try? files.removeItem(at: file)
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        let ended = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in ended.signal() }
+        do { try process.run() } catch { return nil }
+        guard ended.wait(timeout: .now() + timeout) == .success else {
+            process.terminate()
+            return nil
+        }
+        guard process.terminationReason == .exit, process.terminationStatus == 0 else { return nil }
+        return try? Data(contentsOf: file)
+    }
+
+    /// Runs the script in a new Terminal window; it removes itself there.
+    static func openInTerminal(_ text: String) -> Bool {
+        let files = FileManager.default
         let script = files.temporaryDirectory.appending(path: "darraowl-claude-\(UUID().uuidString).command")
         do {
-            try ClaudeLauncher.script(folder: target, claude: claude).write(to: script, atomically: true, encoding: .utf8)
+            try text.write(to: script, atomically: true, encoding: .utf8)
             try files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
         } catch {
             say("darraowl : \(error.localizedDescription)")
-            return 1
+            return false
         }
         let open = Process()
         open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
@@ -88,16 +208,14 @@ public enum CLIMain {
         } catch {
             try? files.removeItem(at: script)
             say("darraowl : Terminal ne s'ouvre pas : \(error.localizedDescription)")
-            return 1
+            return false
         }
         guard open.terminationStatus == 0 else {
             try? files.removeItem(at: script)
             say("darraowl : Terminal ne s'ouvre pas.")
-            return 1
+            return false
         }
-        print("Claude Code démarre dans une fenêtre Terminal du Mac, dans \(target).")
-        print("Retrouve la session « \(ClaudeLauncher.sessionName(folder: target)) » dans l'app Claude, onglet Code.")
-        return 0
+        return true
     }
 
     /// Keeps the Mac awake while the command runs. The helper follows this

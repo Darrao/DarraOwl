@@ -938,6 +938,9 @@ struct PhoneRig {
         #expect(Set(items.map(\.command)).count == items.count)
         for item in items { #expect(CommandKind.isWellFormedCommand(item.command), "\(item.command)") }
         #expect(items.contains { $0.command.hasPrefix("darraowl claude") }, "starting Claude from the phone")
+        for option in ["--list", "--continue", "--resume"] {
+            #expect(items.contains { $0.command.hasPrefix("darraowl claude \(option)") }, "taking a conversation up again")
+        }
     }
 }
 

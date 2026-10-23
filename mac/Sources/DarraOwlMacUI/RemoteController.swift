@@ -482,7 +482,7 @@ public final class RemoteController: CommandTarget {
             pairedDevices: devices.map(\.id),
             agentRequests: approvals.pending.isEmpty ? nil : approvals.pending,
             remoteCommands: model.remoteCommands,
-            terminalDirectory: model.remoteCommands ? TerminalSession.shown(terminalFolder, home: NSHomeDirectory()) : nil
+            terminalDirectory: model.remoteCommands ? TerminalSession.shown(terminalFolder, home: NSHomeDirectory(), masked: mask) : nil
         )
     }
 
@@ -707,7 +707,7 @@ public final class RemoteController: CommandTarget {
         if setsFolder, turn == terminalTurn {
             terminalFolder = ended ?? directory
         }
-        output.directory = TerminalSession.shown(ended ?? directory, home: home)
+        output.directory = TerminalSession.shown(ended ?? directory, home: home, masked: masksProjects)
         publishSoon()
         log.info("command from the phone \(output.summary), \(Int(output.seconds)) s, \(output.text.count) characters\(output.truncated ? " (cut)" : "")")
         return output
@@ -722,8 +722,11 @@ public final class RemoteController: CommandTarget {
             terminalTurn += 1
             publishSoon()
         }
-        return .terminalFolderGone(TerminalSession.shown(folder, home: NSHomeDirectory()), backHome: backHome)
+        return .terminalFolderGone(TerminalSession.shown(folder, home: NSHomeDirectory(), masked: masksProjects), backHome: backHome)
     }
+
+    /// Réglages > Alertes: project names kept off what the phone (and iCloud) is told.
+    private var masksProjects: Bool { model.status?.settings.alerts.maskProjectNames ?? false }
 
     public func displayOff() async throws {
         model.displayOffFromPhone()

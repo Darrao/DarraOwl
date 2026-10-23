@@ -10,14 +10,27 @@ public enum CLICommand: Equatable, Sendable {
     case extend(seconds: TimeInterval)
     case stop
     case status
-    /// `darraowl claude [dossier]`: Claude Code with Remote Control, in a
-    /// Terminal window, in the folder (the current one when nil).
-    case claude(folder: String?)
+    /// `darraowl claude …`: Claude Code with Remote Control, in a Terminal window.
+    case claude(Claude)
     case help
     case version
 
+    public enum Claude: Equatable, Sendable {
+        /// A new conversation, in the folder (the current one when nil).
+        case new(folder: String?)
+        /// The latest conversations; only the folder's when given.
+        case list(folder: String?)
+        /// The folder's latest conversation, taken up again.
+        case latest(folder: String?)
+        /// That conversation (the start of its id), in its own folder.
+        case resume(id: String)
+    }
+
     public enum ParseError: Error, Equatable, Sendable, LocalizedError {
         case unknown(String)
+        case unknownOption(String)
+        case missingConversation
+        case badConversation(String)
         case missingCommand
         case missingDuration(String)
         case badDuration(String)
@@ -26,6 +39,9 @@ public enum CLICommand: Equatable, Sendable {
         public var errorDescription: String? {
             switch self {
             case let .unknown(s): "commande inconnue : \(s)"
+            case let .unknownOption(s): "option inconnue : \(s)"
+            case .missingConversation: "indique la conversation, par exemple : darraowl claude --resume 3f9a2c1b (darraowl claude --list les montre)"
+            case let .badConversation(s): "conversation illisible : \(s) (au moins les 6 premiers caractères que montre darraowl claude --list)"
             case .missingCommand: "indique la commande à lancer, par exemple : darraowl run 3h -- claude"
             case let .missingDuration(verb): "indique une durée, par exemple : darraowl \(verb) 2h"
             case let .badDuration(s): "durée illisible : \(s) (exemples : 45m, 2h, 1h30)"
@@ -41,8 +57,7 @@ public enum CLICommand: Equatable, Sendable {
         case "run":
             return try parseRun(rest)
         case "claude":
-            guard rest.count <= 1 else { throw .extraArguments(rest[1]) }
-            return .claude(folder: rest.first)
+            return .claude(try parseClaude(rest))
         case "start", "extend":
             guard let text = rest.first else { throw .missingDuration(verb) }
             guard rest.count == 1 else { throw .extraArguments(rest[1]) }
@@ -58,6 +73,30 @@ public enum CLICommand: Equatable, Sendable {
             }
         default:
             throw .unknown(verb)
+        }
+    }
+
+    /// `[dossier]`, `--list [dossier]`, `--continue [dossier]`, `--resume id`.
+    private static func parseClaude(_ args: [String]) throws(ParseError) -> Claude {
+        /// At most one folder after the option, never an option itself.
+        func folder(after count: Int) throws(ParseError) -> String? {
+            let rest = args.dropFirst(count)
+            guard rest.count <= 1 else { throw .extraArguments(rest[rest.startIndex + 1]) }
+            if let folder = rest.first, folder.hasPrefix("-") { throw .unknownOption(folder) }
+            return rest.first
+        }
+        switch args.first {
+        case "--list", "-l":
+            return .list(folder: try folder(after: 1))
+        case "--continue", "-c":
+            return .latest(folder: try folder(after: 1))
+        case "--resume", "-r":
+            guard args.count >= 2 else { throw .missingConversation }
+            guard args.count == 2 else { throw .extraArguments(args[2]) }
+            guard ClaudeConversations.isIDPrefix(args[1]) else { throw .badConversation(args[1]) }
+            return .resume(id: args[1])
+        default:
+            return .new(folder: try folder(after: 0))
         }
     }
 
@@ -116,8 +155,12 @@ public enum CLICommand: Equatable, Sendable {
       darraowl extend <durée>               prolonge la session en cours
       darraowl stop                         arrête la session
       darraowl status                       état de la session (par défaut)
-      darraowl claude [dossier]             Claude Code avec Remote Control, dans une
-                                            fenêtre Terminal (le dossier courant par défaut)
+      darraowl claude [dossier]             nouvelle conversation Claude Code avec Remote
+                                            Control, dans une fenêtre Terminal (le dossier
+                                            courant par défaut)
+      darraowl claude --list [dossier]      les dernières conversations, avec leur identifiant
+      darraowl claude --continue [dossier]  reprend la dernière conversation du dossier
+      darraowl claude --resume <id>         reprend cette conversation, dans son dossier
 
     Durées : 45m, 90, 2h, 1h30, 1j. Au plus la durée maximale des
     Réglages de DarraOwl (12 h par défaut).

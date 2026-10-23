@@ -57,8 +57,14 @@ public enum ShellHelp {
 
     public static let sections: [Section] = [
         Section(title: "Claude Code", items: [
-            Item("Lancer Claude (Remote Control)", "darraowl claude ~/Dev/PROJET",
+            Item("Nouvelle conversation (Remote Control)", "darraowl claude ~/Dev/PROJET",
                  "Ouvre Claude dans une fenêtre Terminal du Mac, puis retrouve la session dans l'app Claude, onglet Code. PROJET : un dossier déjà ouvert une fois avec Claude sur ce Mac."),
+            Item("Conversations récentes", "darraowl claude --list",
+                 "Les dernières conversations de ce Mac, app Claude comprise, avec leur identifiant et leur dossier. Suivi d'un dossier : seulement les siennes."),
+            Item("Reprendre la dernière d'un dossier", "darraowl claude --continue ~/Dev/PROJET",
+                 "Elle reprend dans une fenêtre Terminal du Mac, avec Remote Control : retrouve-la dans l'app Claude, onglet Code."),
+            Item("Reprendre une conversation", "darraowl claude --resume ID",
+                 "ID : les 8 caractères que montre la liste. Une conversation encore ouverte sur le Mac n'est pas reprise une deuxième fois."),
             Item("Sessions Claude ouvertes", "claude agents --json", "Celles qui tournent sur le Mac, avec leur dossier."),
             Item("Version de Claude Code", "claude --version"),
             Item("Mettre à jour Claude Code", "claude update"),

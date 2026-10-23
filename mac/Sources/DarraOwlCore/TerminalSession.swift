@@ -28,8 +28,10 @@ public enum TerminalSession {
     }
 
     /// "~/Dev/api" for a folder in the home folder, "~" for the home folder.
-    public static func shown(_ path: String, home: String) -> String {
+    public static func shown(_ path: String, home: String, masked: Bool = false) -> String {
         if path == home { return "~" }
+        // Project names masked (Réglages): only whether it is under home.
+        if masked { return path == "/" ? "/" : path.hasPrefix(home + "/") ? "~/…" : "/…" }
         if path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }
         return path
     }

@@ -26,6 +26,18 @@ public enum ClaudeLauncher {
         """
     }
 
+    /// Removes itself, goes to the conversation's folder and takes it up,
+    /// with Remote Control, under the name it already has.
+    public static func resumeScript(folder: String, claude: String, id: String, name: String) -> String {
+        """
+        #!/bin/zsh
+        rm -f -- "$0"
+        cd -- \(quoted(folder)) || exit 1
+        exec \(quoted(claude)) --resume \(quoted(id)) --remote-control=\(quoted(name))
+
+        """
+    }
+
     /// The first `claude` in PATH, else where Claude Code and Homebrew
     /// install it: a PATH without ~/.local/bin is common (it is often set in
     /// ~/.zshrc only).

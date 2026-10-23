@@ -6,10 +6,35 @@ import Testing
 /// window, and the PATH the phone's commands run with.
 @Suite struct ClaudeLauncherTests {
     @Test func theCommandTakesAFolderOrNone() throws {
-        #expect(try CLICommand.parse(["claude"]) == .claude(folder: nil))
-        #expect(try CLICommand.parse(["claude", "~/Dev/portfolio"]) == .claude(folder: "~/Dev/portfolio"))
+        #expect(try CLICommand.parse(["claude"]) == .claude(.new(folder: nil)))
+        #expect(try CLICommand.parse(["claude", "~/Dev/portfolio"]) == .claude(.new(folder: "~/Dev/portfolio")))
         #expect(throws: CLICommand.ParseError.extraArguments("b")) { try CLICommand.parse(["claude", "a", "b"]) }
+        #expect(throws: CLICommand.ParseError.unknownOption("-x")) { try CLICommand.parse(["claude", "-x"]) }
         #expect(CLICommand.usage.contains("darraowl claude"))
+    }
+
+    /// Listing, the folder's latest, or one by the start of its id.
+    @Test func conversationsAreListedAndTakenUp() throws {
+        #expect(try CLICommand.parse(["claude", "--list"]) == .claude(.list(folder: nil)))
+        #expect(try CLICommand.parse(["claude", "-l", "~/Dev/api"]) == .claude(.list(folder: "~/Dev/api")))
+        #expect(try CLICommand.parse(["claude", "--continue"]) == .claude(.latest(folder: nil)))
+        #expect(try CLICommand.parse(["claude", "-c", "."]) == .claude(.latest(folder: ".")))
+        #expect(try CLICommand.parse(["claude", "--resume", "3F9A2C1B"]) == .claude(.resume(id: "3F9A2C1B")))
+        #expect(throws: CLICommand.ParseError.missingConversation) { try CLICommand.parse(["claude", "--resume"]) }
+        #expect(throws: CLICommand.ParseError.badConversation("3f9a")) { try CLICommand.parse(["claude", "-r", "3f9a"]) }
+        #expect(throws: CLICommand.ParseError.badConversation("$(rm -rf ~)")) { try CLICommand.parse(["claude", "-r", "$(rm -rf ~)"]) }
+        #expect(throws: CLICommand.ParseError.extraArguments("b")) { try CLICommand.parse(["claude", "--list", "a", "b"]) }
+        #expect(throws: CLICommand.ParseError.unknownOption("--all")) { try CLICommand.parse(["claude", "--continue", "--all"]) }
+        #expect(CLICommand.usage.contains("darraowl claude --resume"))
+    }
+
+    /// The conversation goes on in its folder, by its id, under its name.
+    @Test func theResumeScriptQuotesWhatItIsGiven() {
+        let script = ClaudeLauncher.resumeScript(folder: "/Users/me/Dev/l'appli", claude: "/Users/me/.local/bin/claude",
+                                                 id: "3f9a2c1b-0000-4000-8000-000000000000", name: "Fix $(it)")
+        #expect(script.contains("cd -- '/Users/me/Dev/l'\\''appli' || exit 1"))
+        #expect(script.contains("exec '/Users/me/.local/bin/claude' --resume '3f9a2c1b-0000-4000-8000-000000000000' --remote-control='Fix $(it)'"))
+        #expect(script.contains("rm -f -- \"$0\""))
     }
 
     /// The window goes to the folder and becomes the server, named after
@@ -71,6 +96,9 @@ import Testing
         #expect(TerminalSession.shown("/Users/me/Dev/api", home: "/Users/me") == "~/Dev/api")
         #expect(TerminalSession.shown("/Users/meow", home: "/Users/me") == "/Users/meow")
         #expect(TerminalSession.shown("/tmp", home: "/Users/me") == "/tmp")
+        #expect(TerminalSession.shown("/Users/me/Dev/api", home: "/Users/me", masked: true) == "~/…", "no project name when masked")
+        #expect(TerminalSession.shown("/Volumes/Projets/api", home: "/Users/me", masked: true) == "/…")
+        #expect(TerminalSession.shown("/Users/me", home: "/Users/me", masked: true) == "~")
     }
 }
 

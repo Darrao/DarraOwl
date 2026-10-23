@@ -264,6 +264,9 @@ darraowl extend 1h
 darraowl status
 darraowl stop
 darraowl claude ~/Dev/projet  # Claude Code avec Remote Control, dans une fenêtre Terminal
+darraowl claude --list        # les dernières conversations Claude Code, avec leur identifiant
+darraowl claude --continue ~/Dev/projet  # reprend la dernière conversation du dossier
+darraowl claude --resume 3f9a2c1b        # reprend cette conversation, dans son dossier
 ```
 
 `darraowl run` lance la commande dans ton terminal, comme si tu l'avais tapée,
@@ -277,6 +280,16 @@ dossier (le dossier courant par défaut), avec `claude remote-control` : la
 session apparaît dans l'app Claude, onglet Code, sous le nom du dossier. Le
 dossier doit être un projet déjà ouvert une fois avec Claude sur ce Mac :
 pour un autre, Claude demande dans la fenêtre s'il peut lui faire confiance.
+
+`darraowl claude --list [dossier]` montre les 12 dernières conversations
+Claude Code du Mac, celles de l'app Claude comprises (seulement celles du
+dossier s'il est donné) : leur identifiant, leur date, leur dossier et leur
+titre, lus dans les fichiers de Claude (`~/.claude/projects`). `--continue
+[dossier]` reprend la dernière conversation du dossier, `--resume <id>` celle
+dont l'identifiant commence ainsi (6 caractères au moins), dans son dossier :
+une fenêtre Terminal s'ouvre avec `claude --resume … --remote-control`, et la
+conversation apparaît dans l'app Claude, onglet Code. Une conversation encore
+ouverte sur le Mac (`claude agents`) n'est pas reprise une deuxième fois.
 
 ### Depuis l'iPhone
 
@@ -305,7 +318,9 @@ commande.
   efface l'écran.
 
 Pour ouvrir une session Claude que tu continues dans l'app Claude, quand
-aucune ne tourne : `darraowl claude ~/Dev/projet` (voir plus haut).
+aucune ne tourne : `darraowl claude ~/Dev/projet`, ou pour reprendre une
+conversation : `darraowl claude --list`, puis `darraowl claude --resume <id>`
+(voir plus haut).
 
 - La commande s'exécute sous ton compte, avec ton shell de connexion (`zsh -l`
   d'habitude) et le PATH d'une fenêtre Terminal, `~/.zshrc` compris (lu une
