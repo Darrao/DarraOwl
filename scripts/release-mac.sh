@@ -30,7 +30,9 @@ OUT="build/release-$VERSION"
 ARCHIVE="$OUT/DarraOwl-mac.xcarchive"
 rm -rf "$OUT" && mkdir -p "$OUT"
 
-security find-identity -v -p codesigning | grep -q "Developer ID Application" || {
+# Read whole first: under pipefail, grep -q leaving early fails the pipe (SIGPIPE).
+IDENTITIES="$(security find-identity -v -p codesigning)"
+grep -q "Developer ID Application" <<<"$IDENTITIES" || {
   echo "Aucun certificat Developer ID Application dans le trousseau. Voir docs/publication.md." >&2; exit 1; }
 # Notarization: the API key when Apple takes it, else the Keychain profile.
 if ! xcrun notarytool history "${NOTARY_AUTH[@]}" >/dev/null 2>&1; then
