@@ -170,17 +170,20 @@ public enum ClaudeConversations {
             .sorted { $0.lastActive > $1.lastActive }
     }
 
-    /// The date of its last message, read from the end: a few kilobytes, a
-    /// whole window when its last lines are long.
+    /// The date of its last message, read from the end.
     static func lastMessage(_ url: URL) -> Date? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         guard let size = try? handle.seekToEnd() else { return nil }
-        for span in [UInt64(1 << 16), UInt64(window)] {
+        // Wider until a whole message is in: one can be a screenshot of
+        // megabytes. 64 KB, 1 MB, 16 MB, at most 256 MB.
+        var span: UInt64 = 1 << 16
+        while span <= 1 << 28 {
             let start = size > span ? size - span : 0
             guard (try? handle.seek(toOffset: start)) != nil, let data = try? handle.read(upToCount: Int(size - start)) else { return nil }
             if let date = lastMessage(in: data, cut: start > 0) { return date }
             if start == 0 { return nil }
+            span <<= 4
         }
         return nil
     }

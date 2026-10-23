@@ -99,6 +99,23 @@ import Testing
         #expect(ClaudeConversations.lastMessage(in: linked, cut: false) == Date(timeIntervalSince1970: 1_792_742_400), "a link added later is no message")
     }
 
+    /// A last message of megabytes (a screenshot) is read whole, then the
+    /// records after it are passed over.
+    @Test func aLongLastMessageStillDatesIt() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appending(path: "\(Self.ids[0]).jsonl")
+        let picture = String(repeating: "A", count: 3_000_000)
+        try lines([
+            #"{"type":"user","timestamp":"2026-04-02T09:00:00Z"}"#,
+            #"{"type":"user","timestamp":"2026-04-02T10:00:00.500Z","message":{"content":"\#(picture)"}}"#,
+            #"{"type":"attachment","timestamp":"2026-04-02T10:00:00.500Z"}"#,
+            #"{"type":"pr-link","timestamp":"2026-10-23T08:00:00Z"}"#,
+            #"{"type":"custom-title","customTitle":"Avril"}"#,
+        ]).write(to: file)
+        #expect(ClaudeConversations.lastMessage(file) == Date(timeIntervalSince1970: 1_775_124_000.5))
+    }
+
     /// By the start of its id, in any case; too short to tell is no choice.
     @Test func aConversationIsFoundByTheStartOfItsID() throws {
         let root = try temporaryRoot()
