@@ -168,6 +168,8 @@ final class PhoneRuntime {
     private func forget() {
         liveActivity.end()
         SharedStore.clear()
+        // The terminal's history went with the Mac it was typed for.
+        UserDefaults.standard.removeObject(forKey: TerminalView.historyKey)
         WatchBridge.shared.push(WatchLink.Snapshot(state: nil, macName: nil, presence: "Aucun Mac appairé sur l'iPhone.", online: false, at: Date()))
     }
 

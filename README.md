@@ -179,7 +179,9 @@ désinstallation te le rappelle si DarraOwl l'a demandée.
   code en cours, les conteneurs Docker.
 - **Ce que l'iPhone peut faire** : démarrer, prolonger ou arrêter une session,
   suivre un agent, mettre le Mac en veille, gérer Docker, changer les réglages
-  capot fermé, les alertes et les seuils de batterie.
+  capot fermé, les alertes et les seuils de batterie, et lancer une commande
+  dans le terminal du Mac (option à activer sur le Mac, voir
+  [Terminal](#terminal)).
 - **Contrôles** : « Toujours actif » (sans limite ou 1 à 8 h), éteindre
   l'écran, verrouiller le Mac, couper ou remettre le son, mettre en pause ou
   relancer Slack, WhatsApp et Discord (pendant une session), arrêter un agent
@@ -261,6 +263,10 @@ darraowl start 2h             # session minutée
 darraowl extend 1h
 darraowl status
 darraowl stop
+darraowl claude ~/Dev/projet  # Claude Code avec Remote Control, dans une fenêtre Terminal
+darraowl claude --list        # les dernières conversations Claude Code, avec leur identifiant
+darraowl claude --continue ~/Dev/projet  # reprend la dernière conversation du dossier
+darraowl claude --resume 3f9a2c1b        # reprend cette conversation, dans son dossier
 ```
 
 `darraowl run` lance la commande dans ton terminal, comme si tu l'avais tapée,
@@ -268,6 +274,76 @@ et rend son code de sortie. Si DarraOwl ne peut pas garder le Mac éveillé
 (batterie sous le seuil, composant système absent), la commande n'est pas
 lancée. Seul le nom de la commande est affiché sur l'iPhone, jamais ses
 arguments.
+
+`darraowl claude [dossier]` ouvre une fenêtre Terminal sur le Mac, dans le
+dossier (le dossier courant par défaut), avec `claude remote-control` : la
+session apparaît dans l'app Claude, onglet Code, sous le nom du dossier. Le
+dossier doit être un projet déjà ouvert une fois avec Claude sur ce Mac :
+pour un autre, Claude demande dans la fenêtre s'il peut lui faire confiance.
+
+`darraowl claude --list [dossier]` montre les 12 dernières conversations
+Claude Code du Mac, celles de l'app Claude comprises (seulement celles du
+dossier s'il est donné) : leur identifiant, leur date, leur dossier et leur
+titre, lus dans les fichiers de Claude (`~/.claude/projects`). `--continue
+[dossier]` reprend la dernière conversation du dossier, `--resume <id>` celle
+dont l'identifiant commence ainsi (6 caractères au moins), dans son dossier :
+une fenêtre Terminal s'ouvre avec `claude --resume … --remote-control`, et la
+conversation apparaît dans l'app Claude, onglet Code. Une conversation encore
+ouverte sur le Mac (`claude agents`) n'est pas reprise une deuxième fois.
+
+### Depuis l'iPhone
+
+Remote Control de Claude Code ne lance aucune commande depuis le téléphone :
+une ligne qui commence par `!` lui est envoyée comme un message. Quand Claude
+refuse ou n'arrive pas à lancer une commande, DarraOwl la lance pour toi.
+
+DarraOwl > Réglages > Terminal > **Lancer des commandes depuis l'iPhone**
+(désactivé par défaut ; l'iPhone ne peut pas l'activer). L'app iPhone montre
+alors **Ouvrir le terminal** : un écran de terminal, avec le dossier dans
+l'invite (`site-vitrine %`), chaque commande et ce qu'elle a affiché, la
+dernière en bas. Tape la commande, puis Entrée ; Face ID est demandé à chaque
+commande.
+
+- `cd` change de dossier, et il reste pour les commandes suivantes : le Mac
+  garde le dossier, l'iPhone n'envoie jamais de chemin. Il repart du dossier
+  personnel au lancement de DarraOwl.
+- `clear` efface l'écran, `exit` ferme le terminal.
+- Au-dessus du clavier : ↑ et ↓ rappellent les dernières commandes (gardées
+  sur l'iPhone seulement, effacées au désappairage), les caractères cachés du
+  clavier (`~ / - | > & * .`) et de quoi ranger le clavier (un glissement vers
+  le bas le range aussi).
+- Le bouton **i** propose des commandes toutes prêtes (lancer Claude, Git,
+  batterie, tâches longues…), à toucher pour les mettre dans la ligne. Le menu
+  **⋯** va dans le dossier d'un agent en cours, rappelle l'historique et
+  efface l'écran.
+
+Pour ouvrir une session Claude que tu continues dans l'app Claude, quand
+aucune ne tourne : `darraowl claude ~/Dev/projet`, ou pour reprendre une
+conversation : `darraowl claude --list`, puis `darraowl claude --resume <id>`
+(voir plus haut).
+
+- La commande s'exécute sous ton compte, avec ton shell de connexion (`zsh -l`
+  d'habitude) et le PATH d'une fenêtre Terminal, `~/.zshrc` compris (lu une
+  fois toutes les dix minutes par un shell interactif). `darraowl` est celui
+  de l'app.
+- Dans le Bureau, les Documents ou les Téléchargements, macOS demande sur le
+  Mac, la première fois, si DarraOwl peut y accéder : une commande qui y
+  touche attend cette réponse. Autorise-le une fois devant le Mac, ou travaille
+  ailleurs (`~/Dev`…).
+- Sans terminal ni saisie : `sudo` ou une question interactive échouent au
+  lieu d'attendre. Au plus 5 minutes, puis tout ce qu'elle a lancé est
+  arrêté.
+- Ce qu'elle affiche revient sur l'iPhone : code de sortie, durée et les
+  8 derniers Ko de la sortie, par la connexion directe ou par ta base iCloud
+  privée, d'où le résultat est effacé une fois lu, au plus tard après un
+  jour. Si l'app iPhone passe en arrière-plan pendant une longue commande,
+  elle retrouve le résultat à son retour, tant qu'iOS ne l'a pas fermée.
+- Le Mac note dans son journal la commande et son dossier, jamais sa sortie.
+  Il garde les 100 derniers résultats de commandes de l'iPhone, sorties
+  comprises, dans `~/Library/Application Support/DarraOwl/commands.json`.
+
+Avec cette option, un iPhone appairé peut tout faire sur le Mac : ne
+l'active que si tu le veux vraiment.
 
 ## Claude Code
 
@@ -285,6 +361,12 @@ dans le terminal. Sans réponse au bout d'une heure, ou dès que tu reviens
 devant le Mac, Claude pose la question dans le terminal, comme d'habitude.
 Ses questions et les plans qu'il te soumet restent dans le terminal : tu
 reçois « Claude attend ta validation ».
+
+**Demander sur l'iPhone même devant le Mac** (option, désactivée par
+défaut) : chaque demande d'autorisation part sur l'iPhone, que tu sois devant
+le Mac ou non. Le terminal attend alors la réponse de l'iPhone, jusqu'à une
+heure. Pour reprendre une demande au clavier, clique sur **Répondre dans le
+terminal** dans le menu de DarraOwl ; Échap dans Claude annule l'action.
 
 Le bouton ajoute quatre « hooks » (Stop, SubagentStop, Notification et
 PermissionRequest) dans `~/.claude/settings.json`. Le reste du fichier est

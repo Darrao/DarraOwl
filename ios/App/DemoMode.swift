@@ -7,6 +7,8 @@ import Foundation
 /// app shows a believable Mac without one. Never active otherwise.
 enum DemoMode {
     static var isOn: Bool { CommandLine.arguments.contains("-DarraOwlDemo") }
+    /// With -DarraOwlDemoTerminal too: the demonstration opens on its terminal.
+    static var opensTerminal: Bool { isOn && CommandLine.arguments.contains("-DarraOwlDemoTerminal") }
     /// `-DarraOwlDemo -DarraOwlDemoOnboarding`: not paired yet.
     static var onboarding: Bool { CommandLine.arguments.contains("-DarraOwlDemoOnboarding") }
 
@@ -43,6 +45,8 @@ enum DemoMode {
         var settings = PowerSettings.default
         /// A Claude request to show what answering one looks like.
         var requests = [MacState.AgentRequest(id: UUID(), tool: "Bash", detail: "npm run test", project: "DarraOwl", at: Date())]
+        /// The terminal's folder: cd changes it, as on a real Mac.
+        var terminalDirectory = "~/Dev/site-vitrine"
 
         var state: MacState {
             let now = Date()
@@ -59,7 +63,8 @@ enum DemoMode {
                 network: .init(kind: .hotspot, name: "iPhone", sessionBytes: 184_000_000),
                 agents: agents, containers: containers,
                 dockerPaused: end != nil && dockerPaused, settings: settings, presence: presence, muted: muted,
-                dockerRunning: true, agentRequests: requests.isEmpty ? nil : requests
+                dockerRunning: true, agentRequests: requests.isEmpty ? nil : requests, remoteCommands: true,
+                terminalDirectory: terminalDirectory
             )
         }
 
@@ -116,10 +121,46 @@ enum DemoMode {
             case let .answerAgentRequest(id, _):
                 guard requests.contains(where: { $0.id == id }) else { return "Cette demande n'attend plus de réponse." }
                 requests.removeAll { $0.id == id }
+            case let .runCommand(text, pid):
+                // An agent's folder, as the Mac's menu pwd would make it the terminal's.
+                if let pid, let agent = agents.first(where: { $0.pid == pid }) {
+                    if text == "pwd" { terminalDirectory = "~/Dev/\(agent.project ?? agent.tool)" }
+                } else {
+                    terminalDirectory = Self.folder(after: text, from: terminalDirectory)
+                }
             case .displayOff, .lockScreen, .forgetThisDevice:
                 break
             }
             return nil
+        }
+
+        /// What the demonstration's shell "prints": nothing runs anywhere.
+        static func shellOutput(for text: String, in folder: String) -> ShellOutput {
+            let printed: String
+            switch text.trimmingCharacters(in: .whitespaces) {
+            case "ls": printed = "README.md\nindex.html\npackage.json\nsrc\n"
+            case "pwd": printed = folder.replacingOccurrences(of: "~", with: "/Users/moi") + "\n"
+            case "git status", "git status --short --branch": printed = "## main...origin/main\n"
+            case let t where t.hasPrefix("cd"): printed = ""
+            default: printed = "Démonstration : rien n'a été exécuté.\n"
+            }
+            return ShellOutput(status: 0, text: printed, truncated: false, seconds: 0.4, directory: folder)
+        }
+
+        /// The folder a `cd` leads to, the rest staying where it is.
+        static func folder(after text: String, from folder: String) -> String {
+            let words = text.split(separator: " ", maxSplits: 1).map(String.init)
+            guard words.first == "cd" else { return folder }
+            guard words.count == 2 else { return "~" }
+            let target = words[1].trimmingCharacters(in: .whitespaces)
+            if target.hasPrefix("~") || target.hasPrefix("/") { return target }
+            let absolute = folder.hasPrefix("/")
+            var parts = folder.split(separator: "/").map(String.init)
+            for part in target.split(separator: "/") {
+                if part == ".." { if !parts.isEmpty, parts != ["~"] { parts.removeLast() } } else if part != "." { parts.append(String(part)) }
+            }
+            if absolute { return "/" + parts.joined(separator: "/") }
+            return parts.isEmpty ? "~" : parts.joined(separator: "/")
         }
     }
 
@@ -155,7 +196,9 @@ private final class DemoDirect: DirectLink {
     func send(_ command: SignedCommand) throws {
         guard let env = try? LinkCoding.decoder().decode(CommandEnvelope.self, from: command.payload) else { return }
         let refusal = mac.apply(env.kind)
-        let result = CommandResult(commandID: env.id, status: refusal == nil ? .executed : .failed, message: refusal, at: Date())
+        var output: ShellOutput?
+        if case let .runCommand(text, _) = env.kind { output = DemoMode.Mac.shellOutput(for: text, in: mac.state.terminalDirectory ?? "~") }
+        let result = CommandResult(commandID: env.id, status: refusal == nil ? .executed : .failed, message: refusal, at: Date(), output: output)
         let state = mac.state
         // Like a real Mac: the answer comes a moment later, not inside send().
         Task { @MainActor in

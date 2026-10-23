@@ -111,6 +111,14 @@ struct SettingsView: View {
                 if !model.remote.hookListening {
                     Text("Le récepteur local (127.0.0.1:\(String(HookServer.port))) ne tourne pas.").font(.caption).foregroundStyle(.orange)
                 }
+                Toggle("Demander sur l'iPhone même devant le Mac", isOn: Binding(
+                    get: { model.requestsEvenAtTheMac },
+                    set: { model.setRequestsEvenAtTheMac($0) }
+                ))
+                .disabled(claudeState == .absent)
+                Text("Chaque demande d'autorisation part sur l'iPhone, que tu sois devant le Mac ou non. Le terminal attend la réponse de l'iPhone, jusqu'à une heure ; le menu de DarraOwl propose « Répondre dans le terminal » pour la reprendre ici, et Échap dans Claude annule l'action.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Section("Terminal") {
                 Text("La commande darraowl garde le Mac éveillé tant qu'une commande tourne, au plus la durée maximale : darraowl run 3h -- claude. Aussi : darraowl status, darraowl stop.")
@@ -133,6 +141,13 @@ struct SettingsView: View {
                     Text("Si le Terminal ne trouve pas darraowl, ajoute ~/.local/bin à ton PATH.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                Toggle("Lancer des commandes depuis l'iPhone", isOn: Binding(
+                    get: { model.remoteCommands },
+                    set: { model.setRemoteCommands($0) }
+                ))
+                Text("L'iPhone appairé tape une commande ; elle s'exécute ici, sous ton compte et avec ton shell, dans le dossier d'un agent en cours ou dans ton dossier personnel, sans terminal ni saisie, au plus \(DurationText.short(Policy.remoteCommandTimeout)). Face ID à chaque commande. La fin de ce qu'elle affiche (\(Policy.remoteCommandOutputLimit / 1024) Ko) revient sur l'iPhone, par la connexion directe ou par ton iCloud privé, d'où elle est effacée une fois lue. Désactivé par défaut : avec cette option, un iPhone appairé peut tout faire sur ce Mac.")
+                    .font(.caption).foregroundStyle(model.remoteCommands ? .orange : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let setupProblem {
                 Text(setupProblem).font(.caption).foregroundStyle(.red)

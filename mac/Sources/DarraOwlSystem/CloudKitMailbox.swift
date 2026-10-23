@@ -12,7 +12,7 @@ import Foundation
 ///   `protocolVersion`, encrypted `state` (MacState JSON) and `endpoints`.
 /// - `Command` (phone → Mac): `macID`, `expiresAt`, encrypted `payload` (SignedCommand).
 /// - `CommandResult` (name = "result-<command id>"): `macID`, `commandID`,
-///   `status`, `at`, encrypted `message`.
+///   `status`, `at`, encrypted `message` and, for a shell command, `output`.
 /// - `PairingRequest` (phone → Mac): `macID`, encrypted `payload`.
 /// - `PairingResponse` (name = "pairing-<request record name>"): encrypted `payload`.
 /// - `Event` (name = "event-<id>"): `macID`, `kind`, `category`, `at`, and
@@ -132,6 +132,9 @@ public final class CloudKitMailbox: CloudMailbox {
         record["status"] = result.status.rawValue
         record["at"] = result.at
         record.encryptedValues["message"] = result.message
+        // A shell command's output: deleted by the phone once read, or with
+        // the unread results after a day.
+        if let output = result.output { record.encryptedValues["output"] = try LinkCoding.encoder().encode(output) }
         try await save(record)
         remember(record.recordID.recordName, at: result.at, key: Self.resultsKey)
     }

@@ -40,17 +40,25 @@ Mac ; les commandes y passent quand la connexion directe ne répond pas :
   nom du projet (masquer les noms de projets les retire aussi du détail).
   Une demande est retirée d'iCloud dès que tu as répondu, qu'elle est passée
   dans le terminal, ou au plus tard au bout d'une heure ; si DarraOwl est
-  quitté entre-temps, à son prochain lancement.
+  quitté entre-temps, à son prochain lancement ;
+- si tu as activé « Lancer des commandes depuis l'iPhone » (DarraOwl >
+  Réglages > Terminal, sur le Mac), chaque commande tapée sur l'iPhone,
+  signée, et son résultat : code de sortie, durée et la fin de ce qu'elle a
+  affiché (8 Ko au plus). Le résultat est effacé d'iCloud dès que l'iPhone
+  l'a lu, au plus tard un jour après.
 
 Ces données sont enregistrées dans ta base de données iCloud **privée**, que
 seul ton compte Apple peut lire. Le contenu des états et des commandes est
 chiffré par iCloud. Le développeur n'y a pas accès.
 
 DarraOwl n'envoie **jamais** le contenu de tes fichiers, tes prompts ni les
-réponses de tes agents de code. Pour les hooks de Claude Code, seuls le nom de
-l'événement, son type et le nom du dossier sont lus, plus, pour une demande
-d'autorisation, l'outil et ce que Claude veut faire, décrits plus haut : une
-commande que Claude veut lancer peut contenir du texte qu'il a écrit. Ces hooks
+réponses de tes agents de code. Une exception, à ta demande : ce qu'affiche
+une commande que tu as toi-même lancée depuis l'iPhone, si tu as activé cette
+option sur le Mac ; cela peut contenir ce que la commande a lu. Pour les hooks
+de Claude Code, seuls le nom de l'événement, son type et le nom du dossier
+sont lus, plus, pour une demande d'autorisation, l'outil et ce que Claude veut
+faire, décrits plus haut : une commande que Claude veut lancer peut contenir
+du texte qu'il a écrit. Ces hooks
 ne sont ajoutés à `~/.claude/settings.json` que si tu cliques sur Activer (ou
 Mettre à jour).
 
