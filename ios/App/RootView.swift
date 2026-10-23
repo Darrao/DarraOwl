@@ -592,7 +592,7 @@ struct MacView: View {
             case let .done(output):
                 HStack(spacing: 8) {
                     Image(systemName: output.status == 0 ? "checkmark.circle" : "exclamationmark.triangle")
-                        .foregroundStyle(output.status == 0 ? .secondary : .orange)
+                        .foregroundStyle(output.status == 0 ? Color.secondary : Color.orange)
                     Text("\(output.summary) · \(secondsText(output.seconds))").font(.subheadline).foregroundStyle(.secondary)
                 }
                 if output.text.isEmpty {

@@ -58,6 +58,9 @@ public final class PhoneModel {
     /// A shell command's result is looked for in iCloud this often: its
     /// wait can last minutes.
     public static let shellPollInterval: Double = 3
+    /// A shell command not answered over the direct link by then also goes
+    /// through iCloud: the link may drop while it runs.
+    public static let shellBackupDelay: Double = 8
     public static let reconnectInterval: TimeInterval = 15
     public static let cloudFetchInterval: TimeInterval = 10
     /// The Mac sends its state at least every 30 s on the direct link: a
@@ -509,22 +512,44 @@ public final class PhoneModel {
     private func awaitShell(_ envelope: CommandEnvelope, _ signed: SignedCommand, mac: PairedMac, generation: Int) async {
         // Until the Mac would have stopped the command, and a little more.
         let patience = Policy.remoteCommandTimeout + 20
+        let deadline = envelope.issuedAt.addingTimeInterval(patience)
         var result: CommandResult?
+        var sentThroughCloud = false
         if directPath != nil {
+            // The direct link can drop while the command runs (the app
+            // suspended, another network) and its answer with it: a few
+            // seconds on, the command also goes through iCloud, where the Mac
+            // leaves a shell command's result whatever path it came by. The
+            // Mac runs it once; the first answer wins.
+            let backup = Task { [weak self] () -> Bool in
+                guard let self else { return false }
+                await self.deps.sleeper.sleep(seconds: Self.shellBackupDelay)
+                guard !Task.isCancelled, self.waiters[envelope.id] != nil, self.linkGeneration == generation,
+                      (try? await self.deps.cloud.send(signed, macID: mac.macID)) != nil
+                else { return false }
+                if let answer = await self.waitShellCloud(envelope.id, until: deadline, generation: generation) {
+                    self.waiters.removeValue(forKey: envelope.id)?.resume(returning: answer)
+                }
+                return true
+            }
             result = await waitDirect(envelope.id, timeout: patience) { try deps.direct.send(signed) }
+            backup.cancel()
+            sentThroughCloud = await backup.value
         }
         guard linkGeneration == generation else { return }
         if result == nil {
-            // No direct answer: the same command through iCloud, where the
-            // Mac leaves a shell command's result whatever path it came by.
-            do {
-                try await deps.cloud.send(signed, macID: mac.macID)
-            } catch {
-                finishShell(envelope.id, .failed("Envoi impossible : \(error.localizedDescription)"))
-                return
+            // No answer: the same command through iCloud, where the Mac
+            // leaves a shell command's result whatever path it came by.
+            if !sentThroughCloud {
+                do {
+                    try await deps.cloud.send(signed, macID: mac.macID)
+                } catch {
+                    finishShell(envelope.id, .failed("Envoi impossible : \(error.localizedDescription)"))
+                    return
+                }
             }
             guard linkGeneration == generation else { return }
-            result = await waitShellCloud(envelope.id, until: envelope.issuedAt.addingTimeInterval(patience), generation: generation)
+            result = await waitShellCloud(envelope.id, until: deadline, generation: generation)
         }
         guard linkGeneration == generation, self.mac?.macID == mac.macID else { return }
         guard let result else {
@@ -572,7 +597,7 @@ public final class PhoneModel {
     /// Polls iCloud for the result until `deadline`, with one read after
     /// it: back from a long suspension, the result may well be there.
     private func waitShellCloud(_ id: UUID, until deadline: Date, generation: Int) async -> CommandResult? {
-        while linkGeneration == generation {
+        while linkGeneration == generation, !Task.isCancelled {
             if let result = try? await deps.cloud.result(for: id) { return result }
             guard deps.now() <= deadline else { return nil }
             await deps.sleeper.sleep(seconds: Self.shellPollInterval)

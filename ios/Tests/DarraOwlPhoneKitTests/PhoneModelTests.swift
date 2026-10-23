@@ -334,6 +334,38 @@ struct PhoneRig {
         #expect(rig.direct.stateRequests == 1, "the command may have changed what the Mac shows")
     }
 
+    /// The direct link dropped while the command ran (the app suspended):
+    /// a few seconds on, the command also went through iCloud, and its
+    /// answer comes from there instead of after the whole wait.
+    @Test func aDroppedDirectLinkGetsItsAnswerThroughICloud() async throws {
+        let rig = PhoneRig()
+        rig.direct.connectTo = .local
+        rig.direct.reply = nil
+        _ = await rig.paired()
+        rig.cloud.output = ShellOutput(status: 0, text: "done\n", truncated: false, seconds: 40)
+        await rig.model.runShell("npm run build")
+        await settle(rig)
+        #expect(rig.model.shell?.phase == .done(rig.cloud.output!))
+        #expect(rig.direct.sent.count == 1)
+        #expect(rig.cloud.sent.count == 1)
+        let backup = try #require(rig.cloud.sent.first)
+        #expect(backup.payload == rig.direct.sent.first?.payload, "the same command: the Mac runs it once")
+    }
+
+    /// No answer either way: the command went through iCloud once, and the
+    /// wait still ends.
+    @Test func noAnswerOnEitherPathSendsThroughICloudOnce() async throws {
+        let rig = PhoneRig()
+        rig.direct.connectTo = .local
+        rig.direct.reply = nil
+        _ = await rig.paired()
+        rig.cloud.answer = nil
+        await rig.model.runShell("sleep 1000")
+        await settle(rig)
+        #expect(rig.model.shell?.phase == .failed("Pas de réponse du Mac."))
+        #expect(rig.cloud.sent.count == 1)
+    }
+
     /// Through iCloud the wait outlasts a plain command's minute: as long as
     /// the Mac may run the command.
     @Test func aCommandWithoutADirectLinkGoesThroughICloudAndIsPolledLonger() async throws {
