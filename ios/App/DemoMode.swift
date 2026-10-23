@@ -121,8 +121,13 @@ enum DemoMode {
             case let .answerAgentRequest(id, _):
                 guard requests.contains(where: { $0.id == id }) else { return "Cette demande n'attend plus de réponse." }
                 requests.removeAll { $0.id == id }
-            case let .runCommand(text, _):
-                terminalDirectory = Self.folder(after: text, from: terminalDirectory)
+            case let .runCommand(text, pid):
+                // An agent's folder, as the Mac's menu pwd would make it the terminal's.
+                if let pid, let agent = agents.first(where: { $0.pid == pid }) {
+                    if text == "pwd" { terminalDirectory = "~/Dev/\(agent.project ?? agent.tool)" }
+                } else {
+                    terminalDirectory = Self.folder(after: text, from: terminalDirectory)
+                }
             case .displayOff, .lockScreen, .forgetThisDevice:
                 break
             }
@@ -149,11 +154,13 @@ enum DemoMode {
             guard words.count == 2 else { return "~" }
             let target = words[1].trimmingCharacters(in: .whitespaces)
             if target.hasPrefix("~") || target.hasPrefix("/") { return target }
+            let absolute = folder.hasPrefix("/")
             var parts = folder.split(separator: "/").map(String.init)
             for part in target.split(separator: "/") {
-                if part == ".." { if parts.count > 1 { parts.removeLast() } } else if part != "." { parts.append(String(part)) }
+                if part == ".." { if !parts.isEmpty, parts != ["~"] { parts.removeLast() } } else if part != "." { parts.append(String(part)) }
             }
-            return parts.joined(separator: "/")
+            if absolute { return "/" + parts.joined(separator: "/") }
+            return parts.isEmpty ? "~" : parts.joined(separator: "/")
         }
     }
 

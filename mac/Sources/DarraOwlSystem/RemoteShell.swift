@@ -37,13 +37,23 @@ public enum RemoteShell {
     public static func run(_ text: String, in directory: String, timeout: TimeInterval = Policy.remoteCommandTimeout,
                            limit: Int = Policy.remoteCommandOutputLimit) async throws -> ShellOutput {
         let shell = Self.shell
+        guard isPOSIX(shell) else {
+            // fish and others: their own syntax, run as typed.
+            return try await spawn(shell, ["-l", "-c", text], in: directory, environment: environment(shell: shell, path: nil, in: directory),
+                                   timeout: timeout, limit: limit)
+        }
         let path = await terminalPATH(shell: shell)
         // The login profile (-l) reorders PATH (path_helper, brew shellenv):
         // set once more in the script, after it has run.
         let helpers = helpersFolder.map { "\(ClaudeLauncher.quoted($0)):" } ?? ""
         let setPath = "export PATH=\(helpers)" + (path.map(ClaudeLauncher.quoted) ?? "\"$PATH\"") + "\n"
-        return try await spawn(shell, ["-l", "-c", setPath + text], in: directory, environment: environment(shell: shell, path: path),
+        return try await spawn(shell, ["-l", "-c", setPath + text], in: directory, environment: environment(shell: shell, path: path, in: directory),
                                timeout: timeout, limit: limit)
+    }
+
+    /// A shell that reads `VAR=value`, `$?` and `export` (zsh, bash, sh…).
+    public static func isPOSIX(_ shell: String) -> Bool {
+        ["zsh", "bash", "sh", "dash", "ksh"].contains(URL(fileURLWithPath: shell).lastPathComponent)
     }
 
     /// This app's folder of command line tools, when it has its darraowl.
@@ -59,7 +69,7 @@ public enum RemoteShell {
         let now = Date()
         if let known = probed.withLock({ $0 }), now.timeIntervalSince(known.at) < probeLifetime { return known.path }
         let output = try? await spawn(shell, ["-i", "-l", "-c", TerminalPath.probe], in: NSHomeDirectory(),
-                                      environment: environment(shell: shell, path: nil), timeout: probeTimeout, limit: 64 * 1024)
+                                      environment: environment(shell: shell, path: nil, in: NSHomeDirectory()), timeout: probeTimeout, limit: 64 * 1024)
         let path = output.flatMap { TerminalPath.parse($0.text) }
         probed.withLock { $0 = (path, now) }
         return path
@@ -157,9 +167,11 @@ public enum RemoteShell {
     /// plain output, no colours (the phone shows the text as is), the PATH
     /// of a Terminal window when known, and this app's darraowl first (the
     /// one in ~/.local/bin may be another copy's).
-    static func environment(shell: String, path: String?) -> [String: String] {
+    static func environment(shell: String, path: String?, in directory: String) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["HOME"] = NSHomeDirectory()
+        // The folder as named, not as resolved: /tmp stays /tmp, and cd .. from it goes to /.
+        env["PWD"] = directory
         env["SHELL"] = shell
         env["TERM"] = "dumb"
         env["NO_COLOR"] = "1"

@@ -61,6 +61,9 @@ public final class RemoteController: CommandTarget {
     /// The phone's terminal's folder: a cd stays for the next command, as in
     /// a terminal window. The home folder at launch.
     @ObservationIgnored private var terminalFolder = NSHomeDirectory()
+    /// Bumped by each command: one started earlier and ending later does not
+    /// undo a later cd.
+    @ObservationIgnored private var terminalTurn = 0
     /// Claude Code's permission requests waiting for the phone.
     @ObservationIgnored let approvals = AgentApprovals(clock: SystemClock(), sleep: { try? await Task.sleep(for: .seconds($0)) })
     public private(set) var agents: [AgentProcess] = []
@@ -667,27 +670,54 @@ public final class RemoteController: CommandTarget {
     /// what the phone ran; its output is not.
     public func runCommand(_ text: String, agentPID: Int32?) async throws -> ShellOutput {
         guard model.remoteCommands else { throw RemoteError.commandsOff }
+        let home = NSHomeDirectory()
         let directory: String
         if let agentPID {
             guard let agent = agents.first(where: { $0.pid == agentPID }) else { throw RemoteError.unknownAgent }
             guard let cwd = agent.cwd else { throw RemoteError.agentFolderUnreadable }
             directory = cwd
         } else {
-            // The terminal's folder, unless it went away meanwhile.
+            // Gone meanwhile: said, never run in another folder instead.
             var isFolder: ObjCBool = false
-            let there = FileManager.default.fileExists(atPath: terminalFolder, isDirectory: &isFolder) && isFolder.boolValue
-            directory = there ? terminalFolder : NSHomeDirectory()
+            guard FileManager.default.fileExists(atPath: terminalFolder, isDirectory: &isFolder), isFolder.boolValue else {
+                throw leaveTerminalFolder()
+            }
+            directory = terminalFolder
         }
+        terminalTurn += 1
+        let turn = terminalTurn
         log.info("command from the phone in \(directory): \(text)")
-        var output = try await RemoteShell.run(TerminalSession.wrap(text), in: directory)
-        let (shown, ended) = TerminalSession.split(output.text)
+        // The folder kept between commands needs a POSIX shell (zsh, bash…).
+        let posix = RemoteShell.isPOSIX(RemoteShell.shell)
+        var output: ShellOutput
+        do {
+            output = try await RemoteShell.run(posix ? TerminalSession.wrap(text) : text, in: directory)
+        } catch let error as RemoteShell.LaunchError where agentPID == nil && directory != home {
+            // A folder that cannot be entered (its rights changed) would fail every command.
+            log.error("command from the phone not started in \(directory): \(error.detail)")
+            throw leaveTerminalFolder()
+        }
+        let (shown, ended) = posix ? TerminalSession.split(output.text) : (output.text, nil)
         output.text = shown
-        // A command that exited early leaves the folder where it started.
-        terminalFolder = ended ?? directory
-        output.directory = TerminalSession.shown(terminalFolder, home: NSHomeDirectory())
+        // A command that exited early leaves the folder where it started. An
+        // agent's folder becomes the terminal's only through the menu's pwd;
+        // another command of an older phone there leaves the terminal alone.
+        if turn == terminalTurn, agentPID == nil || text == "pwd" {
+            terminalFolder = ended ?? directory
+        }
+        output.directory = TerminalSession.shown(ended ?? directory, home: home)
         publishSoon()
         log.info("command from the phone \(output.summary), \(Int(output.seconds)) s, \(output.text.count) characters\(output.truncated ? " (cut)" : "")")
         return output
+    }
+
+    /// Back to the home folder, published, and why.
+    private func leaveTerminalFolder() -> RemoteError {
+        let gone = TerminalSession.shown(terminalFolder, home: NSHomeDirectory())
+        terminalFolder = NSHomeDirectory()
+        terminalTurn += 1
+        publishSoon()
+        return .terminalFolderGone(gone)
     }
 
     public func displayOff() async throws {

@@ -7,14 +7,18 @@ public enum TerminalSession {
     public static let marker = "__DARRAOWL_PWD__"
 
     /// The command, then the folder it ended in, printed last; its exit
-    /// status kept. A command that exits or does not parse prints no folder.
+    /// status kept. Through eval, so the command stays one piece: a last
+    /// line ending in \, && or |, or an open heredoc, does not run into
+    /// what follows; a parse error is the command's. A command that exits
+    /// prints no folder. POSIX shells only (zsh, bash, sh…).
     public static func wrap(_ text: String) -> String {
-        "\(text)\n__darraowl_status=$?\nprintf '\\n%s%s\\n' \(marker) \"$PWD\"\nexit $__darraowl_status"
+        "eval \(ClaudeLauncher.quoted(text))\n__darraowl_status=$?\nprintf '\\n%s%s\\n' \(marker) \"$PWD\"\nexit $__darraowl_status"
     }
 
     /// What the command printed, without the folder line, and that folder.
     public static func split(_ output: String) -> (text: String, directory: String?) {
-        guard let start = output.range(of: "\n" + marker, options: .backwards) else { return (output, nil) }
+        // Literal: after a lone CR, "\r\n" is one Character and would hide the "\n".
+        guard let start = output.range(of: "\n" + marker, options: [.backwards, .literal]) else { return (output, nil) }
         let rest = output[start.upperBound...]
         let line = rest.prefix { $0 != "\n" }
         // Something left in the background may print after it.

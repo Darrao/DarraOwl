@@ -48,7 +48,8 @@ import Testing
 @Suite struct TerminalSessionTests {
     @Test func theFolderComesBackAfterWhatTheCommandPrinted() {
         let wrapped = TerminalSession.wrap("cd ~/Dev && ls")
-        #expect(wrapped.hasPrefix("cd ~/Dev && ls\n"))
+        #expect(wrapped.hasPrefix("eval 'cd ~/Dev && ls'\n"), "one piece, whatever its last line")
+        #expect(TerminalSession.wrap("echo it's \\").hasPrefix("eval 'echo it'\\''s \\'\n"))
         #expect(wrapped.hasSuffix("exit $__darraowl_status"), "the command's own exit status")
         let (text, folder) = TerminalSession.split("api\nsite\n\n\(TerminalSession.marker)/Users/me/Dev\n")
         #expect(text == "api\nsite\n")
@@ -57,6 +58,9 @@ import Testing
         #expect(bare == "exit 3 left early" && none == nil)
         let (late, _) = TerminalSession.split("x\n\(TerminalSession.marker)/tmp\nbackground job\n")
         #expect(late == "x\nbackground job\n")
+        let (cr, folder2) = TerminalSession.split("abc\r\n\(TerminalSession.marker)/usr\n")
+        #expect(folder2 == "/usr", "after a lone CR too")
+        #expect(cr.hasPrefix("abc"))
         let (fake, real) = TerminalSession.split("\n\(TerminalSession.marker)/printed\nok\n\(TerminalSession.marker)/Users/me\n")
         #expect(real == "/Users/me", "the last one is the shell's")
         #expect(fake.contains("/printed"))

@@ -49,6 +49,15 @@ struct TerminalView: View {
                 .onChange(of: focused) { if focused { proxy.scrollTo("end", anchor: .bottom) } }
                 .onAppear { proxy.scrollTo("end", anchor: .bottom) }
             }
+            if case let .failed(why)? = model.outcome {
+                // Before the command left (Face ID, the phone's key): said here too.
+                Text(why)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(Self.error)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 8)
+            }
             Rectangle().fill(Color(white: 0.2)).frame(height: 1)
             if focused, enabled { keyRow }
             inputLine
@@ -81,6 +90,8 @@ struct TerminalView: View {
             record(shell.text)
             input = ""
         }
+        // A history that changed (a new command, cleared) is walked from its start.
+        .onChange(of: historyData) { historyIndex = nil }
     }
 
     // MARK: Screen
@@ -279,7 +290,7 @@ struct TerminalView: View {
             historyIndex = next
             input = commands[next]
         } else if let index = historyIndex {
-            if index == 0 {
+            if index == 0 || index - 1 >= commands.count {
                 historyIndex = nil
                 input = draft
             } else {
