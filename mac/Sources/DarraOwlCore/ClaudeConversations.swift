@@ -123,7 +123,9 @@ public enum ClaudeConversations {
     /// Claude's folder name for a working directory: every character but a
     /// letter or a digit becomes "-"; a long one is cut, and a hash added.
     static func encoded(_ path: String) -> String {
-        // By UTF-16 unit, as Claude (JavaScript) counts them.
+        // Composed, as Claude takes it (macOS gives "é" decomposed), then by
+        // UTF-16 unit, as Claude (JavaScript) counts them.
+        let path = path.precomposedStringWithCanonicalMapping
         let name = String(decoding: path.utf16.map { unit -> UInt8 in
             let letterOrDigit = (0x30...0x39).contains(unit) || (0x41...0x5A).contains(unit) || (0x61...0x7A).contains(unit)
             return letterOrDigit ? UInt8(unit) : UInt8(ascii: "-")
@@ -168,8 +170,8 @@ public enum ClaudeConversations {
             .sorted { $0.lastActive > $1.lastActive }
     }
 
-    /// The date of the last record that has one, read from the end: a few
-    /// kilobytes, a whole window when its last lines are long.
+    /// The date of its last message, read from the end: a few kilobytes, a
+    /// whole window when its last lines are long.
     static func lastMessage(_ url: URL) -> Date? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
@@ -190,6 +192,8 @@ public enum ClaudeConversations {
         for line in all.reversed() {
             guard line.range(of: Data("\"timestamp\"".utf8)) != nil,
                   let record = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  // Not the links Claude adds later (pull request, app), dated when added.
+                  ["user", "assistant"].contains(record["type"] as? String),
                   let text = record["timestamp"] as? String,
                   let date = (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(text))
                       ?? (try? Date.ISO8601FormatStyle().parse(text)) else { continue }

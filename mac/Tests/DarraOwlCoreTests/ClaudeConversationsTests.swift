@@ -10,6 +10,7 @@ import Testing
     @Test func foldersAreNamedAsClaudeDoes() {
         #expect(ClaudeConversations.encoded("/Users/elio/.gemini/antigravity/scratch/HoneyGiRead") == "-Users-elio--gemini-antigravity-scratch-HoneyGiRead")
         #expect(ClaudeConversations.encoded("/Users/me/Dev/café 🦉") == "-Users-me-Dev-caf----")
+        #expect(ClaudeConversations.encoded("/Users/me/Projets/Cafe\u{301}") == "-Users-me-Projets-Caf-", "composed, as Claude names it")
         let long = ClaudeConversations.encoded("/Users/me/" + String(repeating: "projet-", count: 40))
         #expect(long.count == 207)
         #expect(long.hasSuffix("-m8mtr5"))
@@ -93,6 +94,9 @@ import Testing
             + Data(#"{"type":"custom-title","customTitle":"x"}"#.utf8) + Data("\n".utf8)
         #expect(ClaudeConversations.lastMessage(in: cut, cut: true) == Date(timeIntervalSince1970: 1_792_742_400))
         #expect(ClaudeConversations.lastMessage(in: Data(#"{"type":"mode"}"#.utf8), cut: false) == nil)
+        let linked = Data(#"{"type":"assistant","timestamp":"2026-10-23T08:00:00Z"}"#.utf8) + Data("\n".utf8)
+            + Data(#"{"type":"pr-link","timestamp":"2026-10-30T08:00:00Z"}"#.utf8) + Data("\n".utf8)
+        #expect(ClaudeConversations.lastMessage(in: linked, cut: false) == Date(timeIntervalSince1970: 1_792_742_400), "a link added later is no message")
     }
 
     /// By the start of its id, in any case; too short to tell is no choice.
