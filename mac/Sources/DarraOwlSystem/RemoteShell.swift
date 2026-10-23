@@ -38,8 +38,18 @@ public enum RemoteShell {
                            limit: Int = Policy.remoteCommandOutputLimit) async throws -> ShellOutput {
         let shell = Self.shell
         let path = await terminalPATH(shell: shell)
-        return try await spawn(shell, ["-l", "-c", text], in: directory, environment: environment(shell: shell, path: path),
+        // The login profile (-l) reorders PATH (path_helper, brew shellenv):
+        // set once more in the script, after it has run.
+        let helpers = helpersFolder.map { "\(ClaudeLauncher.quoted($0)):" } ?? ""
+        let setPath = "export PATH=\(helpers)" + (path.map(ClaudeLauncher.quoted) ?? "\"$PATH\"") + "\n"
+        return try await spawn(shell, ["-l", "-c", setPath + text], in: directory, environment: environment(shell: shell, path: path),
                                timeout: timeout, limit: limit)
+    }
+
+    /// This app's folder of command line tools, when it has its darraowl.
+    static var helpersFolder: String? {
+        let helpers = Bundle.main.bundleURL.appending(path: "Contents/Helpers").path
+        return FileManager.default.isExecutableFile(atPath: helpers + "/darraowl") ? helpers : nil
     }
 
     /// PATH as a Terminal window has it (see TerminalPath), asked of an
@@ -155,8 +165,7 @@ public enum RemoteShell {
         env["NO_COLOR"] = "1"
         env["DARRAOWL_REMOTE"] = "1"
         if let path { env["PATH"] = path }
-        let helpers = Bundle.main.bundleURL.appending(path: "Contents/Helpers").path
-        if FileManager.default.isExecutableFile(atPath: helpers + "/darraowl") {
+        if let helpers = helpersFolder {
             env["PATH"] = TerminalPath.prepending(helpers, to: env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
         }
         return env

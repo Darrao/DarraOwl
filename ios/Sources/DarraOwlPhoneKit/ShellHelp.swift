@@ -73,15 +73,17 @@ public enum ShellHelp {
         Section(title: "Le Mac", items: [
             Item("Session DarraOwl", "darraowl status"),
             Item("Batterie", "pmset -g batt"),
-            Item("Espace disque", "df -h /"),
+            Item("Espace disque", "df -h ~"),
             Item("Processus les plus gourmands", "ps -Ao pcpu,pmem,comm -r | head -8"),
             Item("Allumé depuis", "uptime"),
             Item("Adresse IP locale", "ipconfig getifaddr en0"),
         ]),
         Section(title: "Tâches longues", items: [
-            Item("Lancer en arrière-plan", "nohup COMMANDE > ~/Desktop/sortie.txt 2>&1 &",
-                 "Une commande s'arrête au bout de 5 min. En arrière-plan, elle continue, et ce qu'elle affiche va dans le fichier."),
-            Item("Lire la fin du fichier", "tail -40 ~/Desktop/sortie.txt"),
+            // Not on the Desktop: macOS would ask on the Mac whether
+            // DarraOwl may write there, and nobody is at the Mac.
+            Item("Lancer en arrière-plan", "nohup COMMANDE > ~/sortie.txt 2>&1 &",
+                 "Une commande s'arrête au bout de 5 min. En arrière-plan, elle continue, et ce qu'elle affiche va dans ~/sortie.txt."),
+            Item("Lire la fin du fichier", "tail -40 ~/sortie.txt"),
             Item("Voir si elle tourne encore", "pgrep -fl COMMANDE"),
         ]),
     ]

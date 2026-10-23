@@ -311,6 +311,10 @@ aucune ne tourne : `darraowl claude ~/Dev/projet` (voir plus haut).
   d'habitude) et le PATH d'une fenêtre Terminal, `~/.zshrc` compris (lu une
   fois toutes les dix minutes par un shell interactif). `darraowl` est celui
   de l'app.
+- Dans le Bureau, les Documents ou les Téléchargements, macOS demande sur le
+  Mac, la première fois, si DarraOwl peut y accéder : une commande qui y
+  touche attend cette réponse. Autorise-le une fois devant le Mac, ou travaille
+  ailleurs (`~/Dev`…).
 - Sans terminal ni saisie : `sudo` ou une question interactive échouent au
   lieu d'attendre. Au plus 5 minutes, puis tout ce qu'elle a lancé est
   arrêté.

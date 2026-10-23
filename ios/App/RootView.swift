@@ -13,7 +13,7 @@ struct RootView: View {
                 OnboardingView(model: runtime.model) { runtime.enterDemo() }
             } else if DemoMode.opensTerminal {
                 // Screenshots of the terminal, in the demonstration.
-                NavigationStack { TerminalView(model: runtime.model) }
+                NavigationStack { TerminalView(model: runtime.model, demo: true) }
             } else {
                 MacView(model: runtime.model, demo: runtime.isDemo) { runtime.leaveDemo() }
             }
@@ -260,8 +260,6 @@ struct MacView: View {
     @State private var confirmUnpair = false
     @State private var customHours = 3
     @State private var agentToStop: MacState.Agent?
-    /// The terminal's history, kept on this phone only: cleared when unpairing.
-    @AppStorage("shellHistory") private var historyData = Data()
 
     var body: some View {
         NavigationStack {
@@ -313,9 +311,6 @@ struct MacView: View {
                         .accessibilityLabel("Réglages")
                         .disabled(model.state == nil || !online || model.isBusy)
                 }
-            }
-            .onChange(of: model.mac == nil) { _, unpaired in
-                if unpaired { historyData = Data() }
             }
             .sheet(isPresented: $showSettings) {
                 if let state = model.state { SettingsSheet(model: model, settings: state.settings) }
@@ -541,7 +536,7 @@ struct MacView: View {
             SectionTitle("Terminal")
             if s.remoteCommands == true {
                 NavigationLink {
-                    TerminalView(model: model)
+                    TerminalView(model: model, demo: demo)
                 } label: {
                     HStack(spacing: 14) {
                         Image(systemName: "apple.terminal").font(.title3).frame(width: 28)

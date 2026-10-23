@@ -7,6 +7,8 @@ import SwiftUI
 /// kept on the Mac (a cd stays); `clear` and `exit` stay on the phone.
 struct TerminalView: View {
     let model: PhoneModel
+    /// The demonstration keeps a history of its own.
+    var demo = false
     @Environment(\.dismiss) private var dismiss
     @State private var input = ""
     @FocusState private var focused: Bool
@@ -14,8 +16,15 @@ struct TerminalView: View {
     /// Going up the history: the position in it, and what was typed before.
     @State private var historyIndex: Int?
     @State private var draft = ""
-    /// The commands run from this phone, kept on it only.
-    @AppStorage("shellHistory") private var historyData = Data()
+    /// The commands run from this phone, kept on it only, until it forgets its Mac.
+    @AppStorage private var historyData: Data
+    static let historyKey = "shellHistory"
+
+    init(model: PhoneModel, demo: Bool = false) {
+        self.model = model
+        self.demo = demo
+        _historyData = AppStorage(wrappedValue: Data(), demo ? "shellHistoryDemo" : Self.historyKey)
+    }
 
     static let background = Color(white: 0.07)
     static let ink = Color(white: 0.92)
