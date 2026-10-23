@@ -73,3 +73,14 @@ import Testing
         #expect(TerminalSession.shown("/tmp", home: "/Users/me") == "/tmp")
     }
 }
+
+@Suite struct TerminalFolderGoneTests {
+    /// The message says the terminal went home only when it did.
+    @Test func goingHomeIsSaidOnlyWhenItHappened() {
+        let home = RemoteError.terminalFolderGone("~/x", backHome: true).errorDescription ?? ""
+        let elsewhere = RemoteError.terminalFolderGone("~/x", backHome: false).errorDescription ?? ""
+        #expect(home.contains("retour au dossier personnel"))
+        #expect(!elsewhere.contains("retour au dossier personnel"))
+        #expect(elsewhere.contains("~/x") && elsewhere.contains("n'a pas été lancée"))
+    }
+}

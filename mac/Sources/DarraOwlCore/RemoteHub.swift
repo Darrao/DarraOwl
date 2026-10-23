@@ -670,8 +670,9 @@ public enum RemoteError: Error, LocalizedError, Sendable {
     case requestGone
     case commandsOff
     case agentFolderUnreadable
-    /// The terminal's folder, as shown: gone or closed; back to the home folder.
-    case terminalFolderGone(String)
+    /// The terminal's folder, as shown: gone or closed; `backHome` when the
+    /// terminal went back to the home folder (it had not moved meanwhile).
+    case terminalFolderGone(String, backHome: Bool)
 
     public var errorDescription: String? {
         switch self {
@@ -684,7 +685,10 @@ public enum RemoteError: Error, LocalizedError, Sendable {
         case .requestGone: "Cette demande de Claude n'attend plus de réponse : elle est passée dans le terminal ou a été retirée."
         case .commandsOff: "Commandes depuis l'iPhone désactivées sur le Mac : DarraOwl > Réglages > Terminal."
         case .agentFolderUnreadable: "Le dossier de cet agent n'a pas pu être lu : lance la commande dans le dossier personnel."
-        case let .terminalFolderGone(folder): "Le dossier \(folder) n'existe plus ou n'est pas accessible : retour au dossier personnel. La commande n'a pas été lancée."
+        case let .terminalFolderGone(folder, backHome):
+            backHome
+                ? "Le dossier \(folder) n'existe plus ou n'est pas accessible : retour au dossier personnel. La commande n'a pas été lancée."
+                : "Le dossier \(folder) n'existe plus ou n'est pas accessible. La commande n'a pas été lancée."
         }
     }
 }

@@ -716,12 +716,13 @@ public final class RemoteController: CommandTarget {
     /// `folder` cannot be used: back to the home folder, unless another
     /// command moved the terminal meanwhile, and why.
     private func leaveTerminalFolder(_ folder: String) -> RemoteError {
-        if terminalFolder == folder {
+        let backHome = terminalFolder == folder
+        if backHome {
             terminalFolder = NSHomeDirectory()
             terminalTurn += 1
             publishSoon()
         }
-        return .terminalFolderGone(TerminalSession.shown(folder, home: NSHomeDirectory()))
+        return .terminalFolderGone(TerminalSession.shown(folder, home: NSHomeDirectory()), backHome: backHome)
     }
 
     public func displayOff() async throws {
