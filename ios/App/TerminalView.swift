@@ -49,7 +49,7 @@ struct TerminalView: View {
                 .onChange(of: focused) { if focused { proxy.scrollTo("end", anchor: .bottom) } }
                 .onAppear { proxy.scrollTo("end", anchor: .bottom) }
             }
-            if case let .failed(why)? = model.outcome {
+            if let why = model.shellNotice {
                 // Before the command left (Face ID, the phone's key): said here too.
                 Text(why)
                     .font(.caption.monospaced())

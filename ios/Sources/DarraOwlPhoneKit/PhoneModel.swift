@@ -89,6 +89,9 @@ public final class PhoneModel {
     /// came back. In memory only.
     public private(set) var shellLog: [ShellRun] = []
     public static let shellLogLimit = 100
+    /// Why the terminal's last command did not leave (Face ID, the phone's
+    /// key), until the next one does.
+    public private(set) var shellNotice: String?
     public private(set) var now = Date()
 
     /// A shell command sent to the Mac, and what came back.
@@ -415,6 +418,7 @@ public final class PhoneModel {
         outcomeAt = nil
         shell = nil
         shellLog = []
+        shellNotice = nil
         lastConnectAttempt = nil
         lastCloudFetch = nil
         lastDirectState = nil
@@ -514,7 +518,11 @@ public final class PhoneModel {
         isBusy = true
         let signed = await sign(.runCommand(text: text, inAgent: agent?.pid), for: mac)
         isBusy = false
-        guard case let (envelope, command)? = signed else { return }
+        guard case let (envelope, command)? = signed else {
+            if case let .failed(why)? = outcome { shellNotice = why }
+            return
+        }
+        shellNotice = nil
         let generation = linkGeneration
         let folder = agent.map { $0.project ?? $0.tool } ?? state?.terminalDirectory ?? "~"
         let run = ShellRun(id: envelope.id, text: text, agent: agent, directory: folder, since: deps.now(), phase: .running)

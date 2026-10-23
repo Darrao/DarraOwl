@@ -359,6 +359,22 @@ struct PhoneRig {
         #expect(rig.model.shellLog.first?.phase == .failed("Pas de réponse du Mac."), "answered on screen though no longer waited for")
     }
 
+    /// A command that did not leave (Face ID refused) is said on the
+    /// terminal, until the next one leaves.
+    @Test func aRefusedFaceIDIsSaidOnTheTerminalUntilTheNextCommand() async throws {
+        let fresh = PhoneRig()
+        let signer = TogglingSigner()
+        fresh.store.id = PhoneIdentity(deviceID: UUID(), deviceName: "iPhone de test", agreementKey: .init(), signingKey: .init(), biometric: signer)
+        let rig = await fresh.paired()
+        await rig.model.runShell("git pull")
+        #expect(rig.model.shellNotice == "Face ID refusé : commande non envoyée.")
+        #expect(rig.model.shellLog.isEmpty)
+        signer.refuse = false
+        await rig.model.runShell("git pull")
+        #expect(rig.model.shellNotice == nil)
+        #expect(rig.model.shellLog.count == 1)
+    }
+
     /// The direct link dropped while the command ran (the app suspended):
     /// a few seconds on, the command also went through iCloud, and its
     /// answer comes from there instead of after the whole wait.
@@ -922,5 +938,16 @@ struct PhoneRig {
         #expect(Set(items.map(\.command)).count == items.count)
         for item in items { #expect(CommandKind.isWellFormedCommand(item.command), "\(item.command)") }
         #expect(items.contains { $0.command.hasPrefix("darraowl claude") }, "starting Claude from the phone")
+    }
+}
+
+/// Face ID refused until told otherwise.
+final class TogglingSigner: BiometricSigner, @unchecked Sendable {
+    let inner = SoftwareBiometricSigner()
+    var refuse = true
+    var publicKey: Data { inner.publicKey }
+    func sign(_ payload: Data, reason: String) async throws -> Data {
+        if refuse { throw BiometricError.refused }
+        return try await inner.sign(payload, reason: reason)
     }
 }

@@ -680,11 +680,14 @@ public final class RemoteController: CommandTarget {
             // Gone meanwhile: said, never run in another folder instead.
             var isFolder: ObjCBool = false
             guard FileManager.default.fileExists(atPath: terminalFolder, isDirectory: &isFolder), isFolder.boolValue else {
-                throw leaveTerminalFolder()
+                throw leaveTerminalFolder(terminalFolder)
             }
             directory = terminalFolder
         }
-        terminalTurn += 1
+        // An agent's folder becomes the terminal's only through the menu's
+        // pwd; another command of an older phone there leaves it alone.
+        let setsFolder = agentPID == nil || text == "pwd"
+        if setsFolder { terminalTurn += 1 }
         let turn = terminalTurn
         log.info("command from the phone in \(directory): \(text)")
         // The folder kept between commands needs a POSIX shell (zsh, bash…).
@@ -692,17 +695,16 @@ public final class RemoteController: CommandTarget {
         var output: ShellOutput
         do {
             output = try await RemoteShell.run(posix ? TerminalSession.wrap(text) : text, in: directory)
-        } catch let error as RemoteShell.LaunchError where agentPID == nil && directory != home {
+        } catch let error as RemoteShell.LaunchError where agentPID == nil && directory != home
+            && !FileManager.default.isExecutableFile(atPath: directory) {
             // A folder that cannot be entered (its rights changed) would fail every command.
             log.error("command from the phone not started in \(directory): \(error.detail)")
-            throw leaveTerminalFolder()
+            throw leaveTerminalFolder(directory)
         }
         let (shown, ended) = posix ? TerminalSession.split(output.text) : (output.text, nil)
         output.text = shown
-        // A command that exited early leaves the folder where it started. An
-        // agent's folder becomes the terminal's only through the menu's pwd;
-        // another command of an older phone there leaves the terminal alone.
-        if turn == terminalTurn, agentPID == nil || text == "pwd" {
+        // A command that exited early leaves the folder where it started.
+        if setsFolder, turn == terminalTurn {
             terminalFolder = ended ?? directory
         }
         output.directory = TerminalSession.shown(ended ?? directory, home: home)
@@ -711,13 +713,15 @@ public final class RemoteController: CommandTarget {
         return output
     }
 
-    /// Back to the home folder, published, and why.
-    private func leaveTerminalFolder() -> RemoteError {
-        let gone = TerminalSession.shown(terminalFolder, home: NSHomeDirectory())
-        terminalFolder = NSHomeDirectory()
-        terminalTurn += 1
-        publishSoon()
-        return .terminalFolderGone(gone)
+    /// `folder` cannot be used: back to the home folder, unless another
+    /// command moved the terminal meanwhile, and why.
+    private func leaveTerminalFolder(_ folder: String) -> RemoteError {
+        if terminalFolder == folder {
+            terminalFolder = NSHomeDirectory()
+            terminalTurn += 1
+            publishSoon()
+        }
+        return .terminalFolderGone(TerminalSession.shown(folder, home: NSHomeDirectory()))
     }
 
     public func displayOff() async throws {
