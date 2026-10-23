@@ -871,3 +871,31 @@ struct PhoneRig {
         #expect(PathPlanner.candidates(endpoints: nil).isEmpty)
     }
 }
+
+/// The terminal's history and its ready-made commands.
+@Suite struct ShellHelpTests {
+    @Test func aCommandRunAgainMovesToTheTop() {
+        var history = CommandHistory()
+        history.record("ls")
+        history.record("  git status  ")
+        history.record("ls")
+        history.record("   ")
+        #expect(history.commands == ["ls", "git status"])
+        for i in 0..<40 { history.record("echo \(i)") }
+        #expect(history.commands.count == CommandHistory.limit)
+        #expect(history.commands.first == "echo 39")
+        #expect(CommandHistory(data: history.data) == history)
+        #expect(CommandHistory(data: Data("nope".utf8)).commands.isEmpty)
+        history.clear()
+        #expect(history.commands.isEmpty)
+    }
+
+    /// Every ready-made command can be sent as it is, and none appears twice.
+    @Test func everyReadyMadeCommandIsSendable() {
+        let items = ShellHelp.sections.flatMap(\.items)
+        #expect(!items.isEmpty)
+        #expect(Set(items.map(\.command)).count == items.count)
+        for item in items { #expect(CommandKind.isWellFormedCommand(item.command), "\(item.command)") }
+        #expect(items.contains { $0.command.hasPrefix("darraowl claude") }, "starting Claude from the phone")
+    }
+}

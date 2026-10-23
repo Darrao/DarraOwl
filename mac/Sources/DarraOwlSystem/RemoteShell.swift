@@ -1,6 +1,8 @@
 import Darwin
+import DarraOwlCore
 import DarraOwlShared
 import Foundation
+import Synchronization
 
 /// Runs one shell command sent from the phone: the user's login shell
 /// (`-l -c`), in a folder, with no terminal and no input, under a time
@@ -35,6 +37,31 @@ public enum RemoteShell {
     public static func run(_ text: String, in directory: String, timeout: TimeInterval = Policy.remoteCommandTimeout,
                            limit: Int = Policy.remoteCommandOutputLimit) async throws -> ShellOutput {
         let shell = Self.shell
+        let path = await terminalPATH(shell: shell)
+        return try await spawn(shell, ["-l", "-c", text], in: directory, environment: environment(shell: shell, path: path),
+                               timeout: timeout, limit: limit)
+    }
+
+    /// PATH as a Terminal window has it (see TerminalPath), asked of an
+    /// interactive login shell, then kept ten minutes. Nil when it cannot
+    /// tell: the login shell's own PATH then.
+    static func terminalPATH(shell: String) async -> String? {
+        let now = Date()
+        if let known = probed.withLock({ $0 }), now.timeIntervalSince(known.at) < probeLifetime { return known.path }
+        let output = try? await spawn(shell, ["-i", "-l", "-c", TerminalPath.probe], in: NSHomeDirectory(),
+                                      environment: environment(shell: shell, path: nil), timeout: probeTimeout, limit: 64 * 1024)
+        let path = output.flatMap { TerminalPath.parse($0.text) }
+        probed.withLock { $0 = (path, now) }
+        return path
+    }
+
+    private static let probed = Mutex<(path: String?, at: Date)?>(nil)
+    static let probeLifetime: TimeInterval = 600
+    static let probeTimeout: TimeInterval = 5
+
+    /// One shell with these arguments: what it printed, and how it ended.
+    static func spawn(_ shell: String, _ arguments: [String], in directory: String, environment: [String: String],
+                      timeout: TimeInterval, limit: Int) async throws -> ShellOutput {
         var fds: [Int32] = [-1, -1]
         guard pipe(&fds) == 0 else { throw LaunchError(detail: String(cString: strerror(errno))) }
 
@@ -64,9 +91,9 @@ public enum RemoteShell {
         posix_spawnattr_setpgroup(&attr, 0)
         posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_CLOEXEC_DEFAULT))
 
-        var argv: [UnsafeMutablePointer<CChar>?] = [shell, "-l", "-c", text].map { strdup($0) }
+        var argv: [UnsafeMutablePointer<CChar>?] = ([shell] + arguments).map { strdup($0) }
         argv.append(nil)
-        var envp: [UnsafeMutablePointer<CChar>?] = environment(shell: shell).map { strdup("\($0.key)=\($0.value)") }
+        var envp: [UnsafeMutablePointer<CChar>?] = environment.map { strdup("\($0.key)=\($0.value)") }
         envp.append(nil)
         defer { (argv + envp).forEach { free($0) } }
 
@@ -117,14 +144,21 @@ public enum RemoteShell {
     }
 
     /// The app's environment, with what a shell with no terminal needs:
-    /// plain output, no colours (the phone shows the text as is).
-    static func environment(shell: String) -> [String: String] {
+    /// plain output, no colours (the phone shows the text as is), the PATH
+    /// of a Terminal window when known, and this app's darraowl first (the
+    /// one in ~/.local/bin may be another copy's).
+    static func environment(shell: String, path: String?) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["HOME"] = NSHomeDirectory()
         env["SHELL"] = shell
         env["TERM"] = "dumb"
         env["NO_COLOR"] = "1"
         env["DARRAOWL_REMOTE"] = "1"
+        if let path { env["PATH"] = path }
+        let helpers = Bundle.main.bundleURL.appending(path: "Contents/Helpers").path
+        if FileManager.default.isExecutableFile(atPath: helpers + "/darraowl") {
+            env["PATH"] = TerminalPath.prepending(helpers, to: env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
+        }
         return env
     }
 }

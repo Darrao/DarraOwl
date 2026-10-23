@@ -260,6 +260,10 @@ struct MacView: View {
     @State private var commandText = ""
     /// The agent whose project folder the command runs in; nil for the home folder.
     @State private var commandAgentPID: Int32?
+    @FocusState private var commandFocused: Bool
+    @State private var showCommandHelp = false
+    /// The commands run from this phone, kept on it only.
+    @AppStorage("shellHistory") private var historyData = Data()
 
     var body: some View {
         NavigationStack {
@@ -305,12 +309,45 @@ struct MacView: View {
                 .padding(.bottom, 40)
             }
             .refreshable { await model.tick() }
+            // Swiping down puts the keyboard away.
+            .scrollDismissesKeyboard(.interactively)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel("Réglages")
                         .disabled(model.state == nil || !online || model.isBusy)
                 }
+                ToolbarItemGroup(placement: .keyboard) {
+                    if commandFocused {
+                        Button { showCommandHelp = true } label: { Image(systemName: "info.circle") }
+                            .accessibilityLabel("Commandes utiles")
+                        Spacer()
+                        Button("Fermer") { commandFocused = false }
+                        Button("Lancer") { runCommand() }
+                            .fontWeight(.semibold)
+                            .disabled(!canRunCommand)
+                    }
+                }
+            }
+            .sheet(isPresented: $showCommandHelp) {
+                CommandHelpSheet { picked in
+                    commandText = picked
+                    // Back in the field, to replace PROJET or COMMANDE.
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(450))
+                        commandFocused = true
+                    }
+                }
+            }
+            .onChange(of: model.shell?.id) {
+                guard let shell = model.shell, shell.phase == .running else { return }
+                var history = CommandHistory(data: historyData)
+                history.record(shell.text)
+                historyData = history.data
+                commandText = ""
+            }
+            .onChange(of: model.mac == nil) { _, unpaired in
+                if unpaired { historyData = Data() }
             }
             .sheet(isPresented: $showSettings) {
                 if let state = model.state { SettingsSheet(model: model, settings: state.settings) }
@@ -536,29 +573,52 @@ struct MacView: View {
         let agents = s.agents.filter { $0.pid != nil }
         let running = model.shell?.phase == .running
         return VStack(alignment: .leading, spacing: 12) {
-            SectionTitle("Terminal")
-            if s.remoteCommands == true {
-                Picker("Dossier", selection: $commandAgentPID) {
-                    Text("Dossier personnel").tag(Int32?.none)
-                    ForEach(agents, id: \.pid) { agent in
-                        Text(agent.project.map { "\(agent.tool) · \($0)" } ?? agent.tool).tag(agent.pid)
-                    }
+            HStack(alignment: .firstTextBaseline, spacing: 18) {
+                SectionTitle("Terminal")
+                Spacer()
+                if s.remoteCommands == true {
+                    historyMenu
+                    Button { showCommandHelp = true } label: { Image(systemName: "info.circle") }
+                        .accessibilityLabel("Commandes utiles")
                 }
-                .pickerStyle(.menu)
-                TextField("Commande", text: $commandText, axis: .vertical)
-                    .font(.body.monospaced())
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .lineLimit(1...5)
-                    .textFieldStyle(.roundedBorder)
-                HStack {
-                    Button("Lancer") {
-                        let agent = commandAgentPID.flatMap { pid in agents.first { $0.pid == pid } }
-                        Task { await model.runShell(commandText, agent: agent) }
+            }
+            if s.remoteCommands == true {
+                VStack(alignment: .leading, spacing: 0) {
+                    Menu {
+                        Picker("Dossier", selection: $commandAgentPID) {
+                            Text("Dossier personnel").tag(Int32?.none)
+                            ForEach(agents, id: \.pid) { agent in
+                                Text(agent.project.map { "\(agent.tool) · \($0)" } ?? agent.tool).tag(agent.pid)
+                            }
+                        }
+                    } label: {
+                        Label(folderTitle(agents), systemImage: "folder")
+                            .font(.subheadline)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .buttonStyle(.glassProminent)
-                    .disabled(!CommandKind.isWellFormedCommand(commandText) || running || model.isBusy)
-                    .accessibilityHint("Demande Face ID")
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    Divider()
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("$").font(.body.monospaced()).foregroundStyle(.secondary)
+                        TextField("Commande", text: $commandText, axis: .vertical)
+                            .font(.body.monospaced())
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .lineLimit(1...6)
+                            .focused($commandFocused)
+                    }
+                    .padding(12)
+                }
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 14))
+                HStack(spacing: 10) {
+                    Button("Lancer") { runCommand() }
+                        .buttonStyle(.glassProminent)
+                        .disabled(!canRunCommand)
+                        .accessibilityHint("Demande Face ID")
+                    if !commandText.isEmpty, !running {
+                        Button("Effacer") { commandText = "" }.buttonStyle(.glass)
+                    }
                     Spacer()
                     if running, let shell = model.shell {
                         ProgressView()
@@ -567,7 +627,7 @@ struct MacView: View {
                     }
                 }
                 if let shell = model.shell { shellResult(shell) }
-                Text("Avec ton shell, dans le dossier choisi, sans terminal ni saisie, au plus \(DurationText.short(Policy.remoteCommandTimeout)). Demande Face ID.")
+                Text("Avec ton shell, dans le dossier choisi, sans saisie, au plus \(DurationText.short(Policy.remoteCommandTimeout)). Demande Face ID. Le bouton i propose des commandes toutes prêtes.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 Text("Désactivé sur le Mac. Pour lancer des commandes d'ici : DarraOwl > Réglages > Terminal, sur le Mac.")
@@ -575,6 +635,46 @@ struct MacView: View {
             }
         }
         .disabled(!online)
+    }
+
+    private var canRunCommand: Bool {
+        CommandKind.isWellFormedCommand(commandText) && model.shell?.phase != .running && !model.isBusy && online
+    }
+
+    /// Face ID, then the command runs on the Mac; the keyboard goes so the
+    /// answer can be seen.
+    private func runCommand() {
+        guard canRunCommand else { return }
+        commandFocused = false
+        let agent = commandAgentPID.flatMap { pid in model.state?.agents.first { $0.pid == pid } }
+        let text = commandText
+        Task { await model.runShell(text, agent: agent) }
+    }
+
+    private func folderTitle(_ agents: [MacState.Agent]) -> String {
+        guard let pid = commandAgentPID, let agent = agents.first(where: { $0.pid == pid }) else { return "Dossier personnel" }
+        return agent.project.map { "\(agent.tool) · \($0)" } ?? agent.tool
+    }
+
+    /// The last commands, to run again or change.
+    private var historyMenu: some View {
+        let history = CommandHistory(data: historyData)
+        return Menu {
+            ForEach(history.commands, id: \.self) { command in
+                Button(command) {
+                    commandText = command
+                    commandFocused = true
+                }
+            }
+            if !history.commands.isEmpty {
+                Divider()
+                Button("Effacer l'historique", role: .destructive) { historyData = Data() }
+            }
+        } label: {
+            Image(systemName: "clock.arrow.circlepath")
+        }
+        .accessibilityLabel("Historique des commandes")
+        .disabled(history.commands.isEmpty)
     }
 
     @ViewBuilder
@@ -806,6 +906,50 @@ struct MacView: View {
         case .none?, nil: kind = "Aucun"
         }
         return n?.name.map { "\(kind) · \($0)" } ?? kind
+    }
+}
+
+/// Ready-made commands: one tap puts it in the field, to read or change
+/// before it runs.
+struct CommandHelpSheet: View {
+    let onPick: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(ShellHelp.sections) { section in
+                    Section(section.title) {
+                        ForEach(section.items) { item in
+                            Button {
+                                onPick(item.command)
+                                dismiss()
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(item.title).foregroundStyle(.primary)
+                                    Text(item.command).font(.caption.monospaced()).foregroundStyle(.secondary)
+                                    if let note = item.note {
+                                        Text(note).font(.caption).foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                    }
+                }
+                Section {
+                    Text(ShellHelp.footer).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Commandes utiles")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Fermer") { dismiss() }
+                }
+            }
+        }
     }
 }
 

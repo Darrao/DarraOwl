@@ -47,7 +47,57 @@ public enum CLIMain {
             return 0
         case let .run(seconds, arguments):
             return await run(arguments, seconds: seconds, client: client)
+        case let .claude(folder):
+            return openClaude(in: folder)
         }
+    }
+
+    /// Claude Code's Remote Control server in a new Terminal window, found
+    /// then in the Claude app (Code). The folder should be one Claude has
+    /// already opened on this Mac: in another, it asks in the window whether
+    /// to trust it.
+    static func openClaude(in folder: String?) -> Int32 {
+        let files = FileManager.default
+        let here = URL(fileURLWithPath: files.currentDirectoryPath, isDirectory: true)
+        let path = folder.map { ($0 as NSString).expandingTildeInPath } ?? here.path
+        let target = URL(fileURLWithPath: path, relativeTo: here).standardizedFileURL.path
+        var isFolder: ObjCBool = false
+        guard files.fileExists(atPath: target, isDirectory: &isFolder), isFolder.boolValue else {
+            say("darraowl : dossier introuvable : \(target)")
+            return 1
+        }
+        guard let claude = ClaudeLauncher.findClaude(path: ProcessInfo.processInfo.environment["PATH"], home: NSHomeDirectory(),
+                                                     isExecutable: { files.isExecutableFile(atPath: $0) }) else {
+            say("darraowl : Claude Code est introuvable sur ce Mac (commande claude).")
+            return 1
+        }
+        let script = files.temporaryDirectory.appending(path: "darraowl-claude-\(UUID().uuidString).command")
+        do {
+            try ClaudeLauncher.script(folder: target, claude: claude).write(to: script, atomically: true, encoding: .utf8)
+            try files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        } catch {
+            say("darraowl : \(error.localizedDescription)")
+            return 1
+        }
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = ["-a", "Terminal", script.path]
+        do {
+            try open.run()
+            open.waitUntilExit()
+        } catch {
+            try? files.removeItem(at: script)
+            say("darraowl : Terminal ne s'ouvre pas : \(error.localizedDescription)")
+            return 1
+        }
+        guard open.terminationStatus == 0 else {
+            try? files.removeItem(at: script)
+            say("darraowl : Terminal ne s'ouvre pas.")
+            return 1
+        }
+        print("Claude Code démarre dans une fenêtre Terminal du Mac, dans \(target).")
+        print("Retrouve la session « \(ClaudeLauncher.sessionName(folder: target)) » dans l'app Claude, onglet Code.")
+        return 0
     }
 
     /// Keeps the Mac awake while the command runs. The helper follows this

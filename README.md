@@ -263,6 +263,7 @@ darraowl start 2h             # session minutée
 darraowl extend 1h
 darraowl status
 darraowl stop
+darraowl claude ~/Dev/projet  # Claude Code avec Remote Control, dans une fenêtre Terminal
 ```
 
 `darraowl run` lance la commande dans ton terminal, comme si tu l'avais tapée,
@@ -270,6 +271,12 @@ et rend son code de sortie. Si DarraOwl ne peut pas garder le Mac éveillé
 (batterie sous le seuil, composant système absent), la commande n'est pas
 lancée. Seul le nom de la commande est affiché sur l'iPhone, jamais ses
 arguments.
+
+`darraowl claude [dossier]` ouvre une fenêtre Terminal sur le Mac, dans le
+dossier (le dossier courant par défaut), avec `claude remote-control` : la
+session apparaît dans l'app Claude, onglet Code, sous le nom du dossier. Le
+dossier doit être un projet déjà ouvert une fois avec Claude sur ce Mac :
+pour un autre, Claude demande dans la fenêtre s'il peut lui faire confiance.
 
 ### Depuis l'iPhone
 
@@ -281,10 +288,19 @@ DarraOwl > Réglages > Terminal > **Lancer des commandes depuis l'iPhone**
 (désactivé par défaut ; l'iPhone ne peut pas l'activer). L'app iPhone montre
 alors une section **Terminal** : choisis le dossier (ton dossier personnel ou
 le projet d'un agent en cours), tape la commande, puis **Lancer**. Face ID
-est demandé à chaque commande.
+est demandé à chaque commande. Le bouton **i** propose des commandes toutes
+prêtes (lancer Claude, Git, batterie, tâches longues…) à toucher pour les
+mettre dans le champ, l'horloge rappelle les dernières commandes (gardées sur
+l'iPhone seulement, effacées au désappairage), et un glissement vers le bas
+range le clavier.
+
+Pour ouvrir une session Claude que tu continues dans l'app Claude, quand
+aucune ne tourne : `darraowl claude ~/Dev/projet` (voir plus haut).
 
 - La commande s'exécute sous ton compte, avec ton shell de connexion (`zsh -l`
-  d'habitude) : même PATH que dans le Terminal, une fois ton profil lu.
+  d'habitude) et le PATH d'une fenêtre Terminal, `~/.zshrc` compris (lu une
+  fois toutes les dix minutes par un shell interactif). `darraowl` est celui
+  de l'app.
 - Sans terminal ni saisie : `sudo` ou une question interactive échouent au
   lieu d'attendre. Au plus 5 minutes, puis tout ce qu'elle a lancé est
   arrêté.

@@ -10,6 +10,9 @@ public enum CLICommand: Equatable, Sendable {
     case extend(seconds: TimeInterval)
     case stop
     case status
+    /// `darraowl claude [dossier]`: Claude Code with Remote Control, in a
+    /// Terminal window, in the folder (the current one when nil).
+    case claude(folder: String?)
     case help
     case version
 
@@ -37,6 +40,9 @@ public enum CLICommand: Equatable, Sendable {
         switch verb {
         case "run":
             return try parseRun(rest)
+        case "claude":
+            guard rest.count <= 1 else { throw .extraArguments(rest[1]) }
+            return .claude(folder: rest.first)
         case "start", "extend":
             guard let text = rest.first else { throw .missingDuration(verb) }
             guard rest.count == 1 else { throw .extraArguments(rest[1]) }
@@ -110,6 +116,8 @@ public enum CLICommand: Equatable, Sendable {
       darraowl extend <durée>               prolonge la session en cours
       darraowl stop                         arrête la session
       darraowl status                       état de la session (par défaut)
+      darraowl claude [dossier]             Claude Code avec Remote Control, dans une
+                                            fenêtre Terminal (le dossier courant par défaut)
 
     Durées : 45m, 90, 2h, 1h30, 1j. Au plus la durée maximale des
     Réglages de DarraOwl (12 h par défaut).
