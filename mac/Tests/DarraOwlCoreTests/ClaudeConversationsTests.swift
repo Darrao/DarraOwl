@@ -47,7 +47,9 @@ import Testing
         #expect(ClaudeConversations.folder(of: ["/Users/me/Dev/api", "/Users/me/Dev/api/ios", "/tmp"], filedUnder: api) == "/Users/me/Dev/api")
         let moved = ClaudeConversations.encoded("/Users/me/Dev/api-v2")
         #expect(ClaudeConversations.folder(of: ["/Users/me/Dev/api", "/Users/me/Dev/api-v2", "/Users/me/Dev/api-v2/x"], filedUnder: moved) == "/Users/me/Dev/api-v2")
-        #expect(ClaudeConversations.folder(of: ["/a", "/b"], filedUnder: "-elsewhere") == "/a")
+        // Its start unread, its shell below it then elsewhere: the folder above.
+        #expect(ClaudeConversations.folder(of: ["/Users/me/Dev/api/ios/App", "/tmp"], filedUnder: api) == "/Users/me/Dev/api")
+        #expect(ClaudeConversations.folder(of: ["/a", "/b"], filedUnder: "-elsewhere") == nil, "never a folder Claude would not find it from")
         #expect(ClaudeConversations.folder(of: [], filedUnder: api) == nil)
         #expect(ClaudeConversations.oneLine(String(repeating: "a", count: 90)).count == 80)
     }
@@ -73,6 +75,26 @@ import Testing
         #expect(ClaudeConversations.recent(in: root.appending(path: "absent"), limit: 10).isEmpty)
     }
 
+    /// Dated by its last message, not by the file: the Claude app writes
+    /// titles into old transcripts. Filed twice, listed once.
+    @Test func theLastMessageDatesAConversation() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date()
+        try write(root, "/Users/me/Dev/old", id: Self.ids[0], title: "Juin", at: now, message: "2026-06-02T09:30:00.250Z")
+        try write(root, "/Users/me/Dev/new", id: Self.ids[2], title: "Hier", at: now.addingTimeInterval(-3600), message: "2026-10-22T18:00:00Z")
+        try write(root, "/Users/me/Dev/moved", id: Self.ids[2], title: "Hier", at: now.addingTimeInterval(-7200), message: "2026-10-22T17:00:00Z")
+        let all = ClaudeConversations.recent(in: root, limit: 10)
+        #expect(all.map(\.title) == ["Hier", "Juin"])
+        #expect(all.first?.folder == "/Users/me/Dev/new", "the copy used last")
+        #expect(all.last?.lastActive == Date(timeIntervalSince1970: 1_780_392_600.25))
+        let cut = Data(#"p":"2020-01-01T00:00:00Z"}"#.utf8) + Data("\n".utf8)
+            + Data(#"{"type":"user","timestamp":"2026-10-23T08:00:00Z"}"#.utf8) + Data("\n".utf8)
+            + Data(#"{"type":"custom-title","customTitle":"x"}"#.utf8) + Data("\n".utf8)
+        #expect(ClaudeConversations.lastMessage(in: cut, cut: true) == Date(timeIntervalSince1970: 1_792_742_400))
+        #expect(ClaudeConversations.lastMessage(in: Data(#"{"type":"mode"}"#.utf8), cut: false) == nil)
+    }
+
     /// By the start of its id, in any case; too short to tell is no choice.
     @Test func aConversationIsFoundByTheStartOfItsID() throws {
         let root = try temporaryRoot()
@@ -96,9 +118,9 @@ import Testing
         calendar.timeZone = TimeZone(identifier: "UTC")!
         let now = Date(timeIntervalSince1970: 1_792_756_800) // 2026-10-23 12:00 UTC
         let conversations = [
-            ClaudeConversations.Conversation(id: Self.ids[0], folder: "/Users/me/Dev/api", title: "Revue", modified: now.addingTimeInterval(-3600)),
-            ClaudeConversations.Conversation(id: Self.ids[2], folder: nil, title: nil, modified: now.addingTimeInterval(-86_400)),
-            ClaudeConversations.Conversation(id: Self.ids[3], folder: "/opt/x", title: "Vieille", modified: now.addingTimeInterval(-400 * 86_400)),
+            ClaudeConversations.Conversation(id: Self.ids[0], folder: "/Users/me/Dev/api", title: "Revue", lastActive: now.addingTimeInterval(-3600)),
+            ClaudeConversations.Conversation(id: Self.ids[2], folder: nil, title: nil, lastActive: now.addingTimeInterval(-86_400)),
+            ClaudeConversations.Conversation(id: Self.ids[3], folder: "/opt/x", title: "Vieille", lastActive: now.addingTimeInterval(-400 * 86_400)),
         ]
         let text = ClaudeConversations.listing(conversations, open: [Self.ids[0]], home: "/Users/me", now: now, calendar: calendar)
         #expect(text.contains("3f9a2c1b · aujourd'hui 11:00 · ouverte\n~/Dev/api\nRevue"))
@@ -129,7 +151,7 @@ import Testing
         return root
     }
 
-    private func write(_ root: URL, _ folder: String, id: String, title: String, at date: Date) throws {
+    private func write(_ root: URL, _ folder: String, id: String, title: String, at date: Date, message: String? = nil) throws {
         let dir = root.appending(path: ClaudeConversations.encoded(folder))
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appending(path: "\(id).jsonl")
@@ -137,7 +159,7 @@ import Testing
             #"{"type":"custom-title","customTitle":"\#(title)","sessionId":"\#(id)"}"#,
             #"{"type":"user","cwd":"\#(folder)","sessionId":"\#(id)"}"#,
             #"{"type":"user","cwd":"\#(folder)/sub","sessionId":"\#(id)"}"#,
-        ]).write(to: file)
+        ] + (message.map { [#"{"type":"assistant","cwd":"\#(folder)","timestamp":"\#($0)","sessionId":"\#(id)"}"#] } ?? [])).write(to: file)
         try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: file.path)
     }
 }

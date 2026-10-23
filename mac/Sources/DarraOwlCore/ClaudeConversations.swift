@@ -11,26 +11,30 @@ public enum ClaudeConversations {
         /// The folder it belongs to (a conversation can be moved to another one).
         public let folder: String?
         public let title: String?
-        public let modified: Date
+        /// Its last message (the transcript's date when none is read).
+        public let lastActive: Date
 
-        public init(id: String, folder: String?, title: String?, modified: Date) {
+        public init(id: String, folder: String?, title: String?, lastActive: Date) {
             self.id = id
             self.folder = folder
             self.title = title
-            self.modified = modified
+            self.lastActive = lastActive
         }
     }
 
     /// The latest first, at most `limit`; only the folder's when given.
     public static func recent(in root: URL, folder: String? = nil, limit: Int) -> [Conversation] {
         var found: [Conversation] = []
-        for transcript in transcripts(in: root, folder: folder) {
+        var seen: Set<String> = []
+        for transcript in latestFirst(transcripts(in: root, folder: folder)) {
             guard found.count < limit else { break }
+            // A conversation filed twice (moved): its latest copy only.
+            guard seen.insert(transcript.id).inserted else { continue }
             var conversation = read(transcript)
             if let folder {
                 // Unread, its folder is the one its transcript is filed under.
                 guard conversation.folder == nil || conversation.folder == folder else { continue }
-                conversation = Conversation(id: conversation.id, folder: folder, title: conversation.title, modified: conversation.modified)
+                conversation = Conversation(id: conversation.id, folder: folder, title: conversation.title, lastActive: conversation.lastActive)
             }
             found.append(conversation)
         }
@@ -46,7 +50,7 @@ public enum ClaudeConversations {
     /// The conversation whose id starts with `prefix` (any case).
     public static func find(_ prefix: String, in root: URL) -> Lookup {
         let start = prefix.lowercased()
-        let matches = transcripts(in: root, folder: nil).filter { $0.id.lowercased().hasPrefix(start) }
+        let matches = latestFirst(transcripts(in: root, folder: nil).filter { $0.id.lowercased().hasPrefix(start) })
         // One conversation can sit in two folders (moved): the latest copy.
         guard let first = matches.first else { return .none }
         guard matches.allSatisfy({ $0.id == first.id }) else { return .several }
@@ -75,7 +79,7 @@ public enum ClaudeConversations {
     public static func listing(_ conversations: [Conversation], open: Set<String>, home: String, now: Date, calendar: Calendar) -> String {
         var lines = ["Conversations Claude Code, la plus récente en haut :"]
         for c in conversations {
-            var head = "\(shortID(c.id)) · \(when(c.modified, now: now, calendar: calendar))"
+            var head = "\(shortID(c.id)) · \(when(c.lastActive, now: now, calendar: calendar))"
             if open.contains(c.id) { head += " · ouverte" }
             lines += ["", head, c.folder.map { shown($0, home: home) } ?? "dossier inconnu", c.title ?? "(sans titre)"]
         }
@@ -113,7 +117,7 @@ public enum ClaudeConversations {
     struct Transcript {
         let url: URL
         let id: String
-        let modified: Date
+        let lastActive: Date
     }
 
     /// Claude's folder name for a working directory: every character but a
@@ -132,7 +136,7 @@ public enum ClaudeConversations {
 
     static let encodedLimit = 200
 
-    /// The latest first. With a folder, only those of its transcript folder
+    /// Dated by the file. With a folder, only those of its transcript folder
     /// (a long name ends with a hash: those starting the same way).
     static func transcripts(in root: URL, folder: String?) -> [Transcript] {
         let files = FileManager.default
@@ -151,10 +155,47 @@ public enum ClaudeConversations {
                 guard let values = try? item.resourceValues(forKeys: keys), values.isRegularFile == true else { continue }
                 let id = item.deletingPathExtension().lastPathComponent
                 guard UUID(uuidString: id) != nil else { continue }
-                all.append(Transcript(url: item, id: id, modified: values.contentModificationDate ?? .distantPast))
+                all.append(Transcript(url: item, id: id, lastActive: values.contentModificationDate ?? .distantPast))
             }
         }
-        return all.sorted { $0.modified > $1.modified }
+        return all
+    }
+
+    /// By their last message: the Claude app also writes to old transcripts
+    /// (titles), which dates the file itself today.
+    static func latestFirst(_ transcripts: [Transcript]) -> [Transcript] {
+        transcripts.map { Transcript(url: $0.url, id: $0.id, lastActive: lastMessage($0.url) ?? $0.lastActive) }
+            .sorted { $0.lastActive > $1.lastActive }
+    }
+
+    /// The date of the last record that has one, read from the end: a few
+    /// kilobytes, a whole window when its last lines are long.
+    static func lastMessage(_ url: URL) -> Date? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd() else { return nil }
+        for span in [UInt64(1 << 16), UInt64(window)] {
+            let start = size > span ? size - span : 0
+            guard (try? handle.seek(toOffset: start)) != nil, let data = try? handle.read(upToCount: Int(size - start)) else { return nil }
+            if let date = lastMessage(in: data, cut: start > 0) { return date }
+            if start == 0 { return nil }
+        }
+        return nil
+    }
+
+    /// `cut`: the data starts mid-line, its first line is incomplete.
+    static func lastMessage(in data: Data, cut: Bool) -> Date? {
+        var all = lines(of: data)
+        if cut, !all.isEmpty { all.removeFirst() }
+        for line in all.reversed() {
+            guard line.range(of: Data("\"timestamp\"".utf8)) != nil,
+                  let record = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  let text = record["timestamp"] as? String,
+                  let date = (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(text))
+                      ?? (try? Date.ISO8601FormatStyle().parse(text)) else { continue }
+            return date
+        }
+        return nil
     }
 
     /// What is read of a transcript, at each end: a few records, whatever
@@ -177,13 +218,24 @@ public enum ClaudeConversations {
         }
         let found = summary(head: head, tail: whole ? nil : tail)
         let filed = transcript.url.deletingLastPathComponent().lastPathComponent
-        return Conversation(id: transcript.id, folder: folder(of: found.folders, filedUnder: filed), title: found.title, modified: transcript.modified)
+        return Conversation(id: transcript.id, folder: folder(of: found.folders, filedUnder: filed), title: found.title, lastActive: transcript.lastActive)
     }
 
     /// The folder Claude files the conversation under, where it is taken up
-    /// again: its records also follow the cd's of its shell.
+    /// again: its records also follow the cd's of its shell, below it or
+    /// elsewhere. None when no record leads to it: from another folder,
+    /// Claude would not find the conversation.
     static func folder(of folders: [String], filedUnder name: String) -> String? {
-        folders.last { encoded($0) == name } ?? folders.first
+        if let named = folders.last(where: { encoded($0) == name }) { return named }
+        // Its start unread (a long first message), its shell below it.
+        for recorded in folders.reversed() {
+            var above = (recorded as NSString).deletingLastPathComponent
+            while above.count > 1 {
+                if encoded(above) == name { return above }
+                above = (above as NSString).deletingLastPathComponent
+            }
+        }
+        return nil
     }
 
     /// The folders the records name, in order (where it started, where it

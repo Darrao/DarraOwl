@@ -140,11 +140,13 @@ public enum CLIMain {
         return config.appending(path: "projects", directoryHint: .isDirectory)
     }
 
-    /// The folder as an absolute path (the current one when nil), unchecked.
+    /// The folder as an absolute path (the current one when nil), unchecked:
+    /// `standardized`, not `standardizedFileURL`, which would look at the
+    /// disk (symbolic links, /private), Documents included.
     static func absolute(_ folder: String?) -> String {
         let here = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         let path = folder.map { ($0 as NSString).expandingTildeInPath } ?? here.path
-        return URL(fileURLWithPath: path, relativeTo: here).standardizedFileURL.path
+        return URL(fileURLWithPath: path, relativeTo: here).absoluteURL.standardized.path
     }
 
     static func claudePath(quiet: Bool = false) -> String? {
