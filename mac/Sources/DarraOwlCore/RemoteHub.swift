@@ -51,6 +51,10 @@ public protocol CommandTarget: AnyObject {
     func setPresenceWhileClosed(_ on: Bool) async throws
     /// Claude Code's request `id`, held for the phone: accepted or refused.
     func answerAgentRequest(id: UUID, allow: Bool) async throws
+    /// A shell command from the phone, in the project folder of agent
+    /// `agentPID` (nil: the home folder). Refused unless the Mac's option
+    /// is on. Returns what it printed.
+    func runCommand(_ text: String, agentPID: Int32?) async throws -> ShellOutput
     /// Settings now, to merge a partial change into.
     var currentSettings: PowerSettings? { get }
     /// Containers now running, to check a stop request against.
@@ -328,21 +332,27 @@ public final class RemoteHub {
             running.insert(envelope.id)
             let result: CommandResult
             do {
-                try await run(envelope.kind, from: envelope.deviceID)
-                result = finish(CommandResult(commandID: envelope.id, status: .executed, message: nil, at: clock.now()))
+                let output = try await run(envelope.kind, from: envelope.deviceID)
+                result = finish(CommandResult(commandID: envelope.id, status: .executed, message: nil, at: clock.now(), output: output))
             } catch {
                 result = finish(CommandResult(commandID: envelope.id, status: .failed, message: error.localizedDescription, at: clock.now()))
             }
             await afterCommand?()
             running.remove(envelope.id)
-            if cloudAwaiting.remove(envelope.id) != nil, channel != .cloud {
+            let cloudCopyWaits = cloudAwaiting.remove(envelope.id) != nil
+            // A shell command can run minutes: its result goes to iCloud
+            // whatever the path, for a phone that lost the direct link
+            // meanwhile (its app suspended). The record goes once read, or
+            // after a day.
+            if channel != .cloud, cloudCopyWaits || envelope.kind.isShell {
                 await deliverToCloud(result)
             }
             return result
         }
     }
 
-    private func run(_ kind: CommandKind, from deviceID: UUID) async throws {
+    /// Runs the command; a shell command returns what it printed.
+    private func run(_ kind: CommandKind, from deviceID: UUID) async throws -> ShellOutput? {
         switch kind {
         case let .startSession(m): try await target.startSession(seconds: CommandKind.seconds(m))
         case let .extendSession(m): try await target.extendSession(seconds: CommandKind.seconds(m))
@@ -384,7 +394,11 @@ public final class RemoteHub {
             s.lowPowerFloor = lowPower
             s.endFloor = end
             try await target.updateSettings(s)
+        case let .runCommand(text, pid):
+            if let pid { guard target.agentPIDs.contains(pid) else { throw RemoteError.unknownAgent } }
+            return try await target.runCommand(text, agentPID: pid)
         }
+        return nil
     }
 
     private func finish(_ result: CommandResult) -> CommandResult {
@@ -654,6 +668,11 @@ public enum RemoteError: Error, LocalizedError, Sendable {
     case agentStillRunning
     case lockUnavailable
     case requestGone
+    case commandsOff
+    case agentFolderUnreadable
+    /// The terminal's folder, as shown: gone or closed; `backHome` when the
+    /// terminal went back to the home folder (it had not moved meanwhile).
+    case terminalFolderGone(String, backHome: Bool)
 
     public var errorDescription: String? {
         switch self {
@@ -664,6 +683,12 @@ public enum RemoteError: Error, LocalizedError, Sendable {
         case .agentStillRunning: "L'agent ne s'est pas arrêté."
         case .lockUnavailable: "Verrouillage indisponible sur cette version de macOS."
         case .requestGone: "Cette demande de Claude n'attend plus de réponse : elle est passée dans le terminal ou a été retirée."
+        case .commandsOff: "Commandes depuis l'iPhone désactivées sur le Mac : DarraOwl > Réglages > Terminal."
+        case .agentFolderUnreadable: "Le dossier de cet agent n'a pas pu être lu : lance la commande dans le dossier personnel."
+        case let .terminalFolderGone(folder, backHome):
+            backHome
+                ? "Le dossier \(folder) n'existe plus ou n'est pas accessible : retour au dossier personnel. La commande n'a pas été lancée."
+                : "Le dossier \(folder) n'existe plus ou n'est pas accessible. La commande n'a pas été lancée."
         }
     }
 }

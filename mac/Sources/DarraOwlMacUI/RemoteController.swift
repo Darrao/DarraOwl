@@ -30,6 +30,9 @@ public final class RemoteController: CommandTarget {
     public private(set) var hookListening = false
     public private(set) var containers: [MacState.Container] = []
     public private(set) var lastResult: CommandResult?
+    /// Claude's requests held for the phone right now (a copy for the menu:
+    /// the approvals object is not observable).
+    public private(set) var heldRequests: [MacState.AgentRequest] = []
 
     @ObservationIgnored private unowned let model: AppModel
     @ObservationIgnored private let store = KeychainPairingStore()
@@ -55,6 +58,12 @@ public final class RemoteController: CommandTarget {
     @ObservationIgnored private var signals = AgentSignals()
     @ObservationIgnored private var agentsSeenInSession: (session: UUID?, tools: [String]) = (nil, [])
     @ObservationIgnored private(set) var hookServer: HookServer?
+    /// The phone's terminal's folder: a cd stays for the next command, as in
+    /// a terminal window. The home folder at launch.
+    @ObservationIgnored private var terminalFolder = NSHomeDirectory()
+    /// Bumped by each command: one started earlier and ending later does not
+    /// undo a later cd.
+    @ObservationIgnored private var terminalTurn = 0
     /// Claude Code's permission requests waiting for the phone.
     @ObservationIgnored let approvals = AgentApprovals(clock: SystemClock(), sleep: { try? await Task.sleep(for: .seconds($0)) })
     public private(set) var agents: [AgentProcess] = []
@@ -191,8 +200,9 @@ public final class RemoteController: CommandTarget {
         if connected != connectedDevices { connectedDevices = connected }
         let listening = hookServer?.isListening ?? false
         if listening != hookListening { hookListening = listening }
-        // Back at the Mac: Claude's requests go to the terminal.
-        if !approvals.pending.isEmpty, !nobodyAtTheMac { approvals.releaseAll() }
+        // Back at the Mac: Claude's requests go to the terminal, unless the
+        // phone is to get them anyway.
+        if !approvals.pending.isEmpty, !nobodyAtTheMac, !model.requestsEvenAtTheMac { approvals.releaseAll() }
         if hookServer == nil, tick % 30 == 0, let token = HookToken.current() {
             let hooks = makeHookServer(token: token)
             hooks.start()
@@ -234,9 +244,10 @@ public final class RemoteController: CommandTarget {
     }
 
     /// A permission request of Claude: held for the phone when nobody is at
-    /// the Mac and a phone is paired; otherwise Claude asks in the terminal.
+    /// the Mac (or whoever is there wants it on the phone anyway) and a
+    /// phone is paired; otherwise Claude asks in the terminal.
     private func permission(id: UUID, _ request: ClaudeHook.Permission) async -> AgentApprovals.Decision? {
-        guard nobodyAtTheMac, hub != nil, !devices.isEmpty else { return nil }
+        guard nobodyAtTheMac || model.requestsEvenAtTheMac, hub != nil, !devices.isEmpty else { return nil }
         let mask = model.status?.settings.alerts.maskProjectNames ?? false
         let name = request.cwd.map { URL(fileURLWithPath: $0).lastPathComponent }
         let project = mask ? nil : name.flatMap { $0.isEmpty || $0 == "/" ? nil : $0 }
@@ -248,6 +259,7 @@ public final class RemoteController: CommandTarget {
     /// its detail). Gone: the state follows, and the notification's record
     /// leaves iCloud with the detail.
     private func approvalChanged(_ change: AgentApprovals.Change) {
+        heldRequests = approvals.pending
         publishSoon()
         guard let hub else { return }
         switch change {
@@ -295,6 +307,12 @@ public final class RemoteController: CommandTarget {
         publishSoon()
         guard let event, nobodyAtTheMac, let hub, !devices.isEmpty else { return }
         Task { await hub.post([event]) }
+    }
+
+    /// "Répondre dans le terminal": every request held for the phone goes
+    /// back to Claude's own prompt.
+    func releaseRequests() {
+        approvals.releaseAll()
     }
 
     /// Lid closed (docked to an external display, the Mac is in use), or a
@@ -462,7 +480,9 @@ public final class RemoteController: CommandTarget {
             muted: (try? audio.readDefaultOutput())?.muted,
             dockerRunning: NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == PausePolicy.dockerBundleID },
             pairedDevices: devices.map(\.id),
-            agentRequests: approvals.pending.isEmpty ? nil : approvals.pending
+            agentRequests: approvals.pending.isEmpty ? nil : approvals.pending,
+            remoteCommands: model.remoteCommands,
+            terminalDirectory: model.remoteCommands ? TerminalSession.shown(terminalFolder, home: NSHomeDirectory(), masked: mask) : nil
         )
     }
 
@@ -643,6 +663,70 @@ public final class RemoteController: CommandTarget {
     public func answerAgentRequest(id: UUID, allow: Bool) async throws {
         guard approvals.answer(id, allow: allow) else { throw RemoteError.requestGone }
     }
+
+    /// Only with the option on (Réglages > Terminal), which the phone cannot
+    /// switch. The folder comes from this Mac's own list of agents: the phone
+    /// never names one. The command and the folder are logged, as a record of
+    /// what the phone ran; its output is not.
+    public func runCommand(_ text: String, agentPID: Int32?) async throws -> ShellOutput {
+        guard model.remoteCommands else { throw RemoteError.commandsOff }
+        let home = NSHomeDirectory()
+        let directory: String
+        if let agentPID {
+            guard let agent = agents.first(where: { $0.pid == agentPID }) else { throw RemoteError.unknownAgent }
+            guard let cwd = agent.cwd else { throw RemoteError.agentFolderUnreadable }
+            directory = cwd
+        } else {
+            // Gone meanwhile: said, never run in another folder instead.
+            var isFolder: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: terminalFolder, isDirectory: &isFolder), isFolder.boolValue else {
+                throw leaveTerminalFolder(terminalFolder)
+            }
+            directory = terminalFolder
+        }
+        // An agent's folder becomes the terminal's only through the menu's
+        // pwd; another command of an older phone there leaves it alone.
+        let setsFolder = agentPID == nil || text == "pwd"
+        if setsFolder { terminalTurn += 1 }
+        let turn = terminalTurn
+        log.info("command from the phone in \(directory): \(text)")
+        // The folder kept between commands needs a POSIX shell (zsh, bash…).
+        let posix = RemoteShell.isPOSIX(RemoteShell.shell)
+        var output: ShellOutput
+        do {
+            output = try await RemoteShell.run(posix ? TerminalSession.wrap(text) : text, in: directory)
+        } catch let error as RemoteShell.LaunchError where agentPID == nil && directory != home
+            && !FileManager.default.isExecutableFile(atPath: directory) {
+            // A folder that cannot be entered (its rights changed) would fail every command.
+            log.error("command from the phone not started in \(directory): \(error.detail)")
+            throw leaveTerminalFolder(directory)
+        }
+        let (shown, ended) = posix ? TerminalSession.split(output.text) : (output.text, nil)
+        output.text = shown
+        // A command that exited early leaves the folder where it started.
+        if setsFolder, turn == terminalTurn {
+            terminalFolder = ended ?? directory
+        }
+        output.directory = TerminalSession.shown(ended ?? directory, home: home, masked: masksProjects)
+        publishSoon()
+        log.info("command from the phone \(output.summary), \(Int(output.seconds)) s, \(output.text.count) characters\(output.truncated ? " (cut)" : "")")
+        return output
+    }
+
+    /// `folder` cannot be used: back to the home folder, unless another
+    /// command moved the terminal meanwhile, and why.
+    private func leaveTerminalFolder(_ folder: String) -> RemoteError {
+        let backHome = terminalFolder == folder
+        if backHome {
+            terminalFolder = NSHomeDirectory()
+            terminalTurn += 1
+            publishSoon()
+        }
+        return .terminalFolderGone(TerminalSession.shown(folder, home: NSHomeDirectory(), masked: masksProjects), backHome: backHome)
+    }
+
+    /// Réglages > Alertes: project names kept off what the phone (and iCloud) is told.
+    private var masksProjects: Bool { model.status?.settings.alerts.maskProjectNames ?? false }
 
     public func displayOff() async throws {
         model.displayOffFromPhone()

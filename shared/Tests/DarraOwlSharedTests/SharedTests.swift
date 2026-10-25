@@ -132,6 +132,7 @@ import Testing
     @Test func onlyStoppingThingsNeedsFaceID() {
         #expect(CommandKind.stopAgent(pid: 42).isSensitive)
         #expect(CommandKind.sleepNow.isSensitive)
+        #expect(CommandKind.runCommand(text: "ls", inAgent: nil).isSensitive, "a shell command too")
         for kind: CommandKind in [.watchAgent(pid: 42), .startPresence(minutes: nil), .stopPresence, .displayOff,
                                   .lockScreen, .setMuted(true), .pauseApps, .resumeApps] {
             #expect(!kind.isSensitive, "\(kind)")
@@ -148,11 +149,45 @@ import Testing
     }
 
     @Test func commandsSurviveTheWire() throws {
-        let kinds: [CommandKind] = [.stopAgent(pid: 7), .startPresence(minutes: nil), .startPresence(minutes: 120), .setMuted(false), .lockScreen]
+        let kinds: [CommandKind] = [.stopAgent(pid: 7), .startPresence(minutes: nil), .startPresence(minutes: 120), .setMuted(false), .lockScreen,
+                                    .runCommand(text: "echo \"é\" | wc -c\n", inAgent: 7), .runCommand(text: "ls", inAgent: nil)]
         for kind in kinds {
             let data = try JSONEncoder().encode(kind)
             #expect(try JSONDecoder().decode(CommandKind.self, from: data) == kind)
         }
+    }
+
+    /// A shell command: Face ID, a real text, an agent's pid or none, and a
+    /// label that fits a Face ID prompt. The watch never sends one.
+    @Test func aShellCommandIsCheckedBeforeItLeaves() throws {
+        #expect(!WatchLink.allowed(.runCommand(text: "ls", inAgent: nil)))
+        try CommandKind.runCommand(text: "npm test", inAgent: 4242).validateArguments()
+        try CommandKind.runCommand(text: "git status", inAgent: nil).validateArguments()
+        #expect(throws: CommandKind.ArgumentError.command) { try CommandKind.runCommand(text: " \n\t", inAgent: nil).validateArguments() }
+        #expect(throws: CommandKind.ArgumentError.command) { try CommandKind.runCommand(text: "ls\0-la", inAgent: nil).validateArguments() }
+        #expect(throws: CommandKind.ArgumentError.command) {
+            try CommandKind.runCommand(text: String(repeating: "x", count: Policy.remoteCommandLength + 1), inAgent: nil).validateArguments()
+        }
+        #expect(throws: CommandKind.ArgumentError.process) { try CommandKind.runCommand(text: "ls", inAgent: 1).validateArguments() }
+        #expect(CommandKind.runCommand(text: " git status\n", inAgent: nil).label == "Lancer « git status »")
+        #expect(CommandKind.runCommand(text: "echo a\necho b", inAgent: nil).label == "Lancer « echo a ⏎ echo b »")
+        let long = CommandKind.runCommand(text: String(repeating: "a", count: 80), inAgent: nil).label
+        #expect(long == "Lancer « \(String(repeating: "a", count: 59))… »")
+    }
+
+    /// A result from a Mac on an older version carries no output; one with
+    /// an output survives the wire.
+    @Test func aResultsOutputIsOptionalOnTheWire() throws {
+        let bare = CommandResult(commandID: UUID(), status: .executed, message: nil, at: Date(timeIntervalSince1970: 0))
+        var json = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(bare)) as? [String: Any])
+        json.removeValue(forKey: "output")
+        #expect(try JSONDecoder().decode(CommandResult.self, from: JSONSerialization.data(withJSONObject: json)).output == nil)
+        let output = ShellOutput(status: nil, text: "still running…", truncated: true, seconds: 300)
+        let full = CommandResult(commandID: UUID(), status: .executed, message: nil, at: Date(timeIntervalSince1970: 0), output: output)
+        #expect(try JSONDecoder().decode(CommandResult.self, from: JSONEncoder().encode(full)) == full)
+        #expect(output.summary == "arrêtée au bout de 5 min")
+        #expect(ShellOutput(status: 0, text: "", truncated: false, seconds: 1).summary == "terminée")
+        #expect(ShellOutput(status: 2, text: "", truncated: false, seconds: 1).summary == "code 2")
     }
 
     @Test func stateFromAnOlderMacHasNoPresenceNorSound() throws {
@@ -220,5 +255,17 @@ import Testing
 
     @Test func countsFromNowOnceEnded() {
         #expect(Session.extendedEnd(now.addingTimeInterval(-60), by: 1800, now: now, maxDuration: 7200) == now.addingTimeInterval(1800))
+    }
+}
+
+@Suite struct TerminalFolderTests {
+    /// An older Mac's output has no folder: still read.
+    @Test func anOutputWithoutAFolderIsStillRead() throws {
+        let old = Data(#"{"status":0,"text":"ok\n","truncated":false,"seconds":0.2}"#.utf8)
+        let output = try LinkCoding.decoder().decode(ShellOutput.self, from: old)
+        #expect(output.directory == nil)
+        #expect(output.text == "ok\n")
+        let now = ShellOutput(status: 0, text: "", truncated: false, seconds: 1, directory: "~/Dev/api")
+        #expect(try LinkCoding.decoder().decode(ShellOutput.self, from: LinkCoding.encoder().encode(now)) == now)
     }
 }

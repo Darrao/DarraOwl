@@ -11,6 +11,9 @@ struct RootView: View {
         Group {
             if runtime.model.mac == nil {
                 OnboardingView(model: runtime.model) { runtime.enterDemo() }
+            } else if DemoMode.opensTerminal {
+                // Screenshots of the terminal, in the demonstration.
+                NavigationStack { TerminalView(model: runtime.model, demo: true) }
             } else {
                 MacView(model: runtime.model, demo: runtime.isDemo) { runtime.leaveDemo() }
             }
@@ -276,6 +279,7 @@ struct MacView: View {
                     if let state = model.state {
                         if let requests = state.agentRequests, !requests.isEmpty { requestsBlock(requests) }
                         if !state.agents.isEmpty { agentsBlock(state) }
+                        if state.remoteCommands != nil { terminalBlock(state) }
                         if state.presence != nil { controlsBlock(state) }
                         macBlock(state)
                         // Docker open but idle: only worth a block when it can be paused.
@@ -524,6 +528,41 @@ struct MacView: View {
         }
     }
 
+    // MARK: Terminal
+
+    /// The terminal opens on its own screen; here, where it is.
+    private func terminalBlock(_ s: MacState) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle("Terminal")
+            if s.remoteCommands == true {
+                NavigationLink {
+                    TerminalView(model: model, demo: demo)
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: "apple.terminal").font(.title3).frame(width: 28)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Ouvrir le terminal")
+                            Text("\(s.terminalDirectory ?? "~") %")
+                                .font(.caption.monospaced()).foregroundStyle(.secondary)
+                                .lineLimit(1).truncationMode(.head)
+                        }
+                        Spacer()
+                        if model.shell?.phase == .running { ProgressView() }
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Text("Les commandes s'exécutent sur le Mac, avec ton shell, au plus \(DurationText.short(Policy.remoteCommandTimeout)), sans saisie. Face ID à chaque commande.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("Désactivé sur le Mac. Pour lancer des commandes d'ici : DarraOwl > Réglages > Terminal, sur le Mac.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .disabled(!online)
+    }
+
     // MARK: Controls
 
     static let presenceDurations: [Int] = [60, 120, 240, 480]
@@ -698,6 +737,50 @@ struct MacView: View {
         case .none?, nil: kind = "Aucun"
         }
         return n?.name.map { "\(kind) · \($0)" } ?? kind
+    }
+}
+
+/// Ready-made commands: one tap puts it in the field, to read or change
+/// before it runs.
+struct CommandHelpSheet: View {
+    let onPick: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(ShellHelp.sections) { section in
+                    Section(section.title) {
+                        ForEach(section.items) { item in
+                            Button {
+                                onPick(item.command)
+                                dismiss()
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(item.title).foregroundStyle(.primary)
+                                    Text(item.command).font(.caption.monospaced()).foregroundStyle(.secondary)
+                                    if let note = item.note {
+                                        Text(note).font(.caption).foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                    }
+                }
+                Section {
+                    Text(ShellHelp.footer).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Commandes utiles")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Fermer") { dismiss() }
+                }
+            }
+        }
     }
 }
 
