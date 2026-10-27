@@ -158,6 +158,9 @@ public final class RemoteHub {
     /// Called after a pairing succeeded, whichever path it came by (direct
     /// or iCloud), so the window and the direct server catch up.
     public var onPaired: ((PairedDevice, RemoteHub.Channel) -> Void)?
+    /// Called after a paired device declared new capabilities, so the
+    /// window and the published state catch up.
+    public var onDeviceUpdated: ((PairedDevice) -> Void)?
     /// Called with every result, so the direct link can send it.
     public var onResult: ((CommandResult) -> Void)?
     /// Called once a command ran, before its result reaches iCloud: the
@@ -274,6 +277,17 @@ public final class RemoteHub {
         (try? store.devices()) ?? []
     }
 
+    /// Keeps what device `deviceID` declared it can do, in its Keychain
+    /// entry. A device no longer paired is not written back.
+    private func setCapabilities(_ names: [String], deviceID: UUID) throws {
+        guard var device = try store.devices().first(where: { $0.id == deviceID }) else { throw RemoteError.unknownDevice }
+        guard device.capabilities != names else { return }
+        device.capabilities = names
+        try store.add(device)
+        log.info("device \(deviceID) declares: \(names.joined(separator: ", "))")
+        onDeviceUpdated?(device)
+    }
+
     /// TLS pre-shared key for a paired device, nil for anyone else.
     public func linkKey(deviceID: UUID) -> SymmetricKey? {
         guard let identity = try? store.identity(),
@@ -330,12 +344,20 @@ public final class RemoteHub {
             persistLedger()
             log.info("command \(envelope.id) \(envelope.kind.label) via \(channel.rawValue)")
             running.insert(envelope.id)
+            // The app's own declaration is not shown as the last command: the
+            // user did not send it, and its sender does not wait for it.
+            let announced = switch envelope.kind {
+            case .declareCapabilities: false
+            default: true
+            }
             let result: CommandResult
             do {
                 let output = try await run(envelope.kind, from: envelope.deviceID)
-                result = finish(CommandResult(commandID: envelope.id, status: .executed, message: nil, at: clock.now(), output: output))
+                result = finish(CommandResult(commandID: envelope.id, status: .executed, message: nil, at: clock.now(), output: output),
+                                announced: announced)
             } catch {
-                result = finish(CommandResult(commandID: envelope.id, status: .failed, message: error.localizedDescription, at: clock.now()))
+                result = finish(CommandResult(commandID: envelope.id, status: .failed, message: error.localizedDescription, at: clock.now()),
+                                announced: announced)
             }
             await afterCommand?()
             running.remove(envelope.id)
@@ -397,14 +419,17 @@ public final class RemoteHub {
         case let .runCommand(text, pid):
             if let pid { guard target.agentPIDs.contains(pid) else { throw RemoteError.unknownAgent } }
             return try await target.runCommand(text, agentPID: pid)
+        case let .declareCapabilities(names):
+            // Only ever the signer's own entry.
+            try setCapabilities(names, deviceID: deviceID)
         }
         return nil
     }
 
-    private func finish(_ result: CommandResult) -> CommandResult {
+    private func finish(_ result: CommandResult, announced: Bool = true) -> CommandResult {
         ledger.record(result)
         persistLedger()
-        onResult?(result)
+        if announced { onResult?(result) }
         return result
     }
 
@@ -670,6 +695,7 @@ public enum RemoteError: Error, LocalizedError, Sendable {
     case requestGone
     case commandsOff
     case agentFolderUnreadable
+    case unknownDevice
     /// The terminal's folder, as shown: gone or closed; `backHome` when the
     /// terminal went back to the home folder (it had not moved meanwhile).
     case terminalFolderGone(String, backHome: Bool)
@@ -685,6 +711,7 @@ public enum RemoteError: Error, LocalizedError, Sendable {
         case .requestGone: "Cette demande de Claude n'attend plus de réponse : elle est passée dans le terminal ou a été retirée."
         case .commandsOff: "Commandes depuis l'iPhone désactivées sur le Mac : DarraOwl > Réglages > Terminal."
         case .agentFolderUnreadable: "Le dossier de cet agent n'a pas pu être lu : lance la commande dans le dossier personnel."
+        case .unknownDevice: "Cet iPhone n'est plus appairé avec ce Mac."
         case let .terminalFolderGone(folder, backHome):
             backHome
                 ? "Le dossier \(folder) n'existe plus ou n'est pas accessible : retour au dossier personnel. La commande n'a pas été lancée."

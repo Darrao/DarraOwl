@@ -70,7 +70,8 @@ struct PairingView: View {
                 HStack {
                     VStack(alignment: .leading) {
                         Text(device.name)
-                        Text(remote.connectedDevices.contains(device.id) ? "Connecté en direct" : "Appairé le \(device.pairedAt.formatted(date: .abbreviated, time: .omitted))")
+                        let link = remote.connectedDevices.contains(device.id) ? "Connecté en direct" : "Appairé le \(device.pairedAt.formatted(date: .abbreviated, time: .omitted))"
+                        Text(device.answersAgentRequests ? "\(link) · répond aux demandes de Claude" : link)
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()

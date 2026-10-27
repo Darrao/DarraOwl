@@ -128,7 +128,7 @@ enum DemoMode {
                 } else {
                     terminalDirectory = Self.folder(after: text, from: terminalDirectory)
                 }
-            case .displayOff, .lockScreen, .forgetThisDevice:
+            case .displayOff, .lockScreen, .forgetThisDevice, .declareCapabilities:
                 break
             }
             return nil

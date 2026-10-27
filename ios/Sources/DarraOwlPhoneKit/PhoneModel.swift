@@ -67,6 +67,9 @@ public final class PhoneModel {
     /// link silent for longer is dead, even without a TCP error.
     public static let directSilence: TimeInterval = 75
     public static let accountCheckInterval: TimeInterval = 30
+    /// While the Mac's state leaves this phone out of the devices that
+    /// answer Claude's requests, it is told so at most this often.
+    public static let declarationInterval: TimeInterval = 120
     /// A success message goes after this long, a failure after `failureShown`.
     public static let successShown: TimeInterval = 6
     public static let failureShown: TimeInterval = 20
@@ -136,6 +139,8 @@ public final class PhoneModel {
     /// added by an update (Claude's requests) reaches a phone paired before
     /// it. Set only once saved: a failure is tried again.
     @ObservationIgnored private var subscribedThisLaunch = false
+    /// When this phone last told the Mac what it can do.
+    @ObservationIgnored private var lastDeclaration: Date?
     @ObservationIgnored private var outcomeAt: Date?
     @ObservationIgnored private var pairingCancelled = false
     /// Bumped whenever the link to the Mac is reset (unpairing, another
@@ -422,6 +427,7 @@ public final class PhoneModel {
         lastConnectAttempt = nil
         lastCloudFetch = nil
         lastDirectState = nil
+        lastDeclaration = nil
         for (_, waiter) in waiters { waiter.resume(returning: nil) }
         waiters = [:]
     }
@@ -704,6 +710,32 @@ public final class PhoneModel {
         self.state = state
         now = deps.now()
         onStateChange?(state)
+        declareIfLeftOut(state, direct: direct)
+    }
+
+    /// The Mac lists the phones it holds Claude's requests for: one left out
+    /// tells it, without a word on screen, that it answers them. Never to an
+    /// older Mac, which lists none and would refuse the command, nor to a
+    /// Mac asleep or long silent, which would read it expired.
+    private func declareIfLeftOut(_ state: MacState, direct: Bool) {
+        let now = deps.now()
+        guard let listed = state.agentRequestDevices, state.power == .awake,
+              direct || now.timeIntervalSince(state.updatedAt) <= MacPresence.staleAfter,
+              let mac, let identity = try? loadIdentity(), !listed.contains(identity.deviceID),
+              lastDeclaration.map({ now.timeIntervalSince($0) >= Self.declarationInterval }) ?? true
+        else { return }
+        lastDeclaration = now
+        let generation = linkGeneration
+        Task { await self.declare(to: mac, identity: identity, generation: generation) }
+    }
+
+    /// Sent without waiting for the answer: the Mac's next state lists this
+    /// phone once it is recorded. The direct link when open, else iCloud.
+    private func declare(to mac: PairedMac, identity: PhoneIdentity, generation: Int) async {
+        let kind = CommandKind.declareCapabilities(PhoneCapability.allCases.map(\.rawValue))
+        guard let (_, signed) = try? await identity.sign(kind, for: mac, at: deps.now()), linkGeneration == generation else { return }
+        if directPath != nil, (try? deps.direct.send(signed)) != nil { return }
+        try? await deps.cloud.send(signed, macID: mac.macID)
     }
 
     private func receive(_ result: CommandResult) {

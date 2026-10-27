@@ -117,6 +117,10 @@ public struct MacState: Codable, Equatable, Sendable {
     /// on the Mac, so a cd stays from one command to the next (nil: older
     /// Mac, or the option off).
     public var terminalDirectory: String?
+    /// The paired devices that declared they answer Claude's requests: the
+    /// Mac holds a request for the phone only when there is one (nil: an
+    /// older Mac, which takes no declaration).
+    public var agentRequestDevices: [UUID]?
 
     /// A permission request of Claude Code, held while nobody is at the
     /// Mac. `detail` is what Claude wants to do (a command, a file), cut
@@ -146,7 +150,7 @@ public struct MacState: Codable, Equatable, Sendable {
         agents: [Agent] = [], containers: [Container] = [], dockerPaused: Bool, settings: PowerSettings,
         protocolVersion: Int = LinkProtocol.version, presence: Presence? = nil, muted: Bool? = nil, dockerRunning: Bool? = nil,
         pairedDevices: [UUID]? = nil, agentRequests: [AgentRequest]? = nil, remoteCommands: Bool? = nil,
-        terminalDirectory: String? = nil
+        terminalDirectory: String? = nil, agentRequestDevices: [UUID]? = nil
     ) {
         self.macID = macID
         self.macName = macName
@@ -169,6 +173,7 @@ public struct MacState: Codable, Equatable, Sendable {
         self.agentRequests = agentRequests
         self.remoteCommands = remoteCommands
         self.terminalDirectory = terminalDirectory
+        self.agentRequestDevices = agentRequestDevices
     }
 }
 

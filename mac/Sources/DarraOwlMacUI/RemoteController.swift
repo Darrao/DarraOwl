@@ -138,6 +138,10 @@ public final class RemoteController: CommandTarget {
             self?.server?.disconnectAll()
             self?.restartServer()
         }
+        hub.onDeviceUpdated = { [weak self] _ in
+            guard let self, let hub = self.hub else { return }
+            self.devices = hub.pairedDevices()
+        }
         server = LinkServer(macID: identity.macID, macName: macName, handlers: .init(
             message: { [weak self] deviceID, message in await self?.answer(deviceID, message) },
             pairing: { [weak self] request in self?.pair(request) ?? PairingResponse(accepted: false, macID: identity.macID, macName: "", message: nil) },
@@ -200,9 +204,9 @@ public final class RemoteController: CommandTarget {
         if connected != connectedDevices { connectedDevices = connected }
         let listening = hookServer?.isListening ?? false
         if listening != hookListening { hookListening = listening }
-        // Back at the Mac: Claude's requests go to the terminal, unless the
-        // phone is to get them anyway.
-        if !approvals.pending.isEmpty, !nobodyAtTheMac, !model.requestsEvenAtTheMac { approvals.releaseAll() }
+        // Back at the Mac (unless the phone is to get them anyway), or no
+        // paired phone left that can answer: Claude's requests go to the terminal.
+        if !approvals.pending.isEmpty, !holdsRequests { approvals.releaseAll() }
         if hookServer == nil, tick % 30 == 0, let token = HookToken.current() {
             let hooks = makeHookServer(token: token)
             hooks.start()
@@ -245,9 +249,10 @@ public final class RemoteController: CommandTarget {
 
     /// A permission request of Claude: held for the phone when nobody is at
     /// the Mac (or whoever is there wants it on the phone anyway) and a
-    /// phone is paired; otherwise Claude asks in the terminal.
+    /// paired phone answers requests; otherwise Claude asks in the terminal
+    /// (and its Notification hook brings "Claude attend ta validation").
     private func permission(id: UUID, _ request: ClaudeHook.Permission) async -> AgentApprovals.Decision? {
-        guard nobodyAtTheMac || model.requestsEvenAtTheMac, hub != nil, !devices.isEmpty else { return nil }
+        guard holdsRequests, hub != nil else { return nil }
         let mask = model.status?.settings.alerts.maskProjectNames ?? false
         let name = request.cwd.map { URL(fileURLWithPath: $0).lastPathComponent }
         let project = mask ? nil : name.flatMap { $0.isEmpty || $0 == "/" ? nil : $0 }
@@ -319,6 +324,16 @@ public final class RemoteController: CommandTarget {
     /// minute without the user's input.
     private var nobodyAtTheMac: Bool {
         (model.lidClosed && !ExternalDisplays.anyActive()) || UserIdle.seconds() >= 60
+    }
+
+    /// Claude's requests wait for the phone right now.
+    private var holdsRequests: Bool {
+        AgentApprovals.holds(nobodyAtTheMac: nobodyAtTheMac, evenAtTheMac: model.requestsEvenAtTheMac, devices: devices)
+    }
+
+    /// The paired phones that declared they answer Claude's requests.
+    public var agentRequestDevices: [PairedDevice] {
+        devices.filter(\.answersAgentRequests)
     }
 
     // MARK: Events
@@ -482,7 +497,8 @@ public final class RemoteController: CommandTarget {
             pairedDevices: devices.map(\.id),
             agentRequests: approvals.pending.isEmpty ? nil : approvals.pending,
             remoteCommands: model.remoteCommands,
-            terminalDirectory: model.remoteCommands ? TerminalSession.shown(terminalFolder, home: NSHomeDirectory(), masked: mask) : nil
+            terminalDirectory: model.remoteCommands ? TerminalSession.shown(terminalFolder, home: NSHomeDirectory(), masked: mask) : nil,
+            agentRequestDevices: agentRequestDevices.map(\.id)
         )
     }
 

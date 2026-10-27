@@ -226,6 +226,8 @@ struct HubRig {
         .updateBatteryFloors(lowPower: 10, end: 15),
         .runCommand(text: "   ", inAgent: nil),
         .runCommand(text: "ls", inAgent: 1),
+        .declareCapabilities(["agent requests"]),
+        .declareCapabilities(Array(repeating: "x", count: CommandKind.maxCapabilities + 1)),
     ])
     func outOfPolicyArgumentsAreRefused(kind: CommandKind) async throws {
         let rig = HubRig().paired()

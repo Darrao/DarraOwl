@@ -193,4 +193,73 @@ import Testing
         #expect(rig.target.calls == ["agent allow", "agent deny"])
         #expect(!WatchLink.allowed(.answerAgentRequest(id: UUID(), allow: false)))
     }
+
+    /// Held only for a phone that said it answers requests: an older one
+    /// would show nothing while Claude waits up to an hour.
+    @Test func heldOnlyWhenAPairedPhoneCanAnswer() {
+        let older = TestPhone().device
+        var current = TestPhone().device
+        current.capabilities = [PhoneCapability.agentRequests.rawValue]
+        var other = TestPhone().device
+        other.capabilities = ["somethingElse"]
+        #expect(!AgentApprovals.holds(nobodyAtTheMac: true, evenAtTheMac: false, devices: []))
+        #expect(!AgentApprovals.holds(nobodyAtTheMac: true, evenAtTheMac: true, devices: [older, other]), "Claude asks in the terminal")
+        #expect(AgentApprovals.holds(nobodyAtTheMac: true, evenAtTheMac: false, devices: [older, current]), "one is enough")
+        #expect(!AgentApprovals.holds(nobodyAtTheMac: false, evenAtTheMac: false, devices: [current]), "back at the Mac")
+        #expect(AgentApprovals.holds(nobodyAtTheMac: false, evenAtTheMac: true, devices: [current]))
+    }
+
+    /// The phone says it answers requests with a plain signed command: the
+    /// Mac keeps that with this phone only, and does not show it as the
+    /// last command.
+    @Test func aPhoneDeclaresItAnswersRequests() async throws {
+        let rig = HubRig().paired()
+        let other = TestPhone()
+        rig.store.stored.append(other.device)
+        var updated: [UUID] = []
+        rig.hub.onDeviceUpdated = { updated.append($0.id) }
+        var announced: [CommandResult] = []
+        rig.hub.onResult = { announced.append($0) }
+        let names = PhoneCapability.allCases.map(\.rawValue)
+        let declaration = try rig.phone.sign(.declareCapabilities(names), mac: rig.macID, at: rig.clock.now())
+        #expect(await rig.hub.handle(declaration, via: .direct, peer: rig.phone.id).status == .executed, "without Face ID")
+        #expect(rig.store.stored.first { $0.id == rig.phone.id }?.answersAgentRequests == true)
+        #expect(rig.store.stored.first { $0.id == other.id }?.capabilities == nil, "only the signer's entry")
+        #expect(updated == [rig.phone.id])
+        #expect(announced.isEmpty)
+        #expect(rig.ledger.value?.results.map(\.status) == [.executed], "recorded all the same")
+        #expect(rig.target.calls.isEmpty)
+
+        let again = try rig.phone.sign(.declareCapabilities(names), mac: rig.macID, at: rig.clock.now())
+        #expect(await rig.hub.handle(again, via: .cloud).status == .executed)
+        #expect(updated == [rig.phone.id], "the same list is not written again")
+
+        let nothing = try rig.phone.sign(.declareCapabilities([]), mac: rig.macID, at: rig.clock.now())
+        #expect(await rig.hub.handle(nothing, via: .cloud).status == .executed)
+        #expect(rig.store.stored.first { $0.id == rig.phone.id }?.answersAgentRequests == false, "a later list replaces it")
+    }
+
+    /// Unpaired, then paired again: the phone starts over and declares anew.
+    @Test func aNewPairingForgetsWhatThePhoneDeclared() async throws {
+        let rig = HubRig()
+        let invite = try rig.hub.makeInvite(macName: "MacBook", endpoints: nil)
+        #expect(rig.hub.handlePairing(rig.phone.pairingRequest(for: invite, at: rig.clock.now()), macName: "MacBook").accepted)
+        let declaration = try rig.phone.sign(.declareCapabilities([PhoneCapability.agentRequests.rawValue]), mac: rig.macID, at: rig.clock.now())
+        #expect(await rig.hub.handle(declaration, via: .cloud).status == .executed)
+        #expect(rig.hub.pairedDevices().first?.answersAgentRequests == true)
+        try rig.hub.unpair(deviceID: rig.phone.id)
+        let next = try rig.hub.makeInvite(macName: "MacBook", endpoints: nil)
+        #expect(rig.hub.handlePairing(rig.phone.pairingRequest(for: next, at: rig.clock.now()), macName: "MacBook").accepted)
+        #expect(rig.hub.pairedDevices().first?.answersAgentRequests == false)
+    }
+
+    /// A Keychain entry written by an earlier version has no capabilities:
+    /// read as a phone that does not answer, never dropped.
+    @Test func anEarlierKeychainEntryReadsWithoutCapabilities() throws {
+        var json = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(TestPhone().device)) as? [String: Any])
+        json.removeValue(forKey: "capabilities")
+        let device = try JSONDecoder().decode(PairedDevice.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(device.capabilities == nil)
+        #expect(!device.answersAgentRequests)
+    }
 }

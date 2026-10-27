@@ -1,6 +1,6 @@
 # Politique de confidentialité de DarraOwl
 
-Dernière mise à jour : 13 octobre 2026
+Dernière mise à jour : 27 octobre 2026
 
 DarraOwl se compose d'une app pour Mac et d'une app pour iPhone. Elles
 communiquent directement entre elles, ou via ta propre base de données iCloud
@@ -29,15 +29,17 @@ Mac ; les commandes y passent quand la connexion directe ne répond pas :
   aussi), en mode agent le nom de la commande suivie (jamais ses arguments),
   noms des apps mises en pause, « Toujours actif » et son coupé ou non,
   réglages de DarraOwl (dont la liste des apps à mettre en pause) et
-  identifiants des iPhone appairés ;
+  identifiants des iPhone appairés, avec ceux qui savent répondre aux
+  demandes de Claude ;
 - les adresses réseau du Mac (locale, Tailscale), pour la connexion directe ;
 - les commandes envoyées par l'iPhone, signées, et leurs résultats ;
 - le titre et le texte des notifications (par exemple « Claude a fini », avec
   le nom du projet) ;
-- si tu as activé les hooks de Claude Code, ses demandes d'autorisation en
-  attente : l'outil (par exemple Bash ou Edit), ce que Claude veut faire (la
-  commande, le chemin du fichier ou l'adresse, coupé à 300 caractères) et le
-  nom du projet (masquer les noms de projets les retire aussi du détail).
+- si tu as activé les hooks de Claude Code et qu'un iPhone appairé sait y
+  répondre, ses demandes d'autorisation en attente : l'outil (par exemple
+  Bash ou Edit), ce que Claude veut faire (la commande, le chemin du fichier
+  ou l'adresse, coupé à 300 caractères) et le nom du projet (masquer les noms
+  de projets les retire aussi du détail).
   Une demande est retirée d'iCloud dès que tu as répondu, qu'elle est passée
   dans le terminal, ou au plus tard au bout d'une heure ; si DarraOwl est
   quitté entre-temps, à son prochain lancement ;

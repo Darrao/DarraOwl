@@ -50,6 +50,8 @@ public enum WatchLink {
     public static func allowed(_ kind: CommandKind) -> Bool {
         // Claude's requests are answered where their detail can be read.
         if case .answerAgentRequest = kind { return false }
+        // The phone says what it can do on its own.
+        if case .declareCapabilities = kind { return false }
         return !kind.isSensitive && kind != .forgetThisDevice
     }
 

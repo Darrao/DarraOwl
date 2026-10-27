@@ -49,6 +49,10 @@ public enum CommandKind: Codable, Equatable, Sendable {
     /// phone never sends a path. Refused unless the option is on, on the
     /// Mac. Its output comes back in the result. Sensitive.
     case runCommand(text: String, inAgent: Int32?)
+    /// What this phone can do (`PhoneCapability` raw values), replacing
+    /// what it declared before. Sent by the app on its own, to a Mac whose
+    /// state leaves it out of `agentRequestDevices`.
+    case declareCapabilities([String])
 
     /// Needs a Face ID signature from the phone's Secure Enclave key.
     public var isSensitive: Bool {
@@ -90,6 +94,7 @@ public enum CommandKind: Codable, Equatable, Sendable {
         case let .setPresenceWhileClosed(on): on ? "Rester disponible capot fermé" : "Ne plus rester disponible capot fermé"
         case let .answerAgentRequest(_, allow): allow ? "Accepter la demande de Claude" : "Refuser la demande de Claude"
         case let .runCommand(text, _): "Lancer « \(Self.shortened(text)) »"
+        case .declareCapabilities: "Indiquer au Mac ce que sait faire cet iPhone"
         }
     }
 
@@ -105,6 +110,14 @@ public enum CommandKind: Codable, Equatable, Sendable {
     public static func isWellFormedCommand(_ text: String) -> Bool {
         text.count <= Policy.remoteCommandLength && !text.contains("\0")
             && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// A phone declares at most this many capabilities.
+    public static let maxCapabilities = 16
+
+    /// A capability's name: 1 to 40 ASCII letters and digits.
+    public static func isWellFormedCapability(_ name: String) -> Bool {
+        (1...40).contains(name.count) && name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
     }
 
     public static let extensionMinutes: Set<Int> = [30, 60]
@@ -134,6 +147,7 @@ public enum CommandKind: Codable, Equatable, Sendable {
         case settings
         case process
         case command
+        case capabilities
     }
 
     /// Checks the arguments against the policy. The Mac checks again against
@@ -160,11 +174,20 @@ public enum CommandKind: Codable, Equatable, Sendable {
         case let .runCommand(text, pid):
             guard Self.isWellFormedCommand(text) else { throw .command }
             if let pid { guard pid > 1 else { throw .process } }
+        case let .declareCapabilities(names):
+            guard names.count <= Self.maxCapabilities, names.allSatisfy(Self.isWellFormedCapability) else { throw .capabilities }
         case .stopSession, .sleepNow, .pauseDocker, .resumeDocker, .stopPresence, .displayOff, .lockScreen,
              .setMuted, .pauseApps, .resumeApps, .forgetThisDevice, .setPresenceWhileClosed, .answerAgentRequest:
             break
         }
     }
+}
+
+/// What a phone can do, declared to the Mac (`declareCapabilities`). An
+/// older phone declares nothing: the Mac never counts on it.
+public enum PhoneCapability: String, CaseIterable, Sendable {
+    /// Shows Claude's held permission requests and answers them.
+    case agentRequests
 }
 
 /// What the phone signs. Encoded once to `SignedCommand.payload`; the

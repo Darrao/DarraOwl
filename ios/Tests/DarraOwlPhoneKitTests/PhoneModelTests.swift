@@ -913,6 +913,88 @@ struct PhoneRig {
     }
 }
 
+/// A Mac whose state leaves this phone out of the devices that answer
+/// Claude's requests is told it does: by the app on its own, without Face
+/// ID or a word on screen.
+@MainActor
+@Suite struct PhoneDeclarationTests {
+    let declaration = CommandKind.declareCapabilities(PhoneCapability.allCases.map(\.rawValue))
+
+    func kinds(_ sent: [SignedCommand]) throws -> [CommandKind] {
+        try sent.map { try LinkCoding.decoder().decode(CommandEnvelope.self, from: $0.payload).kind }
+    }
+
+    /// Turns of the loop for the declaration's task.
+    func settle() async {
+        for _ in 0..<100 { await Task.yield() }
+    }
+
+    func state(_ rig: PhoneRig, listing: [UUID]?, power: MacState.Power = .awake, at date: Date? = nil) -> MacState {
+        var state = rig.state(power: power, at: date)
+        state.agentRequestDevices = listing
+        return state
+    }
+
+    @Test func leftOutItTellsTheMacOverTheDirectLink() async throws {
+        let rig = PhoneRig()
+        rig.direct.connectTo = .local
+        _ = await rig.paired()
+        rig.direct.onState?(state(rig, listing: []))
+        await settle()
+        #expect(try kinds(rig.direct.sent) == [declaration])
+        #expect(rig.direct.sent.first?.biometricSignature == nil)
+        #expect(rig.cloud.sent.isEmpty)
+        #expect(rig.model.outcome == nil)
+        #expect(!rig.model.isBusy)
+    }
+
+    @Test func withoutADirectLinkThroughICloud() async throws {
+        let rig = PhoneRig()
+        rig.cloud.state = (state(rig, listing: [UUID()]), nil)
+        _ = await rig.paired()
+        await settle()
+        #expect(try kinds(rig.cloud.sent) == [declaration])
+    }
+
+    /// An older Mac lists nothing and would refuse the command; a Mac that
+    /// lists this phone knows already.
+    @Test func nothingToAnOlderMacNorToOneThatKnows() async throws {
+        let rig = PhoneRig()
+        rig.direct.connectTo = .local
+        _ = await rig.paired()
+        rig.direct.onState?(state(rig, listing: nil))
+        rig.direct.onState?(state(rig, listing: [rig.store.id.deviceID]))
+        await settle()
+        #expect(rig.direct.sent.isEmpty)
+        #expect(rig.cloud.sent.isEmpty)
+    }
+
+    /// Every two minutes at most while left out, and never to a Mac going
+    /// to sleep or long silent: it would read the command expired.
+    @Test func notOverAndOverNorToAMacAway() async throws {
+        let rig = PhoneRig()
+        rig.direct.connectTo = .local
+        _ = await rig.paired()
+        rig.direct.onState?(state(rig, listing: []))
+        rig.direct.onState?(state(rig, listing: []))
+        await settle()
+        #expect(rig.direct.sent.count == 1)
+        rig.clock.advance(PhoneModel.declarationInterval)
+        rig.direct.onState?(state(rig, listing: [], power: .goingToSleep))
+        await settle()
+        #expect(rig.direct.sent.count == 1)
+        rig.direct.onState?(state(rig, listing: []))
+        await settle()
+        #expect(rig.direct.sent.count == 2)
+
+        let silent = PhoneRig()
+        silent.cloud.state = (state(silent, listing: [], at: silent.clock.now.addingTimeInterval(-MacPresence.staleAfter - 1)), nil)
+        _ = await silent.paired()
+        await settle()
+        #expect(silent.cloud.sent.isEmpty)
+    }
+}
+
 /// The terminal's history and its ready-made commands.
 @Suite struct ShellHelpTests {
     @Test func aCommandRunAgainMovesToTheTop() {

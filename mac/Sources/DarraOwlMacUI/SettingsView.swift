@@ -119,6 +119,12 @@ struct SettingsView: View {
                 Text("Chaque demande d'autorisation part sur l'iPhone, que tu sois devant le Mac ou non. Le terminal attend la réponse de l'iPhone, jusqu'à une heure ; le menu de DarraOwl propose « Répondre dans le terminal » pour la reprendre ici, et Échap dans Claude annule l'action.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                // A phone on an older version shows no request: none is held for it.
+                if claudeState != .absent, !model.remote.devices.isEmpty, model.remote.agentRequestDevices.isEmpty {
+                    Text("Aucun iPhone appairé ne peut encore répondre aux demandes de Claude : elles restent dans le terminal, et l'iPhone reçoit « Claude attend ta validation ». Mets à jour DarraOwl sur l'iPhone.")
+                        .font(.caption).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Section("Terminal") {
                 Text("La commande darraowl garde le Mac éveillé tant qu'une commande tourne, au plus la durée maximale : darraowl run 3h -- claude. Aussi : darraowl status, darraowl stop.")

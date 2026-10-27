@@ -175,6 +175,33 @@ import Testing
         #expect(long == "Lancer « \(String(repeating: "a", count: 59))… »")
     }
 
+    /// What the phone can do: said by the app on its own (no Face ID, never
+    /// from the watch), as a few short names the Mac reads as they are.
+    @Test func aDeclarationIsPlainAndBounded() throws {
+        let declaration = CommandKind.declareCapabilities(PhoneCapability.allCases.map(\.rawValue))
+        #expect(PhoneCapability.agentRequests.rawValue == "agentRequests")
+        #expect(!declaration.isSensitive)
+        #expect(!WatchLink.allowed(declaration))
+        try declaration.validateArguments()
+        try CommandKind.declareCapabilities([]).validateArguments()
+        let refused: [[String]] = [Array(repeating: "x", count: CommandKind.maxCapabilities + 1), [""], ["agent requests"],
+                                   [String(repeating: "a", count: 41)], ["réponses"]]
+        for names in refused {
+            #expect(throws: CommandKind.ArgumentError.capabilities) { try CommandKind.declareCapabilities(names).validateArguments() }
+        }
+        #expect(try JSONDecoder().decode(CommandKind.self, from: JSONEncoder().encode(declaration)) == declaration)
+    }
+
+    /// An older Mac lists no devices for Claude's requests: nil, not empty.
+    @Test func theDevicesForClaudesRequestsAreOptional() throws {
+        var state = MacState(macID: UUID(), macName: "Mac", updatedAt: Date(timeIntervalSince1970: 0), power: .awake, session: nil,
+                             powerSnapshot: nil, lowPowerActive: false, pausedApps: [], network: nil, dockerPaused: false, settings: .default)
+        #expect(try JSONDecoder().decode(MacState.self, from: JSONEncoder().encode(state)).agentRequestDevices == nil)
+        let phone = UUID()
+        state.agentRequestDevices = [phone]
+        #expect(try JSONDecoder().decode(MacState.self, from: JSONEncoder().encode(state)).agentRequestDevices == [phone])
+    }
+
     /// A result from a Mac on an older version carries no output; one with
     /// an output survives the wire.
     @Test func aResultsOutputIsOptionalOnTheWire() throws {

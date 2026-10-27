@@ -10,14 +10,24 @@ public struct PairedDevice: Codable, Equatable, Sendable, Identifiable {
     public var signingKey: Data
     public var biometricKey: Data
     public var pairedAt: Date
+    /// What the phone declared it can do (`PhoneCapability` raw values);
+    /// nil until it declares, as for a phone on an older version.
+    public var capabilities: [String]?
 
-    public init(id: UUID, name: String, agreementKey: Data, signingKey: Data, biometricKey: Data, pairedAt: Date) {
+    public init(id: UUID, name: String, agreementKey: Data, signingKey: Data, biometricKey: Data, pairedAt: Date,
+                capabilities: [String]? = nil) {
         self.id = id
         self.name = name
         self.agreementKey = agreementKey
         self.signingKey = signingKey
         self.biometricKey = biometricKey
         self.pairedAt = pairedAt
+        self.capabilities = capabilities
+    }
+
+    /// Shows Claude's held requests and answers them.
+    public var answersAgentRequests: Bool {
+        capabilities?.contains(PhoneCapability.agentRequests.rawValue) == true
     }
 }
 

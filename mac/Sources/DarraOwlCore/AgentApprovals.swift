@@ -43,6 +43,14 @@ public final class AgentApprovals {
         self.sleep = sleep
     }
 
+    /// A request waits for the phone when nobody is at the Mac (or whoever
+    /// is there wants it on the phone anyway) and a paired phone declared it
+    /// answers requests: an older one would show nothing while Claude waits.
+    /// Otherwise Claude asks in the terminal.
+    public nonisolated static func holds(nobodyAtTheMac: Bool, evenAtTheMac: Bool, devices: [PairedDevice]) -> Bool {
+        (nobodyAtTheMac || evenAtTheMac) && devices.contains(where: \.answersAgentRequests)
+    }
+
     /// Waits for the phone's answer to request `id`. Nil: no answer, Claude
     /// asks in the terminal.
     public func decide(id: UUID, tool: String, detail: String, project: String?,

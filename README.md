@@ -362,6 +362,13 @@ devant le Mac, Claude pose la question dans le terminal, comme d'habitude.
 Ses questions et les plans qu'il te soumet restent dans le terminal : tu
 reçois « Claude attend ta validation ».
 
+Ces demandes ne partent sur l'iPhone que si un iPhone appairé sait y
+répondre : une version à jour de DarraOwl sur l'iPhone le signale d'elle-même
+au Mac. Avec un iPhone resté sur une version précédente, Claude pose la
+question dans le terminal et l'iPhone reçoit « Claude attend ta validation ».
+Dans DarraOwl > iPhone…, chaque iPhone qui sait répondre porte la mention
+« répond aux demandes de Claude ».
+
 **Demander sur l'iPhone même devant le Mac** (option, désactivée par
 défaut) : chaque demande d'autorisation part sur l'iPhone, que tu sois devant
 le Mac ou non. Le terminal attend alors la réponse de l'iPhone, jusqu'à une
